@@ -91,7 +91,7 @@ dropout correction, chroma decoding, disc stacking/mapping, metadata export and 
 ├── CMakeLists.txt            # top level: options, ezpwd lookup, all add_test() for tools
 ├── flake.nix / flake.lock    # the package and the dev shell
 ├── src/                      # one directory per tool, plus src/library
-│   └── efm-decoder/libs/ezpwd/   # git submodule — vendored, see §3
+│   └── efm-decoder/libs/efm/     # EFM library (Reed-Solomon via external ezpwd, see §3)
 ├── scripts/                  # test-chroma, test-decode-pretbc (Python test drivers)
 ├── test-data/                # pre-generated TBC/EFM/PCM fixtures for functional tests
 ├── tools/                    # repository scripts run by CI (check-spdx-new-files.sh)
@@ -114,7 +114,7 @@ dropout correction, chroma decoding, disc stacking/mapping, metadata export and 
 
 | Path | Rule |
 | --- | --- |
-| `src/efm-decoder/libs/ezpwd/**` | Git submodule (ezpwd-reed-solomon). Never edit, reformat or "fix" warnings. Nix builds take it from a flake input instead |
+| ezpwd-reed-solomon | External Reed-Solomon headers, never copied into the tree or edited. Nix takes them from a flake input; the packaging workflows clone the same pinned revision into `external/`. Keep the two revisions in step |
 | `test-data/**` | Golden fixtures. Do not regenerate or modify them to make a test pass. A change that legitimately alters output updates the **expected values** in `CMakeLists.txt`, with the reason in the PR |
 | `prototypes/**` | Not built. Leave alone unless the task is about them |
 
@@ -191,8 +191,11 @@ One-off without entering the shell: `nix develop -c <command>`. For a temporary 
 `nix shell nixpkgs#<tool> -c <tool> ...` — do **not** add it to `flake.nix`.
 
 - In-source builds are rejected; use `build/` or `build-*/`.
-- `EZPWD_DIR` is exported by the dev shell. Outside Nix, initialise the submodule
-  (only when asked — Rule 1) or pass `-DEZPWD_DIR=/path/to/ezpwd/c++`.
+- `EZPWD_DIR` is exported by the dev shell. Outside Nix, pass
+  `-DEZPWD_DIR=/path/to/ezpwd-reed-solomon/c++`. `.gitmodules` names ezpwd but **no submodule
+  commit is recorded in the tree**, so `git submodule update` fetches nothing; clone
+  `pjkundert/ezpwd-reed-solomon` at the revision `flake.lock` pins, as the packaging
+  workflows do.
 
 ## 7. CI/CD
 

@@ -34,8 +34,16 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
-        with:
-          submodules: true
+
+      # .gitmodules lists ezpwd but no submodule commit is recorded in the tree,
+      # so a submodule checkout fetches nothing. Clone the Reed-Solomon headers
+      # at the revision flake.lock pins (the input Nix builds use).
+      - name: Fetch ezpwd-reed-solomon headers
+        shell: bash
+        run: |
+          git clone --quiet https://github.com/pjkundert/ezpwd-reed-solomon external/ezpwd-reed-solomon
+          git -C external/ezpwd-reed-solomon checkout --quiet 62a490c13f6e057fbf2dc6777fde234c7a19098e
+          test -f external/ezpwd-reed-solomon/c++/ezpwd/rs_base
 
       - name: Resolve package version
         id: version
@@ -106,6 +114,7 @@ jobs:
             -DBUILD_TESTING=OFF `
             "-DCMAKE_PREFIX_PATH=$env:QT_ROOT_DIR;$vcpkgDir" `
             "-DPKG_CONFIG_EXECUTABLE=$pkgconfExe" `
+            "-DEZPWD_DIR=$PWD/external/ezpwd-reed-solomon/c++" `
             -DAPP_BRANCH=github-actions `
             "-DAPP_COMMIT=${{ steps.version.outputs.version }}"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

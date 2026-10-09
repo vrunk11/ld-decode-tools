@@ -115,3 +115,6 @@ result
 AppDir/
 dist/
 package-root/
+
+# External headers fetched by the packaging workflows
+external/
