@@ -21,6 +21,8 @@
 
 #include "dropouts.h"
 
+class JsonReader;
+class JsonWriter;
 class SqliteReader;
 class SqliteWriter;
 
@@ -43,6 +45,8 @@ public:
         bool inUse = false;
         std::array<qint32, 3> vbiData { 0, 0, 0 };
 
+        void read(JsonReader &reader);
+        void write(JsonWriter &writer) const;
         void read(SqliteReader &reader, int captureId, int fieldId);
         void write(SqliteWriter &writer, int captureId, int fieldId) const;
     };
@@ -95,6 +99,8 @@ public:
         // Flags if our data has been initialized yet
         bool isValid = false;
 
+        void read(JsonReader &reader);
+        void write(JsonWriter &writer) const;
         void read(SqliteReader &reader, int captureId);
         void write(SqliteWriter &writer, int captureId) const;
     };
@@ -116,6 +122,8 @@ public:
         double wSNR = 0.0;
         double bPSNR = 0.0;
 
+        void read(JsonReader &reader);
+        void write(JsonWriter &writer) const;
         void read(SqliteReader &reader, int captureId, int fieldId);
         void write(SqliteWriter &writer, int captureId, int fieldId) const;
     };
@@ -131,6 +139,8 @@ public:
         qint32 videoIdData = 0;
         bool whiteFlag = false;
 
+        void read(JsonReader &reader, ClosedCaption &closedCaption);
+        void write(JsonWriter &writer) const;
         void read(SqliteReader &reader, int captureId, int fieldId, ClosedCaption &closedCaption);
         void write(SqliteWriter &writer, int captureId, int fieldId) const;
     };
@@ -143,6 +153,8 @@ public:
         // vitcData[0]'s LSB is bit 2; vitcData[7]'s MSB is bit 79.
         std::array<qint32, 8> vitcData;
 
+        void read(JsonReader &reader);
+        void write(JsonWriter &writer) const;
         void read(SqliteReader &reader, int captureId, int fieldId);
         void write(SqliteWriter &writer, int captureId, int fieldId) const;
     };
@@ -154,6 +166,8 @@ public:
         qint32 data0 = -1;
         qint32 data1 = -1;
 
+        void read(JsonReader &reader);
+        void write(JsonWriter &writer) const;
         void read(SqliteReader &reader, int captureId, int fieldId);
         void write(SqliteWriter &writer, int captureId, int fieldId) const;
     };
@@ -168,6 +182,8 @@ public:
         // Flags if our data has been initialized yet
         bool isValid = false;
 
+        void read(JsonReader &reader);
+        void write(JsonWriter &writer) const;
         void read(SqliteReader &reader, int captureId);
         void write(SqliteWriter &writer, int captureId) const;
     };
@@ -194,6 +210,8 @@ public:
         qint32 decodeFaults = -1;
         qint32 efmTValues = -1;
 
+        void read(JsonReader &reader);
+        void write(JsonWriter &writer) const;
         void read(SqliteReader &reader, int captureId);
         void write(SqliteWriter &writer, int captureId) const;
     };
@@ -212,9 +230,38 @@ public:
     LdDecodeMetaData(const LdDecodeMetaData &) = delete;
     LdDecodeMetaData& operator=(const LdDecodeMetaData &) = delete;
 
+    // Metadata file formats. ld-decode and these tools used JSON (.tbc.json)
+    // until late 2025, and current ld-decode writes SQLite (.tbc.db). Both are
+    // read and written so that old and new pipelines keep working.
+    enum class MetadataFormat {
+        Sqlite,
+        Json,
+    };
+
     void clear();
+
+    // Read metadata; the format is detected from the file contents.
     bool read(QString fileName);
+    // Write metadata: JSON for a ".json" file name, SQLite for ".db", and
+    // otherwise the format the metadata was read in (see getFormat()).
     bool write(QString fileName) const;
+
+    // The format of the last file read (SQLite if none), used for outputs
+    // that do not name a format, so JSON in gives JSON out.
+    MetadataFormat getFormat() const;
+    void setFormat(MetadataFormat format);
+
+    // Detect the format of an existing metadata file from its contents, or of
+    // a file still to be written from its extension.
+    static MetadataFormat detectFormat(const QString &fileName);
+    // The metadata file belonging to a TBC file: <tbc>.db if it exists,
+    // otherwise <tbc>.json if that exists, otherwise <tbc>.db.
+    static QString findMetadataFile(const QString &tbcFileName);
+    // The metadata file name for a TBC file in a given format.
+    static QString metadataFileName(const QString &tbcFileName, MetadataFormat format);
+
+    void readFields(JsonReader &reader);
+    void writeFields(JsonWriter &writer) const;
     void readFields(SqliteReader &reader, int captureId);
     void writeFields(SqliteWriter &writer, int captureId) const;
 
@@ -268,12 +315,18 @@ public:
     QString getVideoSystemDescription() const;
 
 private:
+    MetadataFormat format = MetadataFormat::Sqlite;
     bool isFirstFieldFirst;
     VideoParameters videoParameters;
     PcmAudioParameters pcmAudioParameters;
     QVector<Field> fields;
     QVector<qint32> pcmAudioFieldStartSampleMap;
     QVector<qint32> pcmAudioFieldLengthMap;
+
+    bool readJson(QString fileName);
+    bool writeJson(QString fileName) const;
+    bool readSqlite(QString fileName);
+    bool writeSqlite(QString fileName) const;
 
     void initialiseVideoSystemParameters();
     qint32 getFieldNumber(qint32 frameNumber, qint32 field);

@@ -1,7 +1,4 @@
 add_executable(ld-json-converter
-    dropouts.cpp
-    jsonio.cpp
-    lddecodemetadata.cpp
     jsonconverter.cpp
     main.cpp
 )

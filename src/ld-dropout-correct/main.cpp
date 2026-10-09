@@ -64,13 +64,13 @@ int main(int argc, char *argv[])
     addStandardDebugOptions(parser);
 
     // Option to specify a different metadata input file
-    QCommandLineOption inputMetadataOption(QStringList() << "input-metadata",
-                                       QCoreApplication::translate("main", "Specify the input metadata file for the first input file (default input.db)"),
+    QCommandLineOption inputMetadataOption(QStringList() << "input-metadata" << "input-json",
+                                       QCoreApplication::translate("main", "Specify the input metadata file for the first input file (default input.db, or input.json if only that exists)"),
                                        QCoreApplication::translate("main", "filename"));
     parser.addOption(inputMetadataOption);
 
     // Option to specify a different metadata output file
-    QCommandLineOption outputMetadataOption(QStringList() << "output-metadata",
+    QCommandLineOption outputMetadataOption(QStringList() << "output-metadata" << "output-json",
                                         QCoreApplication::translate("main", "Specify the output metadata file (default output.db)"),
                                         QCoreApplication::translate("main", "filename"));
     parser.addOption(outputMetadataOption);
@@ -204,12 +204,6 @@ int main(int argc, char *argv[])
         }
     }
 
-    // Metadata filename for output TBC
-    QString outputMetadataFilename = outputFilename + ".db";
-    if (parser.isSet(outputMetadataOption)) {
-        outputMetadataFilename = parser.value(outputMetadataOption);
-    }
-
     // Prepare for DOC process ----------------------------------------------------------------------------------------
 
     qInfo() << "Starting preparation for dropout correction processes...";
@@ -224,7 +218,7 @@ int main(int argc, char *argv[])
 
     for (qint32 i = 0; i < totalNumberOfInputFiles; i++) {
         // Work out the metadata filename
-        QString metadataFilename = inputFilenames[i] + ".db";
+        QString metadataFilename = LdDecodeMetaData::findMetadataFile(inputFilenames[i]);
         if (parser.isSet(inputMetadataOption) && i == 0) metadataFilename = parser.value(inputMetadataOption);
         qInfo().nospace().noquote() << "Reading input #" << i << " metadata from " << metadataFilename;
 
@@ -233,6 +227,13 @@ int main(int argc, char *argv[])
             qCritical() << "Unable to open TBC metadata file - cannot continue";
             return -1;
         }
+    }
+
+    // Metadata filename for output TBC, in the same format as the first input
+    // (JSON in gives JSON out) unless named explicitly
+    QString outputMetadataFilename = LdDecodeMetaData::metadataFileName(outputFilename, ldDecodeMetaData[0]->getFormat());
+    if (parser.isSet(outputMetadataOption)) {
+        outputMetadataFilename = parser.value(outputMetadataOption);
     }
 
     // Reverse field order if required

@@ -148,7 +148,7 @@ int main(int argc, char *argv[])
     }
 
     // Check that the required input TBC metadata file exists
-    QFileInfo inputMetadataFileInfo(inputFileInfo.filePath() + ".db");
+    QFileInfo inputMetadataFileInfo(LdDecodeMetaData::findMetadataFile(inputFileInfo.filePath()));
     if (!inputMetadataFileInfo.exists()) {
         qCritical("The specified input file metadata does not exist");
         return -1;

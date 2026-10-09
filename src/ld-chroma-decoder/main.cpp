@@ -132,8 +132,8 @@ int main(int argc, char *argv[])
     addStandardDebugOptions(parser);
 
     // Option to specify a different metadata input file
-    QCommandLineOption inputMetadataOption(QStringList() << "input-metadata",
-                                       QCoreApplication::translate("main", "Specify the input metadata file (default input.db)"),
+    QCommandLineOption inputMetadataOption(QStringList() << "input-metadata" << "input-json",
+                                       QCoreApplication::translate("main", "Specify the input metadata file (default input.db, or input.json if only that exists)"),
                                        QCoreApplication::translate("main", "filename"));
     parser.addOption(inputMetadataOption);
 
@@ -463,7 +463,7 @@ int main(int argc, char *argv[])
     }
 
     // Work out the metadata filename
-    QString inputMetadataFileName = inputFileName + ".db";
+    QString inputMetadataFileName = LdDecodeMetaData::findMetadataFile(inputFileName);
     if (parser.isSet(inputMetadataOption)) {
         inputMetadataFileName = parser.value(inputMetadataOption);
     }

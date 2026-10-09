@@ -15,6 +15,8 @@
 #include <QtGlobal>
 #include <QMetaType>
 
+class JsonReader;
+class JsonWriter;
 class SqliteReader;
 class SqliteWriter;
 
@@ -56,6 +58,11 @@ public:
         return m_fieldLine[index];
     }
 
+    // Legacy JSON (.tbc.json) metadata
+    void read(JsonReader &reader);
+    void write(JsonWriter &writer) const;
+
+    // SQLite (.tbc.db) metadata
     void read(SqliteReader &reader, int captureId, int fieldId);
     void write(SqliteWriter &writer, int captureId, int fieldId) const;
 
@@ -63,6 +70,9 @@ private:
     QVector<qint32> m_startx;
     QVector<qint32> m_endx;
     QVector<qint32> m_fieldLine;
+
+    void readArray(JsonReader &reader, QVector<qint32> &array);
+    void writeArray(JsonWriter &writer, const QVector<qint32> &array) const;
 };
 
 #endif // DROPOUTS_H

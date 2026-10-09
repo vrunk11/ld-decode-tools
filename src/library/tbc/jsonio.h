@@ -22,8 +22,6 @@
 
 ************************************************************************/
 
-// Note: Copied from the TBC library so the JSON handling code is local to the application
-
 #ifndef JSONIO_H
 #define JSONIO_H
 

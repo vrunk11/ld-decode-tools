@@ -12,10 +12,13 @@
 
 #include "lddecodemetadata.h"
 
+#include "jsonio.h"
 #include "sqliteio.h"
 
 #include <cassert>
+#include <fstream>
 #include <stdexcept>
+#include <QFile>
 #include <QFileInfo>
 #include <QDebug>
 #include <QMap>
@@ -85,6 +88,9 @@ static const VideoSystemDefaults &getSystemDefaults(const LdDecodeMetaData::Vide
 // Return true and set system if found; if not found, return false.
 bool parseVideoSystemName(QString name, VideoSystem &system)
 {
+    // Legacy JSON metadata spells PAL_M as "PAL-M"
+    if (name == "PAL-M") name = "PAL_M";
+
     // Search VIDEO_SYSTEM_DEFAULTS for a matching name
     for (const auto &defaults: VIDEO_SYSTEM_DEFAULTS) {
         if (name == defaults.name) {
@@ -93,6 +99,441 @@ bool parseVideoSystemName(QString name, VideoSystem &system)
         }
     }
     return false;
+}
+
+// Read Vbi from JSON
+void LdDecodeMetaData::Vbi::read(JsonReader &reader)
+{
+    reader.beginObject();
+
+    std::string member;
+    while (reader.readMember(member)) {
+        if (member == "vbiData") {
+            reader.beginArray();
+
+            // There should be exactly 3 values, but handle more or less
+            unsigned int i = 0;
+            while (reader.readElement()) {
+                int value;
+                reader.read(value);
+
+                if (i < vbiData.size()) vbiData[i++] = value;
+            }
+            while (i < vbiData.size()) vbiData[i++] = 0;
+
+            reader.endArray();
+        } else {
+            reader.discard();
+        }
+    }
+
+    reader.endObject();
+
+    inUse = true;
+}
+
+// Write Vbi to JSON
+void LdDecodeMetaData::Vbi::write(JsonWriter &writer) const
+{
+    assert(inUse);
+
+    writer.beginObject();
+
+    // Keep members in alphabetical order
+    writer.writeMember("vbiData");
+    writer.beginArray();
+    for (auto value : vbiData) {
+        writer.writeElement();
+        writer.write(value);
+    }
+    writer.endArray();
+
+    writer.endObject();
+}
+
+// Read VideoParameters from JSON
+void LdDecodeMetaData::VideoParameters::read(JsonReader &reader)
+{
+    bool isSourcePal = false;
+    std::string systemString = "";
+
+    reader.beginObject();
+
+    std::string member;
+    while (reader.readMember(member)) {
+        if (member == "activeVideoEnd") reader.read(activeVideoEnd);
+        else if (member == "activeVideoStart") reader.read(activeVideoStart);
+        else if (member == "black16bIre") reader.read(black16bIre);
+        else if (member == "blanking16bIre") reader.read(blanking16bIre);
+        else if (member == "colourBurstEnd") reader.read(colourBurstEnd);
+        else if (member == "colourBurstStart") reader.read(colourBurstStart);
+        else if (member == "fieldHeight") reader.read(fieldHeight);
+        else if (member == "fieldWidth") reader.read(fieldWidth);
+        else if (member == "gitBranch") reader.read(gitBranch);
+        else if (member == "gitCommit") reader.read(gitCommit);
+        else if (member == "isMapped") reader.read(isMapped);
+        else if (member == "isSourcePal") reader.read(isSourcePal); // obsolete
+        else if (member == "isSubcarrierLocked") reader.read(isSubcarrierLocked);
+        else if (member == "isWidescreen") reader.read(isWidescreen);
+        else if (member == "numberOfSequentialFields") reader.read(numberOfSequentialFields);
+        else if (member == "sampleRate") reader.read(sampleRate);
+        else if (member == "system") reader.read(systemString);
+        else if (member == "white16bIre") reader.read(white16bIre);
+        else if (member == "tapeFormat") reader.read(tapeFormat);
+        else reader.discard();
+    }
+
+    reader.endObject();
+
+    // Work out which video system is being used
+    if (systemString == "") {
+        // Not specified -- detect based on isSourcePal and fieldHeight
+        if (isSourcePal) {
+            if (fieldHeight < 300) system = PAL_M;
+            else system = PAL;
+        } else system = NTSC;
+    } else if (!parseVideoSystemName(QString::fromStdString(systemString), system)) {
+        reader.throwError("unknown value for videoParameters.system");
+    }
+
+    // blanking16bIre was added after the JSON format was retired; older files
+    // do not have it, so use the black level as the SQLite reader does
+    if (blanking16bIre == -1) blanking16bIre = black16bIre;
+
+    isValid = true;
+}
+
+// Write VideoParameters to JSON
+void LdDecodeMetaData::VideoParameters::write(JsonWriter &writer) const
+{
+    assert(isValid);
+
+    writer.beginObject();
+
+    // Keep members in alphabetical order
+    writer.writeMember("activeVideoEnd", activeVideoEnd);
+    writer.writeMember("activeVideoStart", activeVideoStart);
+    writer.writeMember("black16bIre", black16bIre);
+    if (blanking16bIre != -1 && blanking16bIre != black16bIre) {
+        writer.writeMember("blanking16bIre", blanking16bIre);
+    }
+    writer.writeMember("colourBurstEnd", colourBurstEnd);
+    writer.writeMember("colourBurstStart", colourBurstStart);
+    writer.writeMember("fieldHeight", fieldHeight);
+    writer.writeMember("fieldWidth", fieldWidth);
+    if (gitBranch != "") {
+        writer.writeMember("gitBranch", gitBranch);
+    }
+    if (gitCommit != "") {
+        writer.writeMember("gitCommit", gitCommit);
+    }
+    writer.writeMember("isMapped", isMapped);
+    writer.writeMember("isSubcarrierLocked", isSubcarrierLocked);
+    writer.writeMember("isWidescreen", isWidescreen);
+    writer.writeMember("numberOfSequentialFields", numberOfSequentialFields);
+    writer.writeMember("sampleRate", sampleRate);
+    // Legacy JSON spells PAL_M as "PAL-M"; keep it so older tools can read the file
+    writer.writeMember("system", system == PAL_M ? "PAL-M" : VIDEO_SYSTEM_DEFAULTS[system].name);
+    writer.writeMember("white16bIre", white16bIre);
+	if(tapeFormat != "") {
+		writer.writeMember("tapeFormat", tapeFormat);
+	}
+
+    writer.endObject();
+}
+
+// Read VitsMetrics from JSON
+void LdDecodeMetaData::VitsMetrics::read(JsonReader &reader)
+{
+    reader.beginObject();
+
+    std::string member;
+    while (reader.readMember(member)) {
+        if (member == "bPSNR") reader.read(bPSNR);
+        else if (member == "wSNR") reader.read(wSNR);
+        else reader.discard();
+    }
+
+    reader.endObject();
+
+    inUse = true;
+}
+
+// Write VitsMetrics to JSON
+void LdDecodeMetaData::VitsMetrics::write(JsonWriter &writer) const
+{
+    assert(inUse);
+
+    writer.beginObject();
+
+    // Keep members in alphabetical order
+    writer.writeMember("bPSNR", bPSNR);
+    writer.writeMember("wSNR", wSNR);
+
+    writer.endObject();
+}
+
+// Read Ntsc from JSON
+void LdDecodeMetaData::Ntsc::read(JsonReader &reader, ClosedCaption &closedCaption)
+{
+    reader.beginObject();
+
+    std::string member;
+    while (reader.readMember(member)) {
+        if (member == "isFmCodeDataValid") reader.read(isFmCodeDataValid);
+        else if (member == "fmCodeData") reader.read(fmCodeData);
+        else if (member == "fieldFlag") reader.read(fieldFlag);
+        else if (member == "isVideoIdDataValid") reader.read(isVideoIdDataValid);
+        else if (member == "videoIdData") reader.read(videoIdData);
+        else if (member == "whiteFlag") reader.read(whiteFlag);
+        else if (member == "ccData0") {
+            // rev7 and earlier put ccData0/1 here rather than in cc
+            reader.read(closedCaption.data0);
+            closedCaption.inUse = true;
+        } else if (member == "ccData1") {
+            reader.read(closedCaption.data1);
+            closedCaption.inUse = true;
+        } else {
+            reader.discard();
+        }
+    }
+
+    reader.endObject();
+
+    inUse = true;
+}
+
+// Write Ntsc to JSON
+void LdDecodeMetaData::Ntsc::write(JsonWriter &writer) const
+{
+    assert(inUse);
+
+    writer.beginObject();
+
+    // Keep members in alphabetical order
+    if (isFmCodeDataValid) {
+        writer.writeMember("fieldFlag", fieldFlag);
+    }
+    if (isFmCodeDataValid) {
+        writer.writeMember("fmCodeData", fmCodeData);
+    }
+    writer.writeMember("isFmCodeDataValid", isFmCodeDataValid);
+    if (isVideoIdDataValid) {
+        writer.writeMember("videoIdData", videoIdData);
+    }
+    writer.writeMember("isVideoIdDataValid", isVideoIdDataValid);
+    if (whiteFlag) {
+        writer.writeMember("whiteFlag", whiteFlag);
+    }
+
+    writer.endObject();
+}
+
+// Read Vitc from JSON
+void LdDecodeMetaData::Vitc::read(JsonReader &reader)
+{
+    reader.beginObject();
+
+    std::string member;
+    while (reader.readMember(member)) {
+        if (member == "vitcData") {
+            reader.beginArray();
+
+            // There should be exactly 8 values, but handle more or less
+            unsigned int i = 0;
+            while (reader.readElement()) {
+                int value;
+                reader.read(value);
+
+                if (i < vitcData.size()) vitcData[i++] = value;
+            }
+            while (i < vitcData.size()) vitcData[i++] = 0;
+
+            reader.endArray();
+        } else {
+            reader.discard();
+        }
+    }
+
+    reader.endObject();
+
+    inUse = true;
+}
+
+// Write Vitc to JSON
+void LdDecodeMetaData::Vitc::write(JsonWriter &writer) const
+{
+    assert(inUse);
+
+    writer.beginObject();
+
+    // Keep members in alphabetical order
+    writer.writeMember("vitcData");
+    writer.beginArray();
+    for (auto value : vitcData) {
+        writer.writeElement();
+        writer.write(value);
+    }
+    writer.endArray();
+
+    writer.endObject();
+}
+
+// Read ClosedCaption from JSON
+void LdDecodeMetaData::ClosedCaption::read(JsonReader &reader)
+{
+    reader.beginObject();
+
+    std::string member;
+    while (reader.readMember(member)) {
+        if (member == "data0") reader.read(data0);
+        else if (member == "data1") reader.read(data1);
+        else reader.discard();
+    }
+
+    reader.endObject();
+
+    inUse = true;
+}
+
+// Write ClosedCaption to JSON
+void LdDecodeMetaData::ClosedCaption::write(JsonWriter &writer) const
+{
+    assert(inUse);
+
+    writer.beginObject();
+
+    // Keep members in alphabetical order
+    if (data0 != -1) {
+        writer.writeMember("data0", data0);
+    }
+    if (data1 != -1) {
+        writer.writeMember("data1", data1);
+    }
+
+    writer.endObject();
+}
+
+// Read PcmAudioParameters from JSON
+void LdDecodeMetaData::PcmAudioParameters::read(JsonReader &reader)
+{
+    reader.beginObject();
+
+    std::string member;
+    while (reader.readMember(member)) {
+        if (member == "bits") reader.read(bits);
+        else if (member == "isLittleEndian") reader.read(isLittleEndian);
+        else if (member == "isSigned") reader.read(isSigned);
+        else if (member == "sampleRate") reader.read(sampleRate);
+        else reader.discard();
+    }
+
+    reader.endObject();
+
+    isValid = true;
+}
+
+// Write PcmAudioParameters to JSON
+void LdDecodeMetaData::PcmAudioParameters::write(JsonWriter &writer) const
+{
+    assert(isValid);
+
+    writer.beginObject();
+
+    // Keep members in alphabetical order
+    writer.writeMember("bits", bits);
+    writer.writeMember("isLittleEndian", isLittleEndian);
+    writer.writeMember("isSigned", isSigned);
+    writer.writeMember("sampleRate", sampleRate);
+
+    writer.endObject();
+}
+
+// Read Field from JSON
+void LdDecodeMetaData::Field::read(JsonReader &reader)
+{
+    reader.beginObject();
+
+    std::string member;
+    while (reader.readMember(member)) {
+        if (member == "audioSamples") reader.read(audioSamples);
+        else if (member == "cc") closedCaption.read(reader);
+        else if (member == "decodeFaults") reader.read(decodeFaults);
+        else if (member == "diskLoc") reader.read(diskLoc);
+        else if (member == "dropOuts") dropOuts.read(reader);
+        else if (member == "efmTValues") reader.read(efmTValues);
+        else if (member == "fieldPhaseID") reader.read(fieldPhaseID);
+        else if (member == "fileLoc") reader.read(fileLoc);
+        else if (member == "isFirstField") reader.read(isFirstField);
+        else if (member == "medianBurstIRE") reader.read(medianBurstIRE);
+        else if (member == "ntsc") ntsc.read(reader, closedCaption);
+        else if (member == "pad") reader.read(pad);
+        else if (member == "seqNo") reader.read(seqNo);
+        else if (member == "syncConf") reader.read(syncConf);
+        else if (member == "vbi") vbi.read(reader);
+        else if (member == "vitc") vitc.read(reader);
+        else if (member == "vitsMetrics") vitsMetrics.read(reader);
+        else reader.discard();
+    }
+
+    reader.endObject();
+}
+
+// Write Field to JSON
+void LdDecodeMetaData::Field::write(JsonWriter &writer) const
+{
+    writer.beginObject();
+
+    // Keep members in alphabetical order
+    if (audioSamples != -1) {
+        writer.writeMember("audioSamples", audioSamples);
+    }
+    if (closedCaption.inUse) {
+        writer.writeMember("cc");
+        closedCaption.write(writer);
+    }
+    if (decodeFaults != -1) {
+        writer.writeMember("decodeFaults", decodeFaults);
+    }
+    if (diskLoc != -1) {
+        writer.writeMember("diskLoc", diskLoc);
+    }
+    if (!dropOuts.empty()) {
+        writer.writeMember("dropOuts");
+        dropOuts.write(writer);
+    }
+    if (efmTValues != -1) {
+        writer.writeMember("efmTValues", efmTValues);
+    }
+    if (fieldPhaseID != -1) {
+        writer.writeMember("fieldPhaseID", fieldPhaseID);
+    }
+    if (fileLoc != -1) {
+        writer.writeMember("fileLoc", fileLoc);
+    }
+    writer.writeMember("isFirstField", isFirstField);
+    writer.writeMember("medianBurstIRE", medianBurstIRE);
+    if (ntsc.inUse) {
+        writer.writeMember("ntsc");
+        ntsc.write(writer);
+    }
+    writer.writeMember("pad", pad);
+    writer.writeMember("seqNo", seqNo);
+    writer.writeMember("syncConf", syncConf);
+    if (vbi.inUse) {
+        writer.writeMember("vbi");
+        vbi.write(writer);
+    }
+    if (vitc.inUse) {
+        writer.writeMember("vitc");
+        vitc.write(writer);
+    }
+    if (vitsMetrics.inUse) {
+        writer.writeMember("vitsMetrics");
+        vitsMetrics.write(writer);
+    }
+
+    writer.endObject();
 }
 
 // Read VBI from SQLite
@@ -269,8 +710,178 @@ void LdDecodeMetaData::clear()
     fields.clear();
 }
 
-// Read all metadata from SQLite file
+// Read all metadata, in whichever format the file is in
 bool LdDecodeMetaData::read(QString fileName)
+{
+    const MetadataFormat fileFormat = detectFormat(fileName);
+    const bool ok = (fileFormat == MetadataFormat::Json) ? readJson(fileName) : readSqlite(fileName);
+
+    // Remember the format so that outputs which do not name one match the input
+    if (ok) format = fileFormat;
+
+    return ok;
+}
+
+// Write all metadata, choosing the format from the file name or the input
+bool LdDecodeMetaData::write(QString fileName) const
+{
+    MetadataFormat outputFormat = format;
+    if (fileName.endsWith(".json", Qt::CaseInsensitive)) outputFormat = MetadataFormat::Json;
+    else if (fileName.endsWith(".db", Qt::CaseInsensitive)) outputFormat = MetadataFormat::Sqlite;
+
+    return (outputFormat == MetadataFormat::Json) ? writeJson(fileName) : writeSqlite(fileName);
+}
+
+LdDecodeMetaData::MetadataFormat LdDecodeMetaData::getFormat() const
+{
+    return format;
+}
+
+void LdDecodeMetaData::setFormat(MetadataFormat _format)
+{
+    format = _format;
+}
+
+// Detect a metadata file's format: an existing file from its contents (SQLite
+// files start with a fixed header), a file still to be written from its name.
+LdDecodeMetaData::MetadataFormat LdDecodeMetaData::detectFormat(const QString &fileName)
+{
+    QFile file(fileName);
+    if (file.open(QIODevice::ReadOnly)) {
+        static const QByteArray sqliteHeader("SQLite format 3\0", 16);
+        return file.read(sqliteHeader.size()) == sqliteHeader ? MetadataFormat::Sqlite : MetadataFormat::Json;
+    }
+
+    return fileName.endsWith(".json", Qt::CaseInsensitive) ? MetadataFormat::Json : MetadataFormat::Sqlite;
+}
+
+// Find the metadata for a TBC file, preferring SQLite when both exist
+QString LdDecodeMetaData::findMetadataFile(const QString &tbcFileName)
+{
+    const QString sqliteFileName = metadataFileName(tbcFileName, MetadataFormat::Sqlite);
+    const QString jsonFileName = metadataFileName(tbcFileName, MetadataFormat::Json);
+
+    if (!QFileInfo::exists(sqliteFileName) && QFileInfo::exists(jsonFileName)) return jsonFileName;
+    return sqliteFileName;
+}
+
+QString LdDecodeMetaData::metadataFileName(const QString &tbcFileName, MetadataFormat _format)
+{
+    return tbcFileName + (_format == MetadataFormat::Json ? ".json" : ".db");
+}
+
+// Read all metadata from a JSON file
+bool LdDecodeMetaData::readJson(QString fileName)
+{
+    std::ifstream jsonFile(fileName.toStdString());
+    if (jsonFile.fail()) {
+        qCritical("Opening JSON input file failed: JSON file cannot be opened/does not exist");
+        return false;
+    }
+
+    clear();
+
+    JsonReader reader(jsonFile);
+
+    try {
+        reader.beginObject();
+
+        std::string member;
+        while (reader.readMember(member)) {
+            if (member == "fields") readFields(reader);
+            else if (member == "pcmAudioParameters") pcmAudioParameters.read(reader);
+            else if (member == "videoParameters") videoParameters.read(reader);
+            else reader.discard();
+        }
+
+        reader.endObject();
+    } catch (JsonReader::Error &error) {
+        qCritical() << "Parsing JSON file failed:" << error.what();
+        return false;
+    }
+
+    jsonFile.close();
+
+    // Check we saw VideoParameters - if not, we can't do anything useful!
+    if (!videoParameters.isValid) {
+        qCritical("JSON file invalid: videoParameters object is not defined");
+        return false;
+    }
+
+    // Check numberOfSequentialFields is consistent
+    if (videoParameters.numberOfSequentialFields != fields.size()) {
+        qCritical("JSON file invalid: numberOfSequentialFields does not match fields array");
+        return false;
+    }
+
+    // Now we know the video system, initialise the rest of VideoParameters
+    initialiseVideoSystemParameters();
+
+    // Generate the PCM audio map based on the field metadata
+    generatePcmAudioMap();
+
+    return true;
+}
+
+// Write all metadata out to a JSON file
+bool LdDecodeMetaData::writeJson(QString fileName) const
+{
+    std::ofstream jsonFile(fileName.toStdString());
+    if (jsonFile.fail()) {
+        qCritical("Opening JSON output file failed");
+        return false;
+    }
+
+    JsonWriter writer(jsonFile);
+
+    writer.beginObject();
+
+    // Keep members in alphabetical order
+    writer.writeMember("fields");
+    writeFields(writer);
+    if (pcmAudioParameters.isValid) {
+        writer.writeMember("pcmAudioParameters");
+        pcmAudioParameters.write(writer);
+    }
+    writer.writeMember("videoParameters");
+    videoParameters.write(writer);
+
+    writer.endObject();
+
+    jsonFile.close();
+
+    return true;
+}
+
+// Read array of Fields from JSON
+void LdDecodeMetaData::readFields(JsonReader &reader)
+{
+    reader.beginArray();
+
+    while (reader.readElement()) {
+        Field field;
+        field.read(reader);
+        fields.push_back(field);
+    }
+
+    reader.endArray();
+}
+
+// Write array of Fields to JSON
+void LdDecodeMetaData::writeFields(JsonWriter &writer) const
+{
+    writer.beginArray();
+
+    for (const Field &field : fields) {
+        writer.writeElement();
+        field.write(writer);
+    }
+
+    writer.endArray();
+}
+
+// Read all metadata from SQLite file
+bool LdDecodeMetaData::readSqlite(QString fileName)
 {
     if (!QFileInfo::exists(fileName)) {
         qCritical() << "SQLite input file does not exist:" << fileName;
@@ -354,7 +965,7 @@ bool LdDecodeMetaData::read(QString fileName)
 }
 
 // Write all metadata out to an SQLite file
-bool LdDecodeMetaData::write(QString fileName) const
+bool LdDecodeMetaData::writeSqlite(QString fileName) const
 {
     // Check if we're updating an existing file or creating a new one
     bool isUpdate = QFileInfo::exists(fileName);

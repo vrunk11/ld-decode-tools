@@ -47,8 +47,11 @@ This is the complete suite of tools for processing LaserDisc captures and TBC (T
 
 ## Important Notes
 
-- **SQLite Format**: All tools now use SQLite format for metadata storage instead of JSON
-- **File Extensions**: TBC files use `.tbc` extension, metadata uses `.tbc.db` (SQLite format)
+- **Metadata formats**: All tools read and write both SQLite (`.tbc.db`, written by current ld-decode) and the legacy JSON format (`.tbc.json`, ld-decode and these tools before late 2025)
+  - For `capture.tbc` the tools use `capture.tbc.db`, or `capture.tbc.json` if that is the only one present
+  - Output metadata is written in the same format as the input (JSON in, JSON out) unless an output file with a `.db` or `.json` extension is given
+  - The original `--input-json` / `--output-json` options are accepted as aliases of `--input-metadata` / `--output-metadata`
+- **File Extensions**: TBC files use `.tbc` extension, metadata uses `.tbc.db` (SQLite) or `.tbc.json` (JSON)
 - **Dependencies**: Most tools require FFmpeg and other multimedia libraries
 - **Performance**: Many tools support multi-threading for faster processing
 

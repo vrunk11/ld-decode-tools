@@ -800,7 +800,9 @@ bool DiscMapper::saveDiscMap(DiscMap &discMap)
 
     // Now save the metadata
     qInfo() << "Saving target video metadata...";
-    QFileInfo outputMetadataFileInfo(outputFileInfo.filePath() + ".db");
+    // Same format as the input metadata (JSON in gives JSON out)
+    QFileInfo outputMetadataFileInfo(LdDecodeMetaData::metadataFileName(outputFileInfo.filePath(),
+        LdDecodeMetaData::detectFormat(inputMetadataFileInfo.filePath())));
     if (!discMap.saveTargetMetadata(outputMetadataFileInfo)) {
         qInfo() << "Writing target metadata failed!";
         return false;

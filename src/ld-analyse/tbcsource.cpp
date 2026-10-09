@@ -1194,19 +1194,20 @@ void TbcSource::generateData()
 bool TbcSource::startBackgroundLoad(QString sourceFilename)
 {
     // Open the TBC metadata file
-    tbcDebugStream() << "TbcSource::startBackgroundLoad(): Processing SQLite metadata...";
-    emit busy("Processing SQLite metadata...");
+    tbcDebugStream() << "TbcSource::startBackgroundLoad(): Processing metadata...";
+    emit busy("Processing metadata...");
 
-    QString metadataFileName = sourceFilename + ".db";
+    // SQLite (.tbc.db), or legacy JSON (.tbc.json) when that is all there is
+    QString metadataFileName = LdDecodeMetaData::findMetadataFile(sourceFilename);
 
     const bool isChromaTbc = sourceFilename.endsWith("_chroma.tbc");
     if (isChromaTbc && !QFileInfo::exists(metadataFileName)) {
-        // The user specified a _chroma.tbc file, and it doesn't have a .db.
+        // The user specified a _chroma.tbc file, and it doesn't have metadata.
 
-        // The corresponding luma file should have a .db, so use that.
+        // The corresponding luma file should have metadata, so use that.
         QString baseFilename = sourceFilename;
         baseFilename.chop(11);
-        metadataFileName = baseFilename + ".tbc.db";
+        metadataFileName = LdDecodeMetaData::findMetadataFile(baseFilename + ".tbc");
 
         // But does the luma file itself exist?
         QString lumaFilename = baseFilename + ".tbc";
@@ -1218,11 +1219,11 @@ bool TbcSource::startBackgroundLoad(QString sourceFilename)
 
     if (!ldDecodeMetaData.read(metadataFileName)) {
         // Open failed
-        qWarning() << "Open TBC SQLite metadata failed for filename" << metadataFileName;
+        qWarning() << "Open TBC metadata failed for filename" << metadataFileName;
         currentSourceFilename.clear();
 
         // Show an error to the user and give up
-        lastIOError = "Could not load source TBC SQLite metadata file";
+        lastIOError = "Could not load source TBC metadata file";
         return false;
     }
 
@@ -1296,7 +1297,7 @@ void TbcSource::finishBackgroundLoad()
 bool TbcSource::startBackgroundSave(QString metadataFilename)
 {
     tbcDebugStream() << "TbcSource::startBackgroundSave(): Saving to" << metadataFilename;
-    emit busy("Saving SQLite metadata...");
+    emit busy("Saving metadata...");
 
     // The general idea here is that decoding takes a long time -- so we want
     // to be careful not to destroy the user's only copy of their metadata file if
@@ -1306,7 +1307,7 @@ bool TbcSource::startBackgroundSave(QString metadataFilename)
     QString newMetadataFilename = metadataFilename + ".new";
     if (!ldDecodeMetaData.write(newMetadataFilename)) {
         // Writing failed
-        lastIOError = "Could not write to new SQLite file";
+        lastIOError = "Could not write to new metadata file";
         return false;
     }
 
@@ -1316,14 +1317,14 @@ bool TbcSource::startBackgroundSave(QString metadataFilename)
     if (!QFile::exists(backupFilename)) {
         if (!QFile::rename(metadataFilename, metadataFilename + ".bup")) {
             // Renaming failed
-            lastIOError = "Could not rename existing SQLite file to backup";
+            lastIOError = "Could not rename existing metadata file to backup";
             return false;
         }
     } else {
         // There is a backup, so it's safe to remove the existing file
         if (!QFile::remove(metadataFilename)) {
             // Deleting failed
-            lastIOError = "Could not remove existing SQLite file";
+            lastIOError = "Could not remove existing metadata file";
             return false;
         }
     }
@@ -1331,7 +1332,7 @@ bool TbcSource::startBackgroundSave(QString metadataFilename)
     // Rename the new file to the target name
     if (!QFile::rename(newMetadataFilename, metadataFilename)) {
         // Renaming failed
-        lastIOError = "Could not rename new SQLite file to target name";
+        lastIOError = "Could not rename new metadata file to target name";
         return false;
     }
 

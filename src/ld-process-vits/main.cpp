@@ -65,13 +65,13 @@ int main(int argc, char *argv[])
     addStandardDebugOptions(parser);
 
     // Option to specify a different metadata input file
-    QCommandLineOption inputMetadataOption(QStringList() << "input-metadata",
-                                       QCoreApplication::translate("main", "Specify the input metadata file (default input.db)"),
+    QCommandLineOption inputMetadataOption(QStringList() << "input-metadata" << "input-json",
+                                       QCoreApplication::translate("main", "Specify the input metadata file (default input.db, or input.json if only that exists)"),
                                        QCoreApplication::translate("main", "filename"));
     parser.addOption(inputMetadataOption);
 
     // Option to specify a different metadata output file
-    QCommandLineOption outputMetadataOption(QStringList() << "output-metadata",
+    QCommandLineOption outputMetadataOption(QStringList() << "output-metadata" << "output-json",
                                         QCoreApplication::translate("main", "Specify the output metadata file (default same as input)"),
                                         QCoreApplication::translate("main", "filename"));
     parser.addOption(outputMetadataOption);
@@ -123,7 +123,7 @@ int main(int argc, char *argv[])
     }
 
     // Work out the metadata filenames
-    QString inputMetadataFilename = inputFilename + ".db";
+    QString inputMetadataFilename = LdDecodeMetaData::findMetadataFile(inputFilename);
     if (parser.isSet(inputMetadataOption)) {
         inputMetadataFilename = parser.value(inputMetadataOption);
     }
