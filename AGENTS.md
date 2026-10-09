@@ -191,6 +191,8 @@ One-off without entering the shell: `nix develop -c <command>`. For a temporary 
 `nix shell nixpkgs#<tool> -c <tool> ...` — do **not** add it to `flake.nix`.
 
 - In-source builds are rejected; use `build/` or `build-*/`.
+- Windows: `build.bat` uses a project-local vcpkg (`vcpkg/`, manifest `vcpkg.json`, Qt under
+  the `qt` feature) — see BUILD.md. Keep `vcpkg.json` and `package-windows.yml` in step.
 - `EZPWD_DIR` is exported by the dev shell. Outside Nix, pass
   `-DEZPWD_DIR=/path/to/ezpwd-reed-solomon/c++`. `.gitmodules` names ezpwd but **no submodule
   commit is recorded in the tree**, so `git submodule update` fetches nothing; clone

@@ -56,27 +56,42 @@ jobs:
           }
           echo "version=$version" >> $env:GITHUB_OUTPUT
 
+      # Project-local vcpkg, as build.bat (and decode-orc) use it. A full clone,
+      # not --depth 1: vcpkg resolves vcpkg.json's builtin-baseline from its
+      # own history.
+      - name: Cache vcpkg bootstrap
+        id: vcpkg-bootstrap-cache
+        uses: actions/cache@v6
+        with:
+          path: vcpkg
+          key: vcpkg-bootstrap-${{ runner.os }}-${{ hashFiles('vcpkg.json') }}
+
+      - name: Setup vcpkg
+        if: steps.vcpkg-bootstrap-cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          git clone https://github.com/microsoft/vcpkg.git vcpkg
+          .\vcpkg\bootstrap-vcpkg.bat -disableMetrics
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Restore vcpkg installed tree
         id: vcpkg-cache
         uses: actions/cache@v6
         with:
           path: vcpkg_installed
-          key: vcpkg-installed-${{ runner.os }}-x64-windows-fftw3-pkgconf-v1
+          key: vcpkg-installed-${{ runner.os }}-x64-windows-${{ hashFiles('vcpkg.json') }}
 
-      # FFTW is found through pkg-config (see the root CMakeLists.txt), so
-      # vcpkg supplies pkgconf as well as the library.
-      - name: Install FFTW and pkgconf via vcpkg
+      # FFTW is found through pkg-config (see the root CMakeLists.txt), so the
+      # manifest supplies pkgconf as well as the library. The manifest's "qt"
+      # feature is left off: CI uses the official Qt installed below rather
+      # than building it from source.
+      - name: Install FFTW and pkgconf from vcpkg.json
         if: steps.vcpkg-cache.outputs.cache-hit != 'true'
         shell: pwsh
         run: |
-          $vcpkgRoot = $env:VCPKG_INSTALLATION_ROOT
-          if (-not $vcpkgRoot -or -not (Test-Path "$vcpkgRoot\vcpkg.exe")) {
-            git clone --depth 1 https://github.com/microsoft/vcpkg.git vcpkg
-            .\vcpkg\bootstrap-vcpkg.bat -disableMetrics
-            $vcpkgRoot = "$PWD\vcpkg"
-          }
-          & "$vcpkgRoot\vcpkg.exe" install `
-            "fftw3:$env:VCPKG_TRIPLET" "pkgconf:$env:VCPKG_TRIPLET" `
+          .\vcpkg\vcpkg.exe install `
+            --triplet $env:VCPKG_TRIPLET `
+            --x-manifest-root=. `
             --x-install-root="$PWD\vcpkg_installed"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 

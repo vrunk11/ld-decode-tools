@@ -118,3 +118,7 @@ package-root/
 
 # External headers fetched by the packaging workflows
 external/
+
+# Project-local vcpkg (build.bat) and its manifest install tree
+vcpkg/
+vcpkg_installed/

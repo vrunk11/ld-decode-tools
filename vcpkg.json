@@ -1,0 +1,27 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "name": "ld-decode-tools",
+  "version-string": "7.2.0",
+  "description": "Tools for processing LaserDisc TBC captures",
+  "builtin-baseline": "e5a1490e1409d175932ef6014519e9ae149ddb7c",
+  "dependencies": [
+    "fftw3",
+    "pkgconf"
+  ],
+  "features": {
+    "qt": {
+      "description": "Build Qt 6 with vcpkg instead of using an installed Qt (used by build.bat; CI installs an official Qt)",
+      "dependencies": [
+        {
+          "name": "qtbase",
+          "features": [
+            "gui",
+            "widgets",
+            "sql-sqlite"
+          ]
+        },
+        "qtsvg"
+      ]
+    }
+  }
+}

@@ -16,6 +16,13 @@ target_include_directories(${TARGET_NAME} PRIVATE ${CMAKE_SOURCE_DIR}/tools/libr
 # Add the include directory for the ezpwd library
 target_include_directories(${TARGET_NAME} PRIVATE ${EZPWD_DIR})
 
+# MSVC does not define ssize_t (a POSIX type); define it as ptrdiff_t so the
+# ezpwd-reed-solomon headers (used by reedsolomon.cpp / rspc.cpp) compile on
+# Windows. Same workaround as decode-orc.
+target_compile_definitions(${TARGET_NAME} PRIVATE
+    $<$<CXX_COMPILER_ID:MSVC>:ssize_t=ptrdiff_t>
+)
+
 # Link Qt and shared lddecode-library (for TBC logging)
 target_link_libraries(${TARGET_NAME} PUBLIC Qt::Core lddecode-library)
 

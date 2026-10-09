@@ -139,6 +139,14 @@ jobs:
           LDAI_OUTPUT: ld-analyse-${{ steps.version.outputs.version }}-x86_64.AppImage
         run: |
           set -euo pipefail
+
+          # linuxdeploy-plugin-qt bundles every SQL driver Qt ships, and the
+          # official Qt includes drivers (MIMER, ODBC, PostgreSQL, ...) whose
+          # client libraries are not on the runner, so dependency resolution
+          # fails. The tools only use SQLite: remove the rest from the Qt
+          # install before bundling.
+          find "$QT_ROOT_DIR/plugins/sqldrivers" -name 'libqsql*.so' ! -name 'libqsqlite.so' -print -delete
+
           exe_args=()
           for exe in AppDir/usr/bin/*; do
             exe_args+=(--executable "$exe")
