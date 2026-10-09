@@ -78,6 +78,44 @@ option(BUILD_PYTHON
     OFF
 )
 
+# Machine-specific optimisation for local builds: link-time optimisation plus
+# code tuned for the building CPU (-march=native, or -mcpu=native where only
+# that is understood). Off by default so CI, Nix and the release packages stay
+# portable to any x86-64 / arm64 machine; build.sh and build.bat turn it on.
+# Binaries built with it may not run on an older or different CPU.
+option(ENABLE_NATIVE_OPTIMIZATION
+    "Optimise for the building machine (LTO + native CPU tuning); not portable"
+    OFF
+)
+
+if(ENABLE_NATIVE_OPTIMIZATION)
+    include(CheckIPOSupported)
+    include(CheckCXXCompilerFlag)
+
+    check_ipo_supported(RESULT _ipo_supported OUTPUT _ipo_output LANGUAGES CXX)
+    if(_ipo_supported)
+        set(CMAKE_INTERPROCEDURAL_OPTIMIZATION ON)
+        message(STATUS "Native optimisation: link-time optimisation enabled")
+    else()
+        message(STATUS "Native optimisation: LTO not supported by this toolchain")
+    endif()
+
+    # MSVC has no "native" target; it keeps its default instruction set.
+    if(NOT MSVC)
+        check_cxx_compiler_flag("-march=native" _have_march_native)
+        if(_have_march_native)
+            add_compile_options(-march=native)
+            message(STATUS "Native optimisation: -march=native")
+        else()
+            check_cxx_compiler_flag("-mcpu=native" _have_mcpu_native)
+            if(_have_mcpu_native)
+                add_compile_options(-mcpu=native)
+                message(STATUS "Native optimisation: -mcpu=native")
+            endif()
+        endif()
+    endif()
+endif()
+
 # Path to ezpwd headers (can be overridden by external builds)
 set(EZPWD_DIR "" CACHE PATH
     "Path to ezpwd C++ headers (directory containing ezpwd/rs_base)"

@@ -48,9 +48,28 @@ fi
 
 jobs="$(nproc 2> /dev/null || sysctl -n hw.ncpu 2> /dev/null || echo 2)"
 
-cmake -S . -B build "${generator[@]}" \
+# Local builds are tuned for this machine (LTO + native CPU); CI and the
+# release packages are not. Set NATIVE=0 for a portable build. Debug builds
+# never use it.
+native=ON
+if [[ "${NATIVE:-1}" == "0" || "$BUILD_TYPE" == "Debug" ]]; then
+    native=OFF
+fi
+
+# Version reported by every tool's --version: the git branch and short commit,
+# with -dirty when the working tree has uncommitted changes.
+version_args=()
+if commit="$(git rev-parse --short HEAD 2> /dev/null)"; then
+    git diff --quiet HEAD 2> /dev/null || commit="${commit}-dirty"
+    branch="$(git rev-parse --abbrev-ref HEAD 2> /dev/null || echo local)"
+    version_args=(-DAPP_BRANCH="$branch" -DAPP_COMMIT="$commit")
+fi
+
+cmake -S . -B build ${generator[@]+"${generator[@]}"} \
     -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
     -DEZPWD_DIR="$EZPWD_DIR" \
+    -DENABLE_NATIVE_OPTIMIZATION="$native" \
+    ${version_args[@]+"${version_args[@]}"} \
     "$@"
 cmake --build build --parallel "$jobs"
 

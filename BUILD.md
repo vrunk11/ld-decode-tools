@@ -44,6 +44,11 @@ and build into `build/` at the repository root:
 ./build.sh [Release|Debug|RelWithDebInfo] [extra cmake arguments]
 ```
 
+Both scripts build for **this machine**: they set `ENABLE_NATIVE_OPTIMIZATION=ON`, which adds
+link-time optimisation and `-march=native` (GCC/Clang; MSVC gets LTO only). The resulting
+binaries may not run on an older or different CPU. Set `NATIVE=0` for a portable build;
+Debug builds never use it. CI, Nix and the release packages leave the option off.
+
 ## Windows (vcpkg)
 
 `build.bat` takes every dependency from a project-local vcpkg, the same way decode-orc does:

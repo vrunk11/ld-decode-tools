@@ -14,10 +14,19 @@
       "dependencies": [
         {
           "name": "qtbase",
+          "default-features": false,
           "features": [
+            "concurrent",
+            "doubleconversion",
+            "freetype",
             "gui",
-            "widgets",
-            "sql-sqlite"
+            "harfbuzz",
+            "pcre2",
+            "png",
+            "sql",
+            "sql-sqlite",
+            "thread",
+            "widgets"
           ]
         },
         "qtsvg"

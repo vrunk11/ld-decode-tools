@@ -22,6 +22,8 @@ rem   VCPKG_TARGET_TRIPLET  vcpkg triplet (default: x64-windows with MSVC,
 rem                         x64-mingw-dynamic with MinGW)
 rem   USE_SYSTEM_QT=1       do not build Qt with vcpkg; point CMake at an
 rem                         installed Qt with -DCMAKE_PREFIX_PATH=...
+rem   NATIVE=0              portable build: no LTO / native CPU tuning
+rem                         (on by default here, never in CI)
 rem
 rem Requires CMake and Git; Ninja is used when available.
 rem
@@ -29,6 +31,11 @@ rem SPDX-License-Identifier: GPL-3.0-or-later
 rem SPDX-FileCopyrightText: 2026 ld-decode-tools contributors
 
 setlocal EnableDelayedExpansion
+
+rem Started by double-click (Explorer runs "cmd /c build.bat"): keep the window
+rem open at the end so the result, or the error, can be read.
+set "PAUSE_AT_END="
+echo !cmdcmdline! | findstr /i /c:"/c" >nul && set "PAUSE_AT_END=1"
 
 cd /d "%~dp0"
 
@@ -84,6 +91,28 @@ if "%TRIPLET%"=="" (
     )
 )
 
+rem MinGW's windres runs the preprocessor without quoting its path, so a
+rem toolchain under a directory with spaces ("C:\Program Files\mingw64") fails
+rem on every .rc file (Qt's included). Put the 8.3 short form of gcc's directory
+rem first on PATH so CMake and vcpkg pick up a space-free path.
+if not defined USE_MSVC (
+    set "GCC_DIR="
+    for /f "delims=" %%G in ('where gcc 2^>nul') do if not defined GCC_DIR set "GCC_DIR=%%~dpG"
+    if defined GCC_DIR (
+        set "GCC_DIR=!GCC_DIR:~0,-1!"
+        if not "!GCC_DIR: =!"=="!GCC_DIR!" (
+            for %%D in ("!GCC_DIR!") do set "GCC_SHORT=%%~sD"
+            if "!GCC_SHORT: =!"=="!GCC_SHORT!" (
+                echo MinGW is under a path with spaces; using !GCC_SHORT!
+                set "PATH=!GCC_SHORT!;!PATH!"
+            ) else (
+                echo WARNING: MinGW is under "!GCC_DIR!", a path with spaces, and no short
+                echo name is available. windres will fail; install MinGW without spaces.
+            )
+        )
+    )
+)
+
 rem MinGW has no MSVC to build vcpkg's host tools with, so the host triplet
 rem follows the target one.
 set "HOST_TRIPLET_ARG="
@@ -104,8 +133,29 @@ rem tree during configure, before pkg_check_modules runs, so the pkgconf it
 rem provides can be named up front.
 set "PKGCONF=%CD%\build\vcpkg_installed\%TRIPLET%\tools\pkgconf\pkgconf.exe"
 
+rem Local builds are tuned for this machine (LTO + native CPU); CI and the
+rem release packages are not. Set NATIVE=0 for a portable build. Debug builds
+rem never use it.
+set "NATIVE_OPT=ON"
+if "%NATIVE%"=="0" set "NATIVE_OPT=OFF"
+if /i "%BUILD_TYPE%"=="Debug" set "NATIVE_OPT=OFF"
+
+rem Version reported by every tool's --version: the git branch and short
+rem commit, with -dirty when the working tree has uncommitted changes.
+set "APP_BRANCH="
+set "APP_COMMIT="
+for /f "delims=" %%C in ('git rev-parse --short HEAD 2^>nul') do set "APP_COMMIT=%%C"
+for /f "delims=" %%B in ('git rev-parse --abbrev-ref HEAD 2^>nul') do set "APP_BRANCH=%%B"
+set "VERSION_ARGS="
+if defined APP_COMMIT (
+    git diff --quiet HEAD >nul 2>&1 || set "APP_COMMIT=!APP_COMMIT!-dirty"
+    if not defined APP_BRANCH set "APP_BRANCH=local"
+    set "VERSION_ARGS=-DAPP_BRANCH=!APP_BRANCH! -DAPP_COMMIT=!APP_COMMIT!"
+)
+
 echo.
-echo Build type: %BUILD_TYPE%   vcpkg triplet: %TRIPLET%
+echo Build type: %BUILD_TYPE%   vcpkg triplet: %TRIPLET%   native optimisation: %NATIVE_OPT%
+echo Version: %APP_BRANCH% / %APP_COMMIT%
 echo.
 
 cmake -S . -B build %GENERATOR% ^
@@ -116,6 +166,8 @@ cmake -S . -B build %GENERATOR% ^
     %FEATURES_ARG% ^
     "-DPKG_CONFIG_EXECUTABLE=%PKGCONF%" ^
     "-DEZPWD_DIR=%EZPWD_DIR%" ^
+    -DENABLE_NATIVE_OPTIMIZATION=%NATIVE_OPT% ^
+    %VERSION_ARGS% ^
     %EXTRA_ARGS% || goto :error
 
 cmake --build build --config %BUILD_TYPE% --parallel || goto :error
@@ -139,9 +191,12 @@ echo.
 echo Build complete: binaries are in build\bin
 echo If a tool reports a missing DLL, put the vcpkg runtime first on PATH:
 echo   set "PATH=%VCPKG_BIN%;%%PATH%%"
+if defined PAUSE_AT_END pause
 exit /b 0
 
 :error
 echo.
-echo Build failed.
+echo Build failed. If it failed while vcpkg was building a dependency, the
+echo details are in build\vcpkg-manifest-install.log and vcpkg\buildtrees\^<port^>\
+if defined PAUSE_AT_END pause
 exit /b 1
