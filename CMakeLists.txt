@@ -270,4 +270,14 @@ if(BUILD_TESTING)
             --expect-vbi 9152512,15730528,15730528
             ${CMAKE_SOURCE_DIR}/test-data/pal/ggv-mb-1khz
     )
+
+    # The library tests above are labelled "unit" in their own directories.
+    # Everything here runs the built tools end to end over real files, and the
+    # chroma tests additionally need ffmpeg, so they are "functional".
+    set_tests_properties(
+        chroma-ntsc-rgb chroma-ntsc-ycbcr chroma-pal-rgb chroma-pal-ycbcr
+        decode-pretbc-ntsc-cav decode-pretbc-ntsc-clv
+        decode-pretbc-pal-cav decode-pretbc-pal-clv decode-pretbc-pal-ggv
+        PROPERTIES LABELS functional
+    )
 endif()

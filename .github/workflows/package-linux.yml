@@ -1,0 +1,185 @@
+# Portable Linux package: every tool built against an official Qt and bundled
+# with its libraries by linuxdeploy, shipped two ways from one AppDir:
+#
+#   ld-decode-tools-<version>-linux-x86_64.tar.gz   all tools, run from usr/bin
+#   ld-analyse-<version>-x86_64.AppImage            the GUI, double-clickable
+#
+# The Nix package (build-and-test.yml) is what Nix users get; this one is for
+# everyone else, so it deliberately does not use Nix: Nix store paths are not
+# portable to other distributions.
+#
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+name: Package Linux
+
+on:
+  workflow_call:
+    inputs:
+      artifact_name:
+        description: Name of the uploaded Linux artifact
+        required: false
+        default: ld-decode-tools-linux
+        type: string
+      retention_days:
+        description: Artifact retention in days
+        required: false
+        default: 30
+        type: number
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    # The oldest supported runner, so the bundle's glibc floor stays low.
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          # ezpwd (Reed-Solomon headers) is a submodule outside Nix.
+          submodules: true
+
+      - name: Resolve package version
+        id: version
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            version="${GITHUB_REF_NAME}"
+          else
+            version="git-${GITHUB_SHA:0:7}"
+          fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+      - name: Install build dependencies
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            ninja-build pkg-config libfftw3-dev \
+            libgl1-mesa-dev libxkbcommon-dev libxkbcommon-x11-0 \
+            libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 \
+            libxcb-randr0 libxcb-render-util0 libxcb-shape0 libxcb-xinerama0
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@48d3ad6db93f3627c8ee7a0454bc6f3744f7e730 # v4.3.1
+        with:
+          # Kept aligned with the macOS and Windows packages.
+          version: '6.9.*'
+          host: 'linux'
+          target: 'desktop'
+          arch: 'linux_gcc_64'
+          cache: true
+
+      - name: Configure and build
+        shell: bash
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX=/usr \
+            -DBUILD_TESTING=OFF \
+            -DAPP_BRANCH=github-actions \
+            -DAPP_COMMIT=${{ steps.version.outputs.version }}
+          cmake --build build --parallel
+
+      - name: Install into AppDir
+        shell: bash
+        run: |
+          DESTDIR="$PWD/AppDir" cmake --install build
+
+          # The tree's desktop entry carries a duplicate key that
+          # desktop-file-validate rejects; write a clean one for the bundle.
+          mkdir -p AppDir/usr/share/applications
+          cat > AppDir/usr/share/applications/ld-analyse.desktop <<'EOF'
+          [Desktop Entry]
+          Type=Application
+          Name=ld-analyse
+          Comment=TBC output analysis
+          Exec=ld-analyse
+          Icon=ld-analyse
+          Terminal=false
+          MimeType=application/video-tbc;
+          Categories=AudioVideo;Video;Utility;
+          EOF
+
+      - name: Fetch linuxdeploy
+        shell: bash
+        run: |
+          mkdir -p tools-bin
+          base=https://github.com/linuxdeploy
+          curl -fsSL -o tools-bin/linuxdeploy \
+            "$base/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage"
+          curl -fsSL -o tools-bin/linuxdeploy-plugin-qt \
+            "$base/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-x86_64.AppImage"
+          curl -fsSL -o tools-bin/linuxdeploy-plugin-appimage \
+            "$base/linuxdeploy-plugin-appimage/releases/download/continuous/linuxdeploy-plugin-appimage-x86_64.AppImage"
+          chmod +x tools-bin/*
+          echo "$PWD/tools-bin" >> "$GITHUB_PATH"
+
+      - name: Bundle libraries and build AppImage
+        shell: bash
+        env:
+          # Runners have no FUSE; the AppImage tools unpack themselves instead.
+          APPIMAGE_EXTRACT_AND_RUN: 1
+          QMAKE: ${{ env.QT_ROOT_DIR }}/bin/qmake
+          # Qt SQL is used for the .tbc.db metadata; the SQLite driver is the
+          # only one needed. Qt SVG is needed for ld-analyse's icons.
+          EXTRA_QT_MODULES: sql;svg
+          EXTRA_PLATFORM_PLUGINS: libqoffscreen.so
+          LDAI_OUTPUT: ld-analyse-${{ steps.version.outputs.version }}-x86_64.AppImage
+        run: |
+          set -euo pipefail
+          exe_args=()
+          for exe in AppDir/usr/bin/*; do
+            exe_args+=(--executable "$exe")
+          done
+
+          linuxdeploy --appdir AppDir \
+            "${exe_args[@]}" \
+            --desktop-file AppDir/usr/share/applications/ld-analyse.desktop \
+            --icon-file AppDir/usr/share/icons/hicolor/128x128/apps/ld-analyse.png \
+            --plugin qt \
+            --output appimage
+
+      - name: Smoke test bundled tools
+        shell: bash
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          set -euo pipefail
+          # Each command-line tool must start from the bundle and parse --help.
+          for exe in AppDir/usr/bin/*; do
+            # linuxdeploy-plugin-qt leaves a qt.conf beside the binaries.
+            [[ -f "$exe" && -x "$exe" ]] || continue
+            name="$(basename "$exe")"
+            [[ "$name" == ld-analyse ]] && continue
+            "$exe" --help > /dev/null
+            echo "${name}: ok"
+          done
+          APPIMAGE_EXTRACT_AND_RUN=1 ./ld-analyse-*.AppImage --help > /dev/null
+          echo "ld-analyse AppImage: ok"
+
+      - name: Assemble artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          name="ld-decode-tools-${{ steps.version.outputs.version }}-linux-x86_64"
+          mkdir -p dist
+          cp -a AppDir "dist/${name}"
+          cp README.md LICENSE "dist/${name}/"
+          tar -C dist -czf "dist/${name}.tar.gz" "${name}"
+          rm -rf "dist/${name}"
+          mv ld-analyse-*.AppImage dist/
+          ls -lh dist
+
+      - name: Upload Linux artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ inputs.artifact_name }}
+          path: |
+            dist/*.tar.gz
+            dist/*.AppImage
+          if-no-files-found: error
+          retention-days: ${{ inputs.retention_days }}

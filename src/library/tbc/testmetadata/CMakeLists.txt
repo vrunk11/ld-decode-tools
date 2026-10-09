@@ -5,3 +5,4 @@ add_executable(testmetadata
 target_link_libraries(testmetadata PRIVATE Qt::Core lddecode-library)
 
 add_test(NAME testmetadata COMMAND testmetadata)
+set_tests_properties(testmetadata PROPERTIES LABELS unit)

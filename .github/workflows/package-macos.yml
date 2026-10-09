@@ -1,0 +1,185 @@
+# macOS package: ld-analyse.app with every command-line tool inside it
+# (Contents/MacOS), so all of them share one set of bundled Qt frameworks,
+# delivered as a DMG.
+#
+# Command-line use: /Applications/ld-analyse.app/Contents/MacOS/<tool>
+#
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+name: Package macOS
+
+on:
+  workflow_call:
+    inputs:
+      artifact_name:
+        description: Name of the uploaded DMG artifact
+        required: false
+        default: ld-decode-tools-macos
+        type: string
+      retention_days:
+        description: Artifact retention in days
+        required: false
+        default: 30
+        type: number
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: macos-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          submodules: true
+
+      - name: Resolve package version
+        id: version
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            version="${GITHUB_REF_NAME}"
+          else
+            version="git-${GITHUB_SHA:0:7}"
+          fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+      - name: Install build dependencies
+        shell: bash
+        run: |
+          # A flaky Homebrew API download should not abort the build; fall back
+          # to the existing metadata after a few attempts.
+          for i in 1 2 3; do
+            brew update && break
+            echo "brew update failed (attempt $i), retrying..."
+            sleep 15
+          done || echo "brew update failed after retries; continuing with existing metadata"
+
+          for dep in ninja pkg-config fftw; do
+            brew list --versions "$dep" > /dev/null 2>&1 || brew install "$dep"
+          done
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@48d3ad6db93f3627c8ee7a0454bc6f3744f7e730 # v4.3.1
+        with:
+          version: '6.9.*'
+          host: 'mac'
+          target: 'desktop'
+          arch: 'clang_64'
+          cache: true
+
+      - name: Configure and build
+        shell: bash
+        run: |
+          # Homebrew's fftw is single-architecture, so build for the runner's
+          # architecture only even though Qt itself is universal.
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_OSX_ARCHITECTURES="$(uname -m)" \
+            -DBUILD_TESTING=OFF \
+            -DAPP_BRANCH=github-actions \
+            -DAPP_COMMIT=${{ steps.version.outputs.version }}
+          cmake --build build --parallel
+
+      - name: Assemble app bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf package-root
+          mkdir -p package-root
+          cp -R build/bin/ld-analyse.app package-root/
+
+          APP_BUNDLE="$PWD/package-root/ld-analyse.app"
+          exe_args=()
+          for exe in build/bin/*; do
+            [[ -f "$exe" && -x "$exe" ]] || continue
+            name="$(basename "$exe")"
+            cp "$exe" "$APP_BUNDLE/Contents/MacOS/$name"
+            exe_args+=("-executable=$APP_BUNDLE/Contents/MacOS/$name")
+          done
+
+          # Bundles Qt and every non-system dylib (fftw from Homebrew) into
+          # Contents/Frameworks and rewrites the load paths of the app and all
+          # the command-line tools to point there.
+          macdeployqt "$APP_BUNDLE" -always-overwrite "${exe_args[@]}"
+
+      - name: Re-sign app bundle
+        shell: bash
+        run: |
+          APP_BUNDLE="$PWD/package-root/ld-analyse.app"
+          codesign --force --deep --sign - --timestamp=none "$APP_BUNDLE"
+          codesign --verify --deep --strict "$APP_BUNDLE"
+
+      - name: Verify standalone app bundle
+        shell: bash
+        run: |
+          APP_BUNDLE="$PWD/package-root/ld-analyse.app"
+          FAIL=0
+          while IFS= read -r target; do
+            while IFS= read -r dep; do
+              [[ -z "$dep" ]] && continue
+              case "$dep" in
+                /System/*|/usr/lib/*|@rpath/*|@loader_path/*|@executable_path/*)
+                  ;;
+                *)
+                  echo "External dependency in $target: $dep" >&2
+                  FAIL=1
+                  ;;
+              esac
+            done < <(otool -L "$target" | tail -n +2 | awk '{print $1}')
+          done < <(
+            find "$APP_BUNDLE/Contents/MacOS" -type f
+            find "$APP_BUNDLE/Contents/Frameworks" -type f -name "*.dylib" 2>/dev/null || true
+          )
+          if [[ "$FAIL" -ne 0 ]]; then
+            echo "Standalone verification failed" >&2
+            exit 1
+          fi
+
+      - name: Smoke test bundled tools
+        shell: bash
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          set -euo pipefail
+          for exe in package-root/ld-analyse.app/Contents/MacOS/*; do
+            "$exe" --help > /dev/null
+            echo "$(basename "$exe"): ok"
+          done
+
+      - name: Create DMG
+        shell: bash
+        run: |
+          # macos-latest runners are Apple Silicon; name the artifact by the
+          # architecture actually built so Intel users are not misled.
+          DMG_NAME="ld-decode-tools-${{ steps.version.outputs.version }}-macos-$(uname -m).dmg"
+          VOL_NAME="ld-decode-tools ${{ steps.version.outputs.version }}"
+          rm -rf dmg-root
+          mkdir -p dmg-root dist
+          cp -R package-root/ld-analyse.app dmg-root/
+          cp README.md LICENSE dmg-root/
+          ln -s /Applications dmg-root/Applications
+
+          # hdiutil intermittently reports "resource busy" on shared runners.
+          for attempt in 1 2 3 4 5; do
+            hdiutil detach "/Volumes/$VOL_NAME" -force > /dev/null 2>&1 || true
+            if hdiutil create -volname "$VOL_NAME" -srcfolder dmg-root -ov -format UDZO "dist/$DMG_NAME"; then
+              hdiutil verify "dist/$DMG_NAME"
+              ls -lh dist
+              exit 0
+            fi
+            echo "hdiutil create failed (attempt $attempt); retrying..." >&2
+            sleep $((attempt * 5))
+          done
+          exit 1
+
+      - name: Upload DMG artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ inputs.artifact_name }}
+          path: dist/*.dmg
+          if-no-files-found: error
+          retention-days: ${{ inputs.retention_days }}

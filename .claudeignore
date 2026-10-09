@@ -1,0 +1,23 @@
+# Build output
+build/
+build-*/
+result
+result-*
+.direnv/
+.ccache/
+Testing/
+
+# Large binary fixtures (golden, never edited)
+test-data/
+*.tbc
+*.tbc.db
+*.efm
+*.pcm
+*.lds
+*.ldf
+
+# Vendored
+src/efm-decoder/libs/ezpwd/
+
+# Design sources
+*.ai

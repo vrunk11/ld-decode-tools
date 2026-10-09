@@ -5,3 +5,4 @@ add_executable(testvbidecoder
 target_link_libraries(testvbidecoder PRIVATE Qt::Core lddecode-library)
 
 add_test(NAME testvbidecoder COMMAND testvbidecoder)
+set_tests_properties(testvbidecoder PROPERTIES LABELS unit)

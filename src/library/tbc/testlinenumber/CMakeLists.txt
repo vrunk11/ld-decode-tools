@@ -5,3 +5,4 @@ add_executable(testlinenumber
 target_link_libraries(testlinenumber PRIVATE Qt::Core lddecode-library)
 
 add_test(NAME testlinenumber COMMAND testlinenumber)
+set_tests_properties(testlinenumber PROPERTIES LABELS unit)

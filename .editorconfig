@@ -1,0 +1,45 @@
+; Editor-neutral formatting defaults. These apply to newly written text; do not use them as a
+; reason to reformat existing files (see AGENTS.md section 4.1).
+
+root = true
+
+[*]
+charset = utf-8
+indent_style = space
+indent_size = 4
+trim_trailing_whitespace = true
+end_of_line = lf
+insert_final_newline = true
+
+[{CMakeLists.txt,*.cmake}]
+indent_size = 4
+
+[*.nix]
+indent_size = 2
+
+[*.{yml,yaml}]
+indent_size = 2
+
+[*.md]
+; trailing whitespace is a hard line break in Markdown
+trim_trailing_whitespace = false
+
+[*.ui]
+indent_size = 1
+
+; Vendored and golden content: never touch
+[src/efm-decoder/libs/ezpwd/**]
+indent_style = unset
+indent_size = unset
+trim_trailing_whitespace = false
+insert_final_newline = unset
+end_of_line = unset
+charset = unset
+
+[test-data/**]
+indent_style = unset
+indent_size = unset
+trim_trailing_whitespace = false
+insert_final_newline = unset
+end_of_line = unset
+charset = unset

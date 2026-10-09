@@ -103,3 +103,15 @@ compile.bat
 
 # Nix artefacts
 result
+
+# direnv / local environment
+.direnv/
+.envrc.local
+
+# CI compile cache
+.ccache/
+
+# Packaging scratch
+AppDir/
+dist/
+package-root/

@@ -1,0 +1,187 @@
+# Linux build and test gate, run through the Nix flake so CI uses exactly the
+# toolchain a developer gets from `nix develop`.
+#
+# Three independent jobs run concurrently:
+#
+#   static-checks  no compiler: licence headers on new files, script syntax,
+#                  flake evaluation. Finishes in a couple of minutes so a slip
+#                  there fails while the build is still compiling.
+#   nix-package    `nix build`, i.e. the package exactly as Nix users get it.
+#   test-gate      dev-shell build with ccache, then the unit and functional
+#                  CTest slices, plus a staged `cmake --install`.
+#
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+name: Build and Test (Nix)
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  static-checks:
+    name: Static Checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          # Full history so the header check can diff against the base ref.
+          fetch-depth: 0
+
+      # Only files *added* by this change are checked: most of the existing
+      # tree predates the SPDX convention, and converting it is not this gate's
+      # job. See AGENTS.md section 5.2.
+      - name: SPDX headers on new source files
+        shell: bash
+        run: |
+          if [[ "${GITHUB_EVENT_NAME}" == "pull_request" ]]; then
+            base="${{ github.event.pull_request.base.sha }}"
+          else
+            base="${{ github.event.before }}"
+          fi
+          bash tools/check-spdx-new-files.sh "${base}"
+
+      - name: Python test-script syntax
+        shell: bash
+        run: |
+          python3 -m py_compile scripts/test-chroma scripts/test-decode-pretbc
+          echo "Test scripts compile"
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@8aa03977d8d733052d78f4e008a241fd1dbf36b3 # v31
+        with:
+          nix_path: nixpkgs=channel:nixos-25.11
+
+      - name: Evaluate flake
+        run: nix flake check --no-build --print-build-logs
+
+  nix-package:
+    name: Nix Package Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@8aa03977d8d733052d78f4e008a241fd1dbf36b3 # v31
+        with:
+          nix_path: nixpkgs=channel:nixos-25.11
+
+      - name: Build package
+        run: nix build .# --print-build-logs
+
+      - name: Smoke test packaged tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          ls -l result/bin
+          # Every command-line tool must at least start and parse --help.
+          for tool in ld-chroma-decoder ld-process-vbi ld-dropout-correct ld-json-converter efm-decoder-f2; do
+            ./result/bin/"${tool}" --help > /dev/null
+            echo "${tool}: ok"
+          done
+
+  test-gate:
+    name: Unit + Functional Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@8aa03977d8d733052d78f4e008a241fd1dbf36b3 # v31
+        with:
+          nix_path: nixpkgs=channel:nixos-25.11
+
+      # Every run configures from scratch; with this cache a branch push only
+      # recompiles the translation units it touched. The key is per-commit so
+      # the entry is always written back, and restore-keys falls back to the
+      # newest earlier cache.
+      - name: Restore ccache
+        uses: actions/cache@v6
+        with:
+          path: ${{ github.workspace }}/.ccache
+          key: ccache-test-gate-${{ github.sha }}
+          restore-keys: |
+            ccache-test-gate-
+
+      # One `nix develop` for the whole sequence avoids paying flake
+      # evaluation once per step.
+      - name: Build, Test and Install
+        env:
+          CCACHE_DIR: ${{ github.workspace }}/.ccache
+          CCACHE_MAXSIZE: 1G
+        run: |
+          nix develop -c bash -lc "
+            set -euo pipefail
+
+            export CMAKE_CXX_COMPILER_LAUNCHER=ccache
+            ccache --zero-stats > /dev/null
+
+            BUILD_JOBS=\"\$(nproc)\"
+            if [ -z \"\$BUILD_JOBS\" ] || [ \"\$BUILD_JOBS\" -lt 2 ]; then
+              BUILD_JOBS=2
+            fi
+
+            # --- Configure and build ---
+            cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo
+            cmake --build build --parallel \"\$BUILD_JOBS\"
+
+            # --- Assert the CTest labels are present ---
+            # A label rename would otherwise silently empty a slice below and
+            # turn it green.
+            labels_output=\"\$(ctest --test-dir build --print-labels)\"
+            missing=()
+            for label in unit functional; do
+              if ! printf '%s\n' \"\$labels_output\" | grep -Eq \"^[[:space:]]+\$label\$\"; then
+                missing+=(\"\$label\")
+              fi
+            done
+            if [ \"\${#missing[@]}\" -ne 0 ]; then
+              echo \"Missing expected CTest labels: \${missing[*]}\"
+              printf '%s\n' \"\$labels_output\"
+              exit 1
+            fi
+
+            # --- Unit tests (library, no media) ---
+            ctest --test-dir build -L unit --parallel \"\$BUILD_JOBS\" \
+              --output-on-failure --output-junit \${PWD}/build/ctest-results-unit.xml
+
+            # --- Functional tests (tools end to end over test-data/) ---
+            # Not parallel: the chroma tests are chained with DEPENDS and share
+            # output files.
+            ctest --test-dir build -L functional \
+              --output-on-failure --output-junit \${PWD}/build/ctest-results-functional.xml
+
+            # --- Every registered test must belong to a slice ---
+            unlabelled=\"\$(ctest --test-dir build -N -LE 'unit|functional' | grep -c 'Test #' || true)\"
+            if [ \"\$unlabelled\" -ne 0 ]; then
+              echo \"\$unlabelled test(s) carry neither the unit nor the functional label:\"
+              ctest --test-dir build -N -LE 'unit|functional'
+              exit 1
+            fi
+
+            # --- Staged install ---
+            cmake --install build --prefix \"\$PWD/build/staging\" > build/install.log
+            ls -l build/staging/bin
+
+            ccache --show-stats
+          "
+
+      - name: Upload Test Artifacts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ctest-artifacts
+          if-no-files-found: warn
+          path: |
+            build/ctest-results-unit.xml
+            build/ctest-results-functional.xml
+            build/Testing/Temporary/LastTest.log
+            build/install.log

@@ -1,0 +1,180 @@
+# Windows package: every tool built with MSVC against an official Qt, with its
+# Qt and FFTW runtime beside it, delivered as a portable ZIP.
+#
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+name: Package Windows
+
+on:
+  workflow_call:
+    inputs:
+      artifact_name:
+        description: Name of the uploaded ZIP artifact
+        required: false
+        default: ld-decode-tools-windows
+        type: string
+      retention_days:
+        description: Artifact retention in days
+        required: false
+        default: 30
+        type: number
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: windows-latest
+    timeout-minutes: 60
+
+    env:
+      VCPKG_TRIPLET: x64-windows
+      VCPKG_DISABLE_METRICS: 1
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          submodules: true
+
+      - name: Resolve package version
+        id: version
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF -like "refs/tags/*") {
+            $version = $env:GITHUB_REF_NAME
+          } else {
+            $version = "git-$($env:GITHUB_SHA.Substring(0,7))"
+          }
+          echo "version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Restore vcpkg installed tree
+        id: vcpkg-cache
+        uses: actions/cache@v6
+        with:
+          path: vcpkg_installed
+          key: vcpkg-installed-${{ runner.os }}-x64-windows-fftw3-pkgconf-v1
+
+      # FFTW is found through pkg-config (see the root CMakeLists.txt), so
+      # vcpkg supplies pkgconf as well as the library.
+      - name: Install FFTW and pkgconf via vcpkg
+        if: steps.vcpkg-cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          $vcpkgRoot = $env:VCPKG_INSTALLATION_ROOT
+          if (-not $vcpkgRoot -or -not (Test-Path "$vcpkgRoot\vcpkg.exe")) {
+            git clone --depth 1 https://github.com/microsoft/vcpkg.git vcpkg
+            .\vcpkg\bootstrap-vcpkg.bat -disableMetrics
+            $vcpkgRoot = "$PWD\vcpkg"
+          }
+          & "$vcpkgRoot\vcpkg.exe" install `
+            "fftw3:$env:VCPKG_TRIPLET" "pkgconf:$env:VCPKG_TRIPLET" `
+            --x-install-root="$PWD\vcpkg_installed"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@48d3ad6db93f3627c8ee7a0454bc6f3744f7e730 # v4.3.1
+        with:
+          version: '6.9.*'
+          host: 'windows'
+          target: 'desktop'
+          arch: 'win64_msvc2022_64'
+          cache: true
+
+      - name: Configure and build
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          # MSVC environment for the Ninja generator. Using the dev shell
+          # rather than a pinned "Visual Studio NN" generator keeps configure
+          # working across runner image bumps.
+          $vsPath = &"${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
+          Import-Module "$vsPath\Common7\Tools\Microsoft.VisualStudio.DevShell.dll"
+          Enter-VsDevShell -VsInstallPath $vsPath -SkipAutomaticLocation -DevCmdArguments "-arch=x64 -host_arch=x64"
+
+          $vcpkgDir = "$PWD\vcpkg_installed\$env:VCPKG_TRIPLET"
+          $pkgconfExe = "$vcpkgDir\tools\pkgconf\pkgconf.exe"
+          if (-not (Test-Path $pkgconfExe)) {
+            Write-Error "pkgconf executable not found at $pkgconfExe"
+            exit 1
+          }
+          $env:PKG_CONFIG_PATH = "$vcpkgDir\lib\pkgconfig;$vcpkgDir\share\pkgconfig"
+
+          cmake -S . -B build -G Ninja `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DBUILD_TESTING=OFF `
+            "-DCMAKE_PREFIX_PATH=$env:QT_ROOT_DIR;$vcpkgDir" `
+            "-DPKG_CONFIG_EXECUTABLE=$pkgconfExe" `
+            -DAPP_BRANCH=github-actions `
+            "-DAPP_COMMIT=${{ steps.version.outputs.version }}"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          cmake --build build --parallel
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Assemble package
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $name = "ld-decode-tools-${{ steps.version.outputs.version }}-windows-x64"
+          $stage = "dist\$name"
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+
+          $exes = Get-ChildItem -Path "build\bin" -Filter "*.exe"
+          if (-not ($exes | Where-Object Name -eq "ld-analyse.exe")) {
+            Write-Error "ld-analyse.exe was not built"
+            exit 1
+          }
+          $exes | ForEach-Object { Copy-Item $_.FullName $stage }
+
+          # Qt runtime, plugins (platforms, sqldrivers, iconengines, ...) for
+          # every tool at once; they share one directory.
+          $stagedExes = Get-ChildItem -Path $stage -Filter "*.exe" | ForEach-Object { $_.FullName }
+          & windeployqt --release --no-translations --no-system-d3d-compiler --no-opengl-sw @stagedExes
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          # Non-Qt runtime: FFTW from vcpkg.
+          Get-ChildItem -Path "vcpkg_installed\$env:VCPKG_TRIPLET\bin" -Filter "*.dll" |
+            ForEach-Object { Copy-Item $_.FullName $stage -Force }
+
+          Copy-Item README.md, LICENSE $stage
+
+      - name: Smoke test packaged tools
+        shell: pwsh
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          $stage = Get-ChildItem -Path dist -Directory | Select-Object -First 1
+          # ld-analyse is a GUI-subsystem binary whose --help goes to a message
+          # box, so only the command-line tools are run.
+          $failed = $false
+          Get-ChildItem -Path $stage.FullName -Filter "*.exe" |
+            Where-Object Name -ne "ld-analyse.exe" |
+            ForEach-Object {
+              & $_.FullName --help | Out-Null
+              if ($LASTEXITCODE -ne 0) {
+                Write-Host "::error::$($_.Name) --help exited with $LASTEXITCODE"
+                $failed = $true
+              } else {
+                Write-Host "$($_.Name): ok"
+              }
+            }
+          if ($failed) { exit 1 }
+
+      - name: Create ZIP
+        shell: pwsh
+        run: |
+          $stage = Get-ChildItem -Path dist -Directory | Select-Object -First 1
+          Compress-Archive -Path $stage.FullName -DestinationPath "dist\$($stage.Name).zip"
+          Get-ChildItem dist\*.zip | ForEach-Object {
+            Write-Host "$($_.Name) ($([math]::Round($_.Length / 1MB, 2)) MB)"
+          }
+
+      - name: Upload ZIP artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ inputs.artifact_name }}
+          path: dist/*.zip
+          if-no-files-found: error
+          retention-days: ${{ inputs.retention_days }}

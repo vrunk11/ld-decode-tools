@@ -1,0 +1,46 @@
+# Publishes the packaged artifacts of the calling run as a GitHub release.
+# Called once from main.yml after every platform has packaged, so a release is
+# never published with a platform missing.
+#
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+name: Publish Release From Artifact
+
+on:
+  workflow_call:
+    inputs:
+      artifact_pattern:
+        description: Glob pattern matching the packaged artifacts to publish
+        required: false
+        default: ld-decode-tools-*
+        type: string
+      file_glob:
+        description: Glob pattern for release files inside the download directory
+        required: false
+        default: release-artifacts/*
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download packaged artifacts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: ${{ inputs.artifact_pattern }}
+          path: release-artifacts
+          merge-multiple: true
+
+      - name: List release assets
+        run: ls -lh release-artifacts
+
+      - name: Publish release assets
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        with:
+          files: ${{ inputs.file_glob }}
+          generate_release_notes: true

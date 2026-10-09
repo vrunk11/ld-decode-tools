@@ -75,6 +75,9 @@
             libGL
             python3
             python3Packages.numpy
+            # Compile cache used by CI (CMAKE_CXX_COMPILER_LAUNCHER=ccache);
+            # harmless when unused locally.
+            ccache
           ];
           EZPWD_DIR = "${ezpwdSrc}/c++";
           shellHook = ''
