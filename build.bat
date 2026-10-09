@@ -184,13 +184,25 @@ if exist "%QT_PLUGINS%" (
     )
 )
 
+rem vcpkg copies only the DLLs an executable imports. Qt plugins have their
+rem own: the SVG icon engine needs Qt6Svg.dll, which no tool imports, and
+rem Windows would otherwise look for it on PATH and may find another Qt or
+rem none (blank toolbar icons in ld-analyse). Copy the whole vcpkg runtime next
+rem to the binaries, as the Windows package does.
 set "VCPKG_BIN=%CD%\build\vcpkg_installed\%TRIPLET%\bin"
 if /i "%BUILD_TYPE%"=="Debug" set "VCPKG_BIN=%CD%\build\vcpkg_installed\%TRIPLET%\debug\bin"
+if exist "%VCPKG_BIN%" copy /y "%VCPKG_BIN%\*.dll" "build\bin\" >nul
+
+rem MinGW's own runtime, for the same reason: build\bin then runs without
+rem depending on which MinGW (if any) is on PATH.
+if defined GCC_DIR (
+    for %%R in (libstdc++-6.dll libgcc_s_seh-1.dll libwinpthread-1.dll) do (
+        if exist "!GCC_DIR!\%%R" copy /y "!GCC_DIR!\%%R" "build\bin\" >nul
+    )
+)
 
 echo.
 echo Build complete: binaries are in build\bin
-echo If a tool reports a missing DLL, put the vcpkg runtime first on PATH:
-echo   set "PATH=%VCPKG_BIN%;%%PATH%%"
 if defined PAUSE_AT_END pause
 exit /b 0
 
