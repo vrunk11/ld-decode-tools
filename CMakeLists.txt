@@ -187,6 +187,7 @@ add_subdirectory(src/ld-json-converter)
 add_subdirectory(src/ld-lds-converter)
 add_subdirectory(src/ld-process-vbi)
 add_subdirectory(src/ld-process-vits)
+add_subdirectory(src/ld-sqlite-to-json)
 add_subdirectory(src/library)
 add_subdirectory(src/efm-decoder)
 
