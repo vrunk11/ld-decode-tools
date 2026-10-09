@@ -76,7 +76,8 @@ dropout correction, chroma decoding, disc stacking/mapping, metadata export and 
 | `src/ld-disc-stacker/` | `ld-disc-stacker` | Combine several captures of one disc |
 | `src/ld-discmap/` | `ld-discmap` | Map and repair TBC field order against VBI |
 | `src/ld-export-metadata/`, `src/ld-export-decode-metadata/` | same | Export metadata to external formats |
-| `src/ld-json-converter/` | `ld-json-converter` | Legacy JSON ↔ SQLite metadata conversion |
+| `src/ld-json-converter/` | `ld-json-converter` | JSON → SQLite metadata conversion |
+| `src/ld-sqlite-to-json/` | `ld-sqlite-to-json` | SQLite → JSON metadata conversion |
 | `src/ld-lds-converter/` | `ld-lds-converter` | 10-bit packed ↔ 16-bit sample conversion |
 | `src/efm-decoder/` | `efm-decoder-{f2,d24,audio,data}`, `efm-stacker-f2`, `vfs-verifier` | Staged EFM decoding |
 | `src/library/` | `lddecode-library` (static) | Shared TBC I/O, metadata (SQLite), VBI/VITC decoders, filters |
@@ -102,11 +103,18 @@ dropout correction, chroma decoding, disc stacking/mapping, metadata export and 
 
 ## 2. Metadata and file formats
 
-- TBC metadata is stored in **SQLite** (`.tbc.db`). The schema is **internal** to these tools
-  and may change, but every change must keep `ld-json-converter` and all readers in
-  `src/library/tbc/` consistent.
-- Video-system names follow the SQLite schema exactly: `PAL`, `NTSC`, `PAL_M` (underscore,
-  not hyphen). Readers may accept legacy spellings; writers emit only the schema form.
+- TBC metadata comes in **two fully supported formats**: SQLite (`.tbc.db`, written by current
+  ld-decode) and JSON (`.tbc.json`, existing captures and other decoders). Neither is deprecated:
+  every reader and writer in `src/library/tbc/` must handle both, and a change to one format
+  needs its counterpart in the other.
+- The library detects the format from the file contents. `MetadataOptions`
+  (`src/library/tbc/metadataoptions.h`) gives the command-line tools `--meta db|json` and the
+  checks below; use it rather than building metadata file names by hand.
+- **Processing tools never convert between formats**: output metadata is always in the input's
+  format, and an output in the other format is refused. Conversion is the job of
+  `ld-json-converter` (JSON → SQLite) and `ld-sqlite-to-json` (SQLite → JSON).
+- Video-system names: SQLite uses `PAL`, `NTSC`, `PAL_M`; JSON spells the last one `PAL-M`,
+  as every JSON reader expects. Readers accept both spellings.
 - Any change to the on-disk format (TBC, `.tbc.db`, EFM, PCM output) is a compatibility
   change: call it out in the PR and ask before making it (§10).
 

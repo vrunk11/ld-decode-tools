@@ -58,7 +58,7 @@ public:
         return m_fieldLine[index];
     }
 
-    // Legacy JSON (.tbc.json) metadata
+    // JSON (.tbc.json) metadata
     void read(JsonReader &reader);
     void write(JsonWriter &writer) const;
 

@@ -4,6 +4,7 @@ add_library(lddecode-library STATIC
     tbc/jsonio.cpp
     tbc/sqliteio.cpp
     tbc/lddecodemetadata.cpp
+    tbc/metadataoptions.cpp
     tbc/logging.cpp
     tbc/navigation.cpp
     tbc/sourceaudio.cpp

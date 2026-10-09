@@ -29,6 +29,7 @@
 #include <QFileInfo>
 
 #include "tbc/logging.h"
+#include "tbc/metadataoptions.h"
 #include "discmapper.h"
 
 int main(int argc, char *argv[])
@@ -85,6 +86,10 @@ int main(int argc, char *argv[])
                                        QCoreApplication::translate("main", "Do not process analogue audio"));
     parser.addOption(setNoAudioOption);
 
+    // Metadata format to use when both input.db and input.json exist: --meta
+    MetadataOptions metadataOptions(MetadataOptions::FormatOnly);
+    metadataOptions.addTo(parser);
+
     // Positional argument to specify input TBC file
     parser.addPositionalArgument("input", QCoreApplication::translate("main", "Specify input TBC file"));
 
@@ -97,6 +102,7 @@ int main(int argc, char *argv[])
     // Standard logging options
     processStandardDebugOptions(parser);
     emitDeprecatedToolWarning();
+    if (!metadataOptions.process(parser)) return -1;
 
     // Get the options from the parser
     bool reverse = parser.isSet(setReverseOption);
@@ -148,7 +154,9 @@ int main(int argc, char *argv[])
     }
 
     // Check that the required input TBC metadata file exists
-    QFileInfo inputMetadataFileInfo(LdDecodeMetaData::findMetadataFile(inputFileInfo.filePath()));
+    QString inputMetadataFilename;
+    if (!metadataOptions.selectInput(inputFileInfo.filePath(), false, inputMetadataFilename)) return -1;
+    QFileInfo inputMetadataFileInfo(inputMetadataFilename);
     if (!inputMetadataFileInfo.exists()) {
         qCritical("The specified input file metadata does not exist");
         return -1;

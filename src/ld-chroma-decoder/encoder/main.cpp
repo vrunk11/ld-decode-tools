@@ -32,6 +32,7 @@
 
 #include "lddecodemetadata.h"
 #include "tbc/logging.h"
+#include "tbc/metadataoptions.h"
 
 #include "ntscencoder.h"
 #include "palencoder.h"
@@ -106,6 +107,10 @@ int main(int argc, char *argv[])
                                       QCoreApplication::translate("main", "PAL: Output samples are subcarrier-locked (default: line-locked)"));
     parser.addOption(scLockedOption);
 
+    // Metadata format to create: --meta db (default) or json
+    MetadataOptions metadataOptions(MetadataOptions::FormatOnly);
+    metadataOptions.addTo(parser);
+
     // -- Positional arguments --
 
     // Positional argument to specify input video file
@@ -124,6 +129,7 @@ int main(int argc, char *argv[])
     // Standard logging options
     processStandardDebugOptions(parser);
     emitDeprecatedToolWarning();
+    if (!metadataOptions.process(parser)) return -1;
 
     VideoSystem system = PAL;
     QString systemName;
@@ -254,7 +260,9 @@ int main(int argc, char *argv[])
     }
 
     // Write the metadata
-    if (!metaData.write(outputFileName + ".db")) {
+    const LdDecodeMetaData::MetadataFormat metadataFormat = metadataOptions.isFormatSet()
+        ? metadataOptions.format() : LdDecodeMetaData::MetadataFormat::Sqlite;
+    if (!metaData.write(LdDecodeMetaData::metadataFileName(outputFileName, metadataFormat))) {
         return -1;
     }
 

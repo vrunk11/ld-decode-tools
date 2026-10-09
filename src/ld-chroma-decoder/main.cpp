@@ -36,6 +36,7 @@
 #include "decoderpool.h"
 #include "lddecodemetadata.h"
 #include "tbc/logging.h"
+#include "tbc/metadataoptions.h"
 
 #include "comb.h"
 #include "monodecoder.h"
@@ -131,11 +132,9 @@ int main(int argc, char *argv[])
     // Add the standard debug options --debug and --quiet
     addStandardDebugOptions(parser);
 
-    // Option to specify a different metadata input file
-    QCommandLineOption inputMetadataOption(QStringList() << "input-metadata" << "input-json",
-                                       QCoreApplication::translate("main", "Specify the input metadata file (default input.db, or input.json if only that exists)"),
-                                       QCoreApplication::translate("main", "filename"));
-    parser.addOption(inputMetadataOption);
+    // Metadata options: --meta and --input-metadata
+    MetadataOptions metadataOptions(MetadataOptions::InputFile);
+    metadataOptions.addTo(parser);
 
     // Option to select start frame (sequential) (-s)
     QCommandLineOption startFrameOption(QStringList() << "s" << "start",
@@ -293,6 +292,7 @@ int main(int argc, char *argv[])
     // Standard logging options
     processStandardDebugOptions(parser);
     emitDeprecatedToolWarning();
+    if (!metadataOptions.process(parser)) return -1;
 
     // Get the arguments from the parser
     QString inputFileName;
@@ -310,7 +310,7 @@ int main(int argc, char *argv[])
     }
 
     // Check filename arguments are reasonable
-    if (inputFileName == "-" && !parser.isSet(inputMetadataOption)) {
+    if (inputFileName == "-" && !metadataOptions.isInputFileSet()) {
         // Quit with error
         qCritical("With piped input, you must also specify the input metadata file");
         return -1;
@@ -463,10 +463,8 @@ int main(int argc, char *argv[])
     }
 
     // Work out the metadata filename
-    QString inputMetadataFileName = LdDecodeMetaData::findMetadataFile(inputFileName);
-    if (parser.isSet(inputMetadataOption)) {
-        inputMetadataFileName = parser.value(inputMetadataOption);
-    }
+    QString inputMetadataFileName;
+    if (!metadataOptions.selectInput(inputFileName, true, inputMetadataFileName)) return -1;
 
     // Load the source video metadata
     LdDecodeMetaData metaData;

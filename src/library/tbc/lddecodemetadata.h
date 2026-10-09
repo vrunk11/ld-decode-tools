@@ -230,9 +230,9 @@ public:
     LdDecodeMetaData(const LdDecodeMetaData &) = delete;
     LdDecodeMetaData& operator=(const LdDecodeMetaData &) = delete;
 
-    // Metadata file formats. ld-decode and these tools used JSON (.tbc.json)
-    // until late 2025, and current ld-decode writes SQLite (.tbc.db). Both are
-    // read and written so that old and new pipelines keep working.
+    // Metadata file formats. SQLite (.tbc.db) and JSON (.tbc.json) are both
+    // fully supported, for reading and for writing: current ld-decode writes
+    // SQLite, while existing captures and other decoders use JSON.
     enum class MetadataFormat {
         Sqlite,
         Json,

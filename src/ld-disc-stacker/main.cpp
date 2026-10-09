@@ -31,6 +31,7 @@
 #include <QFileInfo>
 
 #include "tbc/logging.h"
+#include "tbc/metadataoptions.h"
 #include "lddecodemetadata.h"
 #include "sourcevideo.h"
 #include "stackingpool.h"
@@ -81,17 +82,11 @@ int main(int argc, char *argv[])
                                        QCoreApplication::translate("main", "Show more info during stacking"));
     parser.addOption(verboseOption);
 
-    // Option to specify a different metadata input file
-    QCommandLineOption inputMetadataOption(QStringList() << "input-metadata" << "input-json",
-                                       QCoreApplication::translate("main", "Specify the input metadata file for the first input file (default input.db, or input.json if only that exists)"),
-                                       QCoreApplication::translate("main", "filename"));
-    parser.addOption(inputMetadataOption);
-
-    // Option to specify a different metadata output file
-    QCommandLineOption outputMetadataOption(QStringList() << "output-metadata" << "output-json",
-                                        QCoreApplication::translate("main", "Specify the output metadata file (default output.db)"),
-                                        QCoreApplication::translate("main", "filename"));
-    parser.addOption(outputMetadataOption);
+    // Metadata options: --meta, --input-metadata and --output-metadata
+    MetadataOptions metadataOptions(MetadataOptions::InputFile | MetadataOptions::OutputFile,
+        QCoreApplication::translate("main", "Specify the input metadata file for the first input file (default input.db or input.json, see --meta)"),
+        QCoreApplication::translate("main", "Specify the output metadata file (default output.db, or output.json for JSON input)"));
+    metadataOptions.addTo(parser);
 
     // Option to reverse the field order (-r)
     QCommandLineOption setReverseOption(QStringList() << "r" << "reverse",
@@ -184,6 +179,7 @@ int main(int argc, char *argv[])
     // Standard logging options
     processStandardDebugOptions(parser);
     emitDeprecatedToolWarning();
+    if (!metadataOptions.process(parser)) return -1;
 
     // Get the options from the parser
     bool reverse = parser.isSet(setReverseOption);
@@ -266,14 +262,14 @@ int main(int argc, char *argv[])
     outputFilename = positionalArguments.at(positionalArguments.count() - 1);
 
     // If the first input filename is "-" (piped input) - verify a metadata file has been specified
-    if (inputFilenames[0] == "-" && !parser.isSet(inputMetadataOption)) {
+    if (inputFilenames[0] == "-" && !metadataOptions.isInputFileSet()) {
         // Quit with error
         qCritical("With piped input, you must also specify the input metadata file with --input-metadata");
         return -1;
     }
 
     // If the output filename is "-" (piped output) - verify a metadata file has been specified
-    if (outputFilename == "-" && !parser.isSet(outputMetadataOption)) {
+    if (outputFilename == "-" && !metadataOptions.isOutputFileSet()) {
         // Quit with error
         qCritical("With piped output, you must also specify the output metadata file with --output-metadata");
         return -1;
@@ -325,8 +321,8 @@ int main(int argc, char *argv[])
 
     for (qint32 i = 0; i < totalNumberOfInputFiles; i++) {
         // Work out the metadata filename
-        QString metadataFilename = LdDecodeMetaData::findMetadataFile(inputFilenames[i]);
-        if (parser.isSet(inputMetadataOption) && i == 0) metadataFilename = parser.value(inputMetadataOption);
+        QString metadataFilename;
+        if (!metadataOptions.selectInput(inputFilenames[i], i == 0, metadataFilename)) return -1;
         qInfo().nospace().noquote() << "Reading input #" << i << " metadata from " << metadataFilename;
 
         // Open it
@@ -338,9 +334,10 @@ int main(int argc, char *argv[])
 
     // Metadata filename for output TBC, in the same format as the first input
     // (JSON in gives JSON out) unless named explicitly
-    QString outputMetadataFilename = LdDecodeMetaData::metadataFileName(outputFilename, ldDecodeMetaData[0]->getFormat());
-    if (parser.isSet(outputMetadataOption)) {
-        outputMetadataFilename = parser.value(outputMetadataOption);
+    QString outputMetadataFilename;
+    if (!metadataOptions.selectOutput(LdDecodeMetaData::metadataFileName(outputFilename, ldDecodeMetaData[0]->getFormat()),
+                                      ldDecodeMetaData[0]->getFormat(), outputMetadataFilename)) {
+        return -1;
     }
 
     // Reverse field order if required

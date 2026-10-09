@@ -88,7 +88,7 @@ static const VideoSystemDefaults &getSystemDefaults(const LdDecodeMetaData::Vide
 // Return true and set system if found; if not found, return false.
 bool parseVideoSystemName(QString name, VideoSystem &system)
 {
-    // Legacy JSON metadata spells PAL_M as "PAL-M"
+    // JSON metadata spells PAL_M as "PAL-M"
     if (name == "PAL-M") name = "PAL_M";
 
     // Search VIDEO_SYSTEM_DEFAULTS for a matching name
@@ -196,8 +196,8 @@ void LdDecodeMetaData::VideoParameters::read(JsonReader &reader)
         reader.throwError("unknown value for videoParameters.system");
     }
 
-    // blanking16bIre was added after the JSON format was retired; older files
-    // do not have it, so use the black level as the SQLite reader does
+    // JSON files written before blanking16bIre existed do not have it, so use
+    // the black level, as the SQLite reader does
     if (blanking16bIre == -1) blanking16bIre = black16bIre;
 
     isValid = true;
@@ -232,7 +232,7 @@ void LdDecodeMetaData::VideoParameters::write(JsonWriter &writer) const
     writer.writeMember("isWidescreen", isWidescreen);
     writer.writeMember("numberOfSequentialFields", numberOfSequentialFields);
     writer.writeMember("sampleRate", sampleRate);
-    // Legacy JSON spells PAL_M as "PAL-M"; keep it so older tools can read the file
+    // JSON spells PAL_M as "PAL-M", as every JSON reader expects
     writer.writeMember("system", system == PAL_M ? "PAL-M" : VIDEO_SYSTEM_DEFAULTS[system].name);
     writer.writeMember("white16bIre", white16bIre);
 	if(tapeFormat != "") {

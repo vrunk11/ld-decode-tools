@@ -1197,7 +1197,7 @@ bool TbcSource::startBackgroundLoad(QString sourceFilename)
     tbcDebugStream() << "TbcSource::startBackgroundLoad(): Processing metadata...";
     emit busy("Processing metadata...");
 
-    // SQLite (.tbc.db), or legacy JSON (.tbc.json) when that is all there is
+    // SQLite (.tbc.db), or JSON (.tbc.json) when that is all there is
     QString metadataFileName = LdDecodeMetaData::findMetadataFile(sourceFilename);
 
     const bool isChromaTbc = sourceFilename.endsWith("_chroma.tbc");

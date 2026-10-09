@@ -29,6 +29,7 @@
 #include <QThread>
 
 #include "tbc/logging.h"
+#include "tbc/metadataoptions.h"
 #include "decoderpool.h"
 
 int main(int argc, char *argv[])
@@ -60,17 +61,9 @@ int main(int argc, char *argv[])
     // Add the standard debug options --debug and --quiet
     addStandardDebugOptions(parser);
 
-    // Option to specify a different metadata input file
-    QCommandLineOption inputMetadataOption(QStringList() << "input-metadata" << "input-json",
-                                       QCoreApplication::translate("main", "Specify the input metadata file (default input.db, or input.json if only that exists)"),
-                                       QCoreApplication::translate("main", "filename"));
-    parser.addOption(inputMetadataOption);
-
-    // Option to specify a different metadata output file
-    QCommandLineOption outputMetadataOption(QStringList() << "output-metadata" << "output-json",
-                                        QCoreApplication::translate("main", "Specify the output metadata file (default same as input)"),
-                                        QCoreApplication::translate("main", "filename"));
-    parser.addOption(outputMetadataOption);
+    // Metadata options: --meta, --input-metadata and --output-metadata
+    MetadataOptions metadataOptions(MetadataOptions::InputFile | MetadataOptions::OutputFile);
+    metadataOptions.addTo(parser);
 
     // Option to disable metadata back-up (-n)
     QCommandLineOption showNoBackupOption(QStringList() << "n" << "nobackup",
@@ -92,6 +85,7 @@ int main(int argc, char *argv[])
     // Standard logging options
     processStandardDebugOptions(parser);
     emitDeprecatedToolWarning();
+    if (!metadataOptions.process(parser)) return -1;
 
     // Get the options from the parser
     bool noBackup = parser.isSet(showNoBackupOption);
@@ -119,14 +113,8 @@ int main(int argc, char *argv[])
     }
 
     // Work out the metadata filenames
-    QString inputMetadataFilename = LdDecodeMetaData::findMetadataFile(inputFilename);
-    if (parser.isSet(inputMetadataOption)) {
-        inputMetadataFilename = parser.value(inputMetadataOption);
-    }
-    QString outputMetadataFilename = inputMetadataFilename;
-    if (parser.isSet(outputMetadataOption)) {
-        outputMetadataFilename = parser.value(outputMetadataOption);
-    }
+    QString inputMetadataFilename;
+    if (!metadataOptions.selectInput(inputFilename, true, inputMetadataFilename)) return -1;
 
     // Open the source video metadata
     LdDecodeMetaData metaData;
@@ -135,6 +123,10 @@ int main(int argc, char *argv[])
         qCritical() << "Unable to open TBC metadata file";
         return 1;
     }
+
+    // The output defaults to updating the input in place, in the same format
+    QString outputMetadataFilename;
+    if (!metadataOptions.selectOutput(inputMetadataFilename, metaData.getFormat(), outputMetadataFilename)) return -1;
 
     // If we're overwriting the input metadata file, back it up first
     if (inputMetadataFilename == outputMetadataFilename && !noBackup) {
@@ -149,6 +141,10 @@ int main(int argc, char *argv[])
     qInfo() << "Beginning VBI processing...";
     DecoderPool decoderPool(inputFilename, outputMetadataFilename, maxThreads, metaData);
     if (!decoderPool.process()) return 1;
+
+    if (outputMetadataFilename == inputMetadataFilename) {
+        MetadataOptions::warnIfOtherFormatStale(inputFilename, outputMetadataFilename);
+    }
 
     // Quit with success
     return 0;

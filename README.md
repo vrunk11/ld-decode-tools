@@ -30,7 +30,8 @@ This is the complete suite of tools for processing LaserDisc captures and TBC (T
 ### Export and Conversion Tools
 - **ld-export-metadata** - Export TBC metadata to external formats
 - **ld-lds-converter** - Convert between 10-bit and 16-bit LaserDisc sample formats
-- **ld-json-converter** - Convert between old internal JSON and new internal SQLite metadata formats
+- **ld-json-converter** - Convert JSON metadata (`.tbc.json`) to SQLite (`.tbc.db`)
+- **ld-sqlite-to-json** - Convert SQLite metadata (`.tbc.db`) to JSON (`.tbc.json`)
 
 ### Utility Scripts
 - **ld-compress** - Compress TBC files for storage (in scripts/)
@@ -47,10 +48,11 @@ This is the complete suite of tools for processing LaserDisc captures and TBC (T
 
 ## Important Notes
 
-- **Metadata formats**: All tools read and write both SQLite (`.tbc.db`, written by current ld-decode) and the legacy JSON format (`.tbc.json`, ld-decode and these tools before late 2025)
-  - For `capture.tbc` the tools use `capture.tbc.db`, or `capture.tbc.json` if that is the only one present
-  - Output metadata is written in the same format as the input (JSON in, JSON out) unless an output file with a `.db` or `.json` extension is given
-  - The original `--input-json` / `--output-json` options are accepted as aliases of `--input-metadata` / `--output-metadata`
+- **Metadata formats**: All tools read and write both SQLite (`.tbc.db`, written by current ld-decode) and JSON (`.tbc.json`, used by existing captures and other decoders) - both formats are fully supported
+  - For `capture.tbc` the tools use `capture.tbc.db`, or `capture.tbc.json` if that is the only one present. When both exist the `.db` is used and a warning says so; `--meta json` (or `--meta db`) selects the source explicitly
+  - Output metadata is always written in the same format as the input (JSON in, JSON out). The processing tools never convert between formats and refuse an output file in the other format; use `ld-json-converter` or `ld-sqlite-to-json` to convert
+  - Updating metadata in place when both files exist warns that the other one is now out of date
+  - The original `--input-json` / `--output-json` options are still accepted (hidden from `--help`) as aliases of `--input-metadata` / `--output-metadata`
 - **File Extensions**: TBC files use `.tbc` extension, metadata uses `.tbc.db` (SQLite) or `.tbc.json` (JSON)
 - **Dependencies**: Most tools require FFmpeg and other multimedia libraries
 - **Performance**: Many tools support multi-threading for faster processing

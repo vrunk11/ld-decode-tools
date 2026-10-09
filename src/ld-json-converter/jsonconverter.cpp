@@ -479,7 +479,7 @@ bool JsonConverter::insertData(LdDecodeMetaData &metaData)
         query.bindValue(14, videoParams.isWidescreen ? 1 : 0);
         query.bindValue(15, videoParams.white16bIre);
         query.bindValue(16, videoParams.black16bIre);
-        query.bindValue(17, videoParams.black16bIre); // Legacy JSON doesn't have blanking_16b_ire, use black_16b_ire
+        query.bindValue(17, videoParams.black16bIre); // JSON written before blanking_16b_ire existed lacks it: use black_16b_ire
         query.bindValue(18, videoParams.tapeFormat.isEmpty() ? QVariant() : videoParams.tapeFormat);
         
         if (!query.exec()) {
