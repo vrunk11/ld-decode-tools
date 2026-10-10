@@ -78,7 +78,6 @@ int main(int argc, char *argv[])
 
     // Standard logging options
     processStandardDebugOptions(parser);
-    emitDeprecatedToolWarning();
 
     // Get the filename arguments from the parser
     QVector<QString> inputFilenames;

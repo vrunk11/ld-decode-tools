@@ -46,8 +46,6 @@ void closeDebugFile(void);
 void addStandardDebugOptions(QCommandLineParser &parser);
 void processStandardDebugOptions(QCommandLineParser &parser);
 bool getDebugState();
-QString deprecatedToolWarningMessage();
-void emitDeprecatedToolWarning();
 
 // Lightweight application-level debug logger (not suppressed in release builds)
 void tbcDebug(const QString &msg);

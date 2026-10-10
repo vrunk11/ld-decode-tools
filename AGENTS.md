@@ -54,10 +54,9 @@ output of [ld-decode](https://github.com/happycube/ld-decode): analysis, VBI/VIT
 dropout correction, chroma decoding, disc stacking/mapping, metadata export and the EFM
 (digital audio / data) decoder chain.
 
-> **The project is deprecated.** Its successor is
-> [decode-orc](https://github.com/simoninns/decode-orc). This repository takes **fixes,
-> compatibility work and build/CI maintenance**. New features belong in decode-orc; if a
-> request is clearly a new feature, say so before implementing it here.
+The project is **actively maintained**: fixes, compatibility work, restoring behaviour lost in
+the 2025–2026 changes, and new features are all in scope. Keep existing captures, metadata
+and command lines working (see §2 and §10).
 
 - **Type:** C++17, Qt 6 (Core, Gui, Widgets, Sql, Svg), FFTW3
 - **Build system:** CMake 3.16+, Ninja
@@ -238,7 +237,6 @@ ISC, …; not AGPL-only, SSPL or proprietary). State the licence of any dependen
 
 ## 10. Ask first when
 
-- the request is a new feature (it probably belongs in decode-orc — §1);
 - a change affects file formats, metadata schema, CLI options or output compatibility;
 - several valid approaches have materially different trade-offs;
 - a change has licensing, security or performance implications.

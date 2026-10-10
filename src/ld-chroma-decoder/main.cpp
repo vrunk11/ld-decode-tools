@@ -291,7 +291,6 @@ int main(int argc, char *argv[])
 
     // Standard logging options
     processStandardDebugOptions(parser);
-    emitDeprecatedToolWarning();
     if (!metadataOptions.process(parser)) return -1;
 
     // Get the arguments from the parser

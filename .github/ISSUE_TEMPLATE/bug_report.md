@@ -39,7 +39,4 @@ What happened instead? Paste the console output.
 
 ## Additional context
 
-Attach a short TBC sample and its `.tbc.db` if possible, or say where it can be downloaded.
-
-> ld-decode-tools is deprecated; please also check whether the problem exists in
-> [decode-orc](https://github.com/simoninns/decode-orc).
+Attach a short TBC sample and its metadata (`.tbc.db` or `.tbc.json`) if possible, or say where it can be downloaded.

@@ -63,7 +63,6 @@ int main(int argc, char *argv[])
 
     // Standard logging options
     processStandardDebugOptions(parser);
-    emitDeprecatedToolWarning();
 
     // Get the input JSON filename from the parser
     QString inputSqliteFilename;

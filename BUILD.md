@@ -2,9 +2,6 @@
 
 This project uses a Nix dev shell to provide a consistent build environment.
 
-> [!IMPORTANT]  
-> ld-decode-tool is depreciated - please use the [decode-orc](https://github.com/simoninns/decode-orc) project instead.
-
 ## Enter the dev shell
 
 ```bash

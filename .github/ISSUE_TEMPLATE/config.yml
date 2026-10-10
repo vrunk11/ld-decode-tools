@@ -1,5 +1,1 @@
 blank_issues_enabled: true
-contact_links:
-  - name: decode-orc (successor project)
-    url: https://github.com/simoninns/decode-orc
-    about: New features and active development happen in decode-orc.

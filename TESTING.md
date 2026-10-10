@@ -2,9 +2,6 @@
 
 How ld-decode-tools is tested, locally and in CI.
 
-> [!IMPORTANT]
-> ld-decode-tools is deprecated - please use the [decode-orc](https://github.com/simoninns/decode-orc) project instead.
-
 ## Test slices
 
 Every test registered with CTest carries exactly one label. CI runs each label as its own

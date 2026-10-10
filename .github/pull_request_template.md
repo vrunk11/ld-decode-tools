@@ -2,9 +2,6 @@
 
 Briefly describe what this PR changes and why.
 
-> ld-decode-tools is deprecated in favour of [decode-orc](https://github.com/simoninns/decode-orc).
-> Fixes, compatibility and build/CI maintenance are welcome here; new features belong there.
-
 ## Component
 
 - [ ] `ld-analyse` (GUI)

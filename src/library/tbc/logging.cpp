@@ -213,13 +213,3 @@ bool getDebugState()
 {
     return showDebug;
 }
-
-QString deprecatedToolWarningMessage()
-{
-    return QStringLiteral("This tool is depreciated - please use decode-orc (https://github.com/simoninns/decode-orc) instead");
-}
-
-void emitDeprecatedToolWarning()
-{
-    qWarning().noquote() << deprecatedToolWarningMessage();
-}

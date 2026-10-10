@@ -2,11 +2,6 @@
 
 Thanks for helping keep ld-decode-tools working.
 
-> [!IMPORTANT]
-> ld-decode-tools is deprecated - please use the [decode-orc](https://github.com/simoninns/decode-orc) project instead.
-> This repository accepts **bug fixes, compatibility/portability work and build/CI maintenance**.
-> New features should be proposed to decode-orc.
-
 ## Before you start
 
 - Search existing issues and pull requests to avoid duplicates.
