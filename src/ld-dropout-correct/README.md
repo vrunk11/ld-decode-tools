@@ -24,8 +24,9 @@ ld-dropout-correct [options] inputs output
 #### Source Files
 - `inputs`: Input TBC files (multiple files supported; use '-' as first source for piped input)
 - `output`: Output corrected TBC file (omit or '-' for piped output)
-- `--input-metadata <filename>`: Specify the input metadata file for the first input file (default input.db)
-- `--output-metadata <filename>`: Specify the output metadata file (default output.db)
+- `--input-metadata <filename>`: Specify the input metadata file for the first input file (default input.db, or input.json if only that exists)
+- `--meta <db|json>`: Metadata format to use when both input.db and input.json exist (default db, with a warning)
+- `--output-metadata <filename>`: Specify the output metadata file (default output.db, or output.json for JSON input; always the same format as the input)
 
 #### Processing Mode
 - `-i, --intra`: Force intrafield correction (default interfield)

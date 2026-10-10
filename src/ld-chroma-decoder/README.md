@@ -22,7 +22,8 @@ ld-chroma-decoder [options] <input.tbc> <output.rgb>
 - `-q, --quiet`: Suppress info and warning messages
 
 #### Input/Output
-- `--input-metadata <filename>`: Specify the input metadata file (default input.db)
+- `--input-metadata <filename>`: Specify the input metadata file (default input.db, or input.json if only that exists)
+- `--meta <db|json>`: Metadata format to use when both input.db and input.json exist (default db, with a warning)
 - `-s, --start <number>`: Specify the start frame number
 - `-l, --length <number>`: Specify the length (number of frames to process)
 - `-t, --threads <number>`: Specify the number of concurrent threads (default number of logical CPUs)
@@ -62,7 +63,7 @@ ld-chroma-decoder [options] <input.tbc> <output.rgb>
 - `--transform-threshold <number>`: Transform: Uniform similarity threshold (default 0.4)
 - `--transform-thresholds <file>`: Transform: File containing per-bin similarity thresholds
 - `--show-ffts`: Transform: Overlay the input and output FFTs
-- `--input-metadata <filename>`: Specify the input metadata file (default input.db)
+- `--input-metadata <filename>`: Specify the input metadata file (default input.db, or input.json if only that exists)
 
 #### Active Area Selection
 - `--ffll, --first_active_field_line <number>`: The first visible line of a field

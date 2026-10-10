@@ -28,8 +28,9 @@ ld-disc-stacker [options] <source1.tbc> <source2.tbc> [...] <output.tbc>
 - `output`: Combined output TBC (omit or `-` for piped output) (required)
 
 #### Metadata
-- `--input-metadata <filename>`: Specify the input metadata file for the first input file (default input.db)
-- `--output-metadata <filename>`: Specify the output metadata file (default output.db)
+- `--input-metadata <filename>`: Specify the input metadata file for the first input file (default input.db, or input.json if only that exists)
+- `--meta <db|json>`: Metadata format to use when both input.db and input.json exist (default db, with a warning)
+- `--output-metadata <filename>`: Specify the output metadata file (default output.db, or output.json for JSON input; always the same format as the input)
 
 #### Processing Options
 - `-r, --reverse`: Reverse the field order to second/first (default first/second)

@@ -56,7 +56,8 @@ ld-process-vbi [options] <input.tbc>
 - `-q, --quiet`: Suppress info and warning messages
 
 #### Processing Control
-- `--input-metadata <filename>`: Specify the input metadata file (default input.db)
+- `--input-metadata <filename>`: Specify the input metadata file (default input.db, or input.json if only that exists)
+- `--meta <db|json>`: Metadata format to use when both input.db and input.json exist (default db, with a warning)
 - `--output-metadata <filename>`: Specify the output metadata file (default same as input)
 - `-n, --nobackup`: Do not create a backup of the input metadata
 - `-t, --threads <number>`: Specify the number of concurrent threads (default is the number of logical CPUs)
