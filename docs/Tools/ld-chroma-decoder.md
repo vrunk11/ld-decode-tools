@@ -198,16 +198,21 @@ Luma noise reduction level in dB.
 
 ```
 Options:
-  -h, --help                                  Displays help on commandline
+  -?, -h, --help                              Displays help on commandline
                                               options.
-  --help-all                                  Displays help including Qt
-                                              specific options.
+  --help-all                                  Displays help, including generic
+                                              Qt options.
   -v, --version                               Displays version information.
-  -d, --debug                                 Show debug
+  -d, --debug                                 Show application debug messages
   -q, --quiet                                 Suppress info and warning
                                               messages
-  --input-json <filename>                     Specify the input JSON file
-                                              (default input.json)
+  --meta, --metadata-format <db|json>         Metadata format to use: db
+                                              (SQLite <input>.db) or json
+                                              (<input>.json). Default: db if
+                                              present, otherwise json
+  --input-metadata <filename>                 Specify the input metadata file
+                                              (default input.db or input.json,
+                                              see --meta)
   -s, --start <number>                        Specify the start frame number
   -l, --length <number>                       Specify the length (number of
                                               frames to process)
@@ -218,12 +223,10 @@ Options:
                                               components (default 1.0)
   --chroma-phase <number>                     Phase rotation applied to chroma
                                               components (degrees; default 0.0)
-
   -p, --output-format <output-format>         Output format (rgb, yuv, y4m;
                                               default rgb); RGB48, YUV444P16,
                                               GRAY16 pixel formats are supported
   -b, --blackandwhite                         Output in black and white
-
   --pad, --output-padding <number>            Pad the output frame to a
                                               multiple of this many pixels on
                                               both axes (1 means no padding,
@@ -254,9 +257,15 @@ Options:
   --chroma-nr <number>                        NTSC: Chroma noise reduction
                                               level in dB (default 0.0)
   --luma-nr <number>                          Luma noise reduction level in dB
-                                              (default 1.0)
+                                              (default 0.0)
   --ntsc-phase-comp                           NTSC: Adjust phase per-line using
                                               burst phase
+  --adapt-threshold <number>                  NTSC: 3D adaptive filter
+                                              threshold (default 1.0, higher =
+                                              more 3D)
+  --chroma-weight <number>                    NTSC: Chroma weight for 3D
+                                              adaptive filter (default 1.0,
+                                              higher = more 2D)
   --simple-pal                                Transform: Use 1D UV filter
                                               (default 2D)
   --transform-threshold <number>              Transform: Uniform similarity
@@ -267,7 +276,8 @@ Options:
                                               output FFTs
 
 Arguments:
-  input                                       Specify input TBC file (- for piped input)
-  output                                      Specify output file (omit or - for piped output)
-
+  input                                       Specify input TBC file (- for
+                                              piped input)
+  output                                      Specify output file (omit or -
+                                              for piped output)
 ```

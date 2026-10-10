@@ -30,6 +30,7 @@ public:
         FormatOnly = 0,        // --meta only
         InputFile = 1 << 0,    // --input-metadata
         OutputFile = 1 << 1,   // --output-metadata
+        CreatesMetadata = 1 << 2,  // --meta picks the format to create, not to read
     };
 
     MetadataOptions(int options,

@@ -23,8 +23,11 @@ static const char *const conversionHint =
 MetadataOptions::MetadataOptions(int _options, const QString &inputDescription, const QString &outputDescription)
     : options(_options),
       metaOption(QStringList() << "meta" << "metadata-format",
-                 QCoreApplication::translate("main", "Metadata format to use: db (SQLite <input>.db) or json "
-                                                     "(<input>.json). Default: db if present, otherwise json"),
+                 (_options & CreatesMetadata)
+                     ? QCoreApplication::translate("main", "Metadata format to create: db (SQLite <output>.db, the "
+                                                           "default) or json (<output>.json)")
+                     : QCoreApplication::translate("main", "Metadata format to use: db (SQLite <input>.db) or json "
+                                                           "(<input>.json). Default: db if present, otherwise json"),
                  QCoreApplication::translate("main", "db|json")),
       inputOption(QStringList() << "input-metadata",
                   inputDescription.isEmpty()

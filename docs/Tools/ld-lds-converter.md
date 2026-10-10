@@ -7,12 +7,15 @@ ld-lds-converter \<options>
 
 ```
 Options:
-  -h, --help           Displays this help.
+  -?, -h, --help       Displays help on commandline options.
+  --help-all           Displays help, including generic Qt options.
   -v, --version        Displays version information.
-  -d, --debug          Show debug
+  -d, --debug          Show application debug messages
+  -q, --quiet          Suppress info and warning messages
   -i, --input <file>   Specify input laserdisc sample file (default is stdin)
   -o, --output <file>  Specify output laserdisc sample file (default is stdout)
   -u, --unpack         Unpack 10-bit data into 16-bit (default)
-  -r, --riff           Unpack 10-bit data into 16-bit with RIFF WAV headers (use with -u)
   -p, --pack           Pack 16-bit data into 10-bit
+  -r, --riff           Unpack 10-bit data into 16-bit with RIFF WAV headers
+                       (use this ONLY for FlaCCL)
 ```

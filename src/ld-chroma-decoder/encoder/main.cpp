@@ -108,7 +108,7 @@ int main(int argc, char *argv[])
     parser.addOption(scLockedOption);
 
     // Metadata format to create: --meta db (default) or json
-    MetadataOptions metadataOptions(MetadataOptions::FormatOnly);
+    MetadataOptions metadataOptions(MetadataOptions::FormatOnly | MetadataOptions::CreatesMetadata);
     metadataOptions.addTo(parser);
 
     // -- Positional arguments --

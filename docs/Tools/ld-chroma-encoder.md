@@ -44,28 +44,33 @@ S-Video (Two .TBC)
 
 ```
 Options:
-  -h, --help                         Displays help on commandline options.
-  --help-all                         Displays help including Qt specific
-                                     options.
-  -v, --version                      Displays version information.
-  -d, --debug                        Show debug
-  -q, --quiet                        Suppress info and warning messages
-  -f, --system <system>              Video system (PAL, NTSC; default PAL)
-  -p, --input-format <input-format>  Input format (rgb, yuv; default rgb);
-                                     RGB48, YUV444P16 formats are supported
-  --field-offset <offset>            Offset of the first output field within
-                                     the field sequence (0, 2 for NTSC; 0, 2, 4,
-                                     6 for PAL; default: 0)
-  --chroma-mode <chroma-mode>        NTSC: Chroma encoder mode to use
-                                     (wideband-yuv, wideband-yiq, narrowband-q;
-                                     default: wideband-yuv)
-  --no-setup                         NTSC: Output NTSC-J, without 7.5 IRE setup
-  -c, --sc-locked                    PAL: Output samples are subcarrier-locked
-                                     (default: line-locked)
+  -?, -h, --help                       Displays help on commandline options.
+  --help-all                           Displays help, including generic Qt
+                                       options.
+  -v, --version                        Displays version information.
+  -d, --debug                          Show application debug messages
+  -q, --quiet                          Suppress info and warning messages
+  -f, --system <system>                Video system (PAL, NTSC; default PAL)
+  -p, --input-format <input-format>    Input format (rgb, yuv; default rgb);
+                                       RGB48, YUV444P16 formats are supported
+  --field-offset <offset>              Offset of the first output field within
+                                       the field sequence (0, 2 for NTSC; 0, 2,
+                                       4, 6 for PAL; default: 0)
+  --chroma-mode <chroma-mode>          NTSC: Chroma encoder mode to use
+                                       (wideband-yuv, wideband-yiq,
+                                       narrowband-q; default: wideband-yuv)
+  --no-setup                           NTSC: Output NTSC-J, without 7.5 IRE
+                                       setup
+  -c, --sc-locked                      PAL: Output samples are
+                                       subcarrier-locked (default: line-locked)
+  --meta, --metadata-format <db|json>  Metadata format to create: db (SQLite
+                                       <output>.db, the default) or json
+                                       (<output>.json)
 
 Arguments:
-  input                              Specify input RGB/YCbCr file (- for piped
-                                     input)
-  output                             Specify output TBC file
-  chroma                             Specify chroma output TBC file (optional)
+  input                                Specify input RGB/YCbCr file (- for
+                                       piped input)
+  output                               Specify output TBC file
+  chroma                               Specify chroma output TBC file
+                                       (optional)
 ```

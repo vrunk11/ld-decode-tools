@@ -9,14 +9,24 @@ It is recommended to run ld-process-vbi on the input .tbc before running this to
 
 ```
 Options:
-  -h, --help     Displays this help.
-  -v, --version  Displays version information.
-  -d, --debug    Show debug
-  -r, --reverse  Reverse the field order to second/first (default first/second)
-  -m, --maponly  Only perform mapping, but do not save to target (for testing
-                 purposes)
+  -?, -h, --help                       Displays help on commandline options.
+  --help-all                           Displays help, including generic Qt
+                                       options.
+  -v, --version                        Displays version information.
+  -d, --debug                          Show application debug messages
+  -q, --quiet                          Suppress info and warning messages
+  -r, --reverse                        Reverse the field order to second/first
+                                       (default first/second)
+  -m, --maponly                        Only perform mapping - No output TBC
+                                       file required
+  -s, --nostrict                       No strict checking on pulldown frames
+  -u, --delete-unmappable-frames       Delete unmappable frames
+  -n, --no-audio                       Do not process analogue audio
+  --meta, --metadata-format <db|json>  Metadata format to use: db (SQLite
+                                       <input>.db) or json (<input>.json).
+                                       Default: db if present, otherwise json
 
 Arguments:
-  input          Specify input TBC file
-  output         Specify output TBC file
+  input                                Specify input TBC file
+  output                               Specify output TBC file
 ```

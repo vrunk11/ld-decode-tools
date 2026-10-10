@@ -1,5 +1,5 @@
 ## ld-export-metadata
-This application reads an ld-decode JSON metadata file, typically as produced by ld-process-vbi, and exports information in standard formats that other tools can read. At present, it can export:
+This application reads an ld-decode metadata file (SQLite `.tbc.db` or JSON `.tbc.json`), typically as produced by ld-process-vbi, and exports information in standard formats that other tools can read. At present, it can export:
 
 - Per-frame signal quality information from the VITS test signals, as CSV
 - Per-frame LaserDisc VBI control signals, as CSV
@@ -13,10 +13,10 @@ ld-export-metadata \<options> \<input>
 
 ```
 Options:
-  -h, --help                Displays help on commandline options.
-  --help-all                Displays help including Qt specific options.
+  -?, -h, --help            Displays help on commandline options.
+  --help-all                Displays help, including generic Qt options.
   -v, --version             Displays version information.
-  -d, --debug               Show debug
+  -d, --debug               Show application debug messages
   -q, --quiet               Suppress info and warning messages
   --vits-csv <file>         Write VITS information as CSV
   --vbi-csv <file>          Write VBI information as CSV
@@ -25,5 +25,5 @@ Options:
   --closed-captions <file>  Write closed captions as Scenarist SCC V1.0 format
 
 Arguments:
-  input                     Specify input JSON file
+  input                     Specify input metadata file
 ```

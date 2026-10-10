@@ -6,7 +6,7 @@ The primary file-type is TBC (time-base corrected) video files containing the ra
 
 TBC files are usually identified by the `.tbc` & `_chroma.tbc` file-extensions.
 
-The application also presents source and tool-chain metadata (supplied by JSON files) that provide additional details about the TBC file's contents such as VBI data and TV System.
+The application also presents source and tool-chain metadata (supplied by the TBC's metadata file, `.tbc.db` or `.tbc.json`) that provide additional details about the TBC file's contents such as VBI data and TV System.
 
 
 # Command line
@@ -14,11 +14,7 @@ The application also presents source and tool-chain metadata (supplied by JSON f
 
 Note: The input file name is optional (you can either specify it from the command line or use the GUI once the application is running).
 
-Dark Mode Is automatic on Linux/MacOS with QT but is currently not on Windows builds this can be forced into said mode with:
-
-    ld-analyse -style fusion
-
-This also applys to the DdD capture app.
+Colours and widget style are chosen in View > Theme and View > Style (see [The View Menu](#the-view-menu)) and remembered between sessions. `--force-dark-theme` forces the dark theme for one session without changing that setting, and Qt's own `-style <name>` option (for example `-style fusion`) overrides the style.
 
 Syntax:
 
@@ -26,12 +22,15 @@ ld-analyse \<options> \<input TBC file name>
 
 ```
 Options:
-  -h, --help     Displays this help.
-  -v, --version  Displays version information.
-  -d, --debug    Show debug
+  -?, -h, --help      Displays help on commandline options.
+  --help-all          Displays help, including generic Qt options.
+  -v, --version       Displays version information.
+  -d, --debug         Show application debug messages
+  -q, --quiet         Suppress info and warning messages
+  --force-dark-theme  Force dark theme regardless of system settings
 
 Arguments:
-  input          Specify input TBC file
+  input               Specify input TBC file
 ```
 
 # Opening a Time-Base Corrected (TBC) video file
@@ -89,7 +88,7 @@ The decoded frame is made up of several distinct areas.  The following diagram s
 
 ## VITC - Timecode Readout
 
-`ld-process-vbi` can scan for common [SMPTE VITC Timecode](https://github.com/oyvindln/vhs-decode/wiki/VITC-SMPTE-Timecode) and add that to the .JSON files if the data is detected you will see the `HH:MM:SS:FF` readout automatically, this is the exact hour/min/sec/frame information the for current frame displayed at the bottem, typically this is runtime on commercial media or time of day information on prosumer/broadcast tapes.
+`ld-process-vbi` can scan for common [SMPTE VITC Timecode](https://github.com/oyvindln/vhs-decode/wiki/VITC-SMPTE-Timecode) and add that to the metadata if the data is detected you will see the `HH:MM:SS:FF` readout automatically, this is the exact hour/min/sec/frame information the for current frame displayed at the bottem, typically this is runtime on commercial media or time of day information on prosumer/broadcast tapes.
 
 ![](assets/ld-analyse_VITC_readout.png)
 
@@ -155,9 +154,9 @@ This option opens a new TBC file as described above.
 
 This option reloads the current TBC file (this is useful when checking a TBC file that is still being decoded in order to view any new frames that have decoded since the file was originally loaded).
 
-## Save JSON
+## Save Metadata
 
-This action saves any changes you've made to the JSON metadata for the current TBC file. The menu item is greyed out if no changes have been made.
+This action saves any changes you've made to the metadata of the current TBC file, in the format it was loaded from (SQLite `.tbc.db` or JSON `.tbc.json`). The menu item is greyed out if no changes have been made. The loaded format is shown in the status bar ("Metadata: SQLite" or "Metadata: JSON"), with the metadata file name in its tooltip.
 
 ## Save frame as PNG
 
@@ -192,6 +191,30 @@ This option zooms the frame viewer to 2 times the original size.
 ## Zoom to 3x size
 
 This option zooms the frame viewer to 3 times the original size.
+
+## Toggle auto-resize on zoom
+
+When checked, the main window resizes to fit the frame each time the zoom changes.
+
+## Resize frame with window
+
+When checked, the frame is scaled to fit the window whenever the window is resized. Off by default.
+
+## Toggle chroma during seek
+
+When checked, chroma decoding is switched off while the next/previous frame buttons are held down, which makes seeking much faster; the colour comes back when the button is released.
+
+## Theme
+
+* **Auto (follow system)** - Light or Dark, as the system is set
+* **Light** and **Dark** - the system's own light and dark colours (where the system has no dark colours to offer, such as Linux, Dark uses the Dark grey palette)
+* **Soft light**, **Dim** and **Dark grey** - fixed neutral-grey palettes: a calmer light, a softer dark, and the dark palette earlier versions of ld-analyse used
+* **Custom** - your own palette, made with Customize...
+* **Customize...** - edit the colours (window, fields, buttons, selection, tooltips, links, disabled text...), starting from the current colours or one of the fixed palettes. Every change is applied to the whole application as you make it, including while dragging in the colour picker; OK keeps it as the Custom theme, Cancel restores the previous theme
+
+## Style
+
+Lists every widget style available on the machine. **Auto** uses the classic Windows 10 look on Windows (and the Windows 11 style for a dark theme on Windows 11), and the platform's default style elsewhere. The classic style cannot draw dark controls itself, so with a dark theme it is shown through Qt's "windows" style with a style sheet keeping the classic look. The Windows 11 style is only offered on Windows 11.
 
 # The Window Menu
 
@@ -354,7 +377,7 @@ The closed captions viewer is as follows:
 
 ## Video parameters
 
-The Video Parameters window allows you to adjust some of the metadata for the current TBC file. You can save these parameters back to the TBC's JSON file using 'File > Save JSON'.
+The Video Parameters window allows you to adjust some of the metadata for the current TBC file. You can save these parameters back to the TBC's metadata file using 'File > Save Metadata'.
 
 ![](assets/ld-analyse_Video_parameters_NTSC.png)
 

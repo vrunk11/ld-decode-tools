@@ -6,7 +6,7 @@ It should be noted that only NTSC format discs can support Closed Caption.
 
 ## Generating the Closed Caption data
 
-The ld-decode tool does not generate the Closed Caption data as the data is encoded into the visible frame area of the picture.  Due to this it is necessary to run ld-process-vbi on the resulting TBC file in order to generate the NTSC CC fields in the JSON metadata.
+The ld-decode tool does not generate the Closed Caption data as the data is encoded into the visible frame area of the picture.  Due to this it is necessary to run ld-process-vbi on the resulting TBC file in order to generate the NTSC CC fields in the metadata.
 
 Simply use a command line such as:
 
