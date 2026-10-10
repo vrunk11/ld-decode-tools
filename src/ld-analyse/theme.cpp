@@ -14,7 +14,7 @@
 #include <QApplication>
 #include <QPalette>
 #include <QStyle>
-#include <QProxyStyle>
+#include <QOperatingSystemVersion>
 #include <QStyleFactory>
 #include <QStyleHints>
 
@@ -228,9 +228,22 @@ static bool hasStyle(const QString &name)
     return QStyleFactory::keys().contains(name, Qt::CaseInsensitive);
 }
 
+// Whether this is Windows 11. Qt's "windows11" style draws with the Segoe
+// Fluent Icons font of Windows 11 and does not work on Windows 10.
+static bool isWindows11()
+{
+#ifdef Q_OS_WIN
+    return QOperatingSystemVersion::current() >= QOperatingSystemVersion::Windows11;
+#else
+    return false;
+#endif
+}
+
 QStringList availableStyles()
 {
-    return QStyleFactory::keys();
+    QStringList styles = QStyleFactory::keys();
+    if (!isWindows11()) styles.removeIf([](const QString &name) { return name.compare("windows11", Qt::CaseInsensitive) == 0; });
+    return styles;
 }
 
 QString styleDisplayName(const QString &styleName)
@@ -250,8 +263,7 @@ bool isLightOnlyStyle(const QString &styleName)
 }
 
 // Whether the platform supplies its own dark colours (the Dark theme then uses
-// them rather than a palette of ours). The classic style gets the Windows 11
-// ones through ClassicStyle.
+// them rather than a palette of ours)
 static bool hasSystemDarkScheme()
 {
 #if defined(Q_OS_WIN) || defined(Q_OS_MACOS)
@@ -268,176 +280,106 @@ static bool hasSystemDarkScheme()
 #endif
 }
 
-// The classic Windows style ("windowsvista") draws buttons, scroll bars,
-// combo boxes, menus and the like through the Windows theme engine, which only
-// knows a light appearance and ignores the palette. With a dark theme this
-// style keeps the classic layout and sizes but paints everything with the
-// Windows 11 style instead (Fusion where that is not available), which draws
-// a proper dark appearance. Complex controls also take their sub-control
-// geometry from the painting style, so that what is clicked matches what is
-// drawn. With a light theme it is the classic style, unchanged.
-class ClassicStyle : public QProxyStyle
+// The classic Windows style ("windowsvista") draws buttons, scroll bars, combo
+// boxes and the like through the Windows theme engine, whose controls only
+// exist in a light version, and it forces a light palette (Qt blog, "Dark Mode
+// on Windows 11 with Qt 6.5"). With a dark theme it is replaced by Qt's
+// "windows" style, which follows the palette, plus a style sheet giving it the
+// flat look of the classic style: the approach taken by OpenMW for the same
+// problem, which works on Windows 10 and 11 alike.
+static bool classicDarkActive = false;
+
+// Mix two colours: amount 0 gives a, 1 gives b
+static QColor mixColours(const QColor &a, const QColor &b, double amount)
 {
-public:
-    // A style instance is either light or dark for its whole life: applyStyle()
-    // sets a new one when the theme switches, so polish and unpolish always
-    // go to the same style
-    explicit ClassicStyle(bool _dark)
-        : QProxyStyle(QStyleFactory::create("windowsvista")), dark(_dark)
-    {
-        darkStyle = QStyleFactory::create("windows11");
-        if (!darkStyle) darkStyle = QStyleFactory::create("fusion");
-    }
-
-    ~ClassicStyle() override
-    {
-        delete darkStyle;
-    }
-
-    // The base colours (used where the theme sets no palette, i.e. Auto) come
-    // from the painting style too: the classic style forces a light palette
-    // even on a dark system, which left light backgrounds behind the dark
-    // controls
-    QPalette standardPalette() const override
-    {
-        return isDark() ? darkStyle->standardPalette() : QProxyStyle::standardPalette();
-    }
-
-    void polish(QPalette &palette) override
-    {
-        if (isDark()) darkStyle->polish(palette);
-        else QProxyStyle::polish(palette);
-    }
-
-    void polish(QWidget *widget) override
-    {
-        if (isDark()) darkStyle->polish(widget);
-        else QProxyStyle::polish(widget);
-    }
-
-    void unpolish(QWidget *widget) override
-    {
-        if (isDark()) darkStyle->unpolish(widget);
-        else QProxyStyle::unpolish(widget);
-    }
-
-    void polish(QApplication *application) override
-    {
-        if (isDark()) darkStyle->polish(application);
-        else QProxyStyle::polish(application);
-    }
-
-    void unpolish(QApplication *application) override
-    {
-        if (isDark()) darkStyle->unpolish(application);
-        else QProxyStyle::unpolish(application);
-    }
-
-    void drawPrimitive(PrimitiveElement element, const QStyleOption *option, QPainter *painter,
-                       const QWidget *widget = nullptr) const override
-    {
-        if (isDark()) darkStyle->drawPrimitive(element, option, painter, widget);
-        else QProxyStyle::drawPrimitive(element, option, painter, widget);
-    }
-
-    void drawControl(ControlElement element, const QStyleOption *option, QPainter *painter,
-                     const QWidget *widget = nullptr) const override
-    {
-        if (isDark()) darkStyle->drawControl(element, option, painter, widget);
-        else QProxyStyle::drawControl(element, option, painter, widget);
-    }
-
-    void drawComplexControl(ComplexControl control, const QStyleOptionComplex *option, QPainter *painter,
-                            const QWidget *widget = nullptr) const override
-    {
-        if (isDark()) darkStyle->drawComplexControl(control, option, painter, widget);
-        else QProxyStyle::drawComplexControl(control, option, painter, widget);
-    }
-
-    QRect subControlRect(ComplexControl control, const QStyleOptionComplex *option, SubControl subControl,
-                         const QWidget *widget = nullptr) const override
-    {
-        if (isDark()) return darkStyle->subControlRect(control, option, subControl, widget);
-        return QProxyStyle::subControlRect(control, option, subControl, widget);
-    }
-
-    SubControl hitTestComplexControl(ComplexControl control, const QStyleOptionComplex *option, const QPoint &position,
-                                     const QWidget *widget = nullptr) const override
-    {
-        if (isDark()) return darkStyle->hitTestComplexControl(control, option, position, widget);
-        return QProxyStyle::hitTestComplexControl(control, option, position, widget);
-    }
-
-    QRect subElementRect(SubElement element, const QStyleOption *option, const QWidget *widget = nullptr) const override
-    {
-        if (isDark()) return darkStyle->subElementRect(element, option, widget);
-        return QProxyStyle::subElementRect(element, option, widget);
-    }
-
-    // Spin boxes and combo boxes lay their buttons out differently (Windows 11
-    // puts the spin box arrows side by side), so they take the painting
-    // style's size, or the arrows would cover the text. Everything else keeps
-    // the classic, more compact sizes.
-    QSize sizeFromContents(ContentsType type, const QStyleOption *option, const QSize &contentsSize,
-                           const QWidget *widget = nullptr) const override
-    {
-        if (isDark() && (type == CT_SpinBox || type == CT_ComboBox)) {
-            return darkStyle->sizeFromContents(type, option, contentsSize, widget);
-        }
-        return QProxyStyle::sizeFromContents(type, option, contentsSize, widget);
-    }
-
-private:
-    QStyle *darkStyle = nullptr;
-
-    const bool dark;
-
-    bool isDark() const
-    {
-        return dark;
-    }
-};
-
-static bool isClassicStyleInUse()
-{
-    return dynamic_cast<ClassicStyle *>(QApplication::style()) != nullptr;
+    return QColor::fromRgbF(a.redF() + (b.redF() - a.redF()) * amount,
+                            a.greenF() + (b.greenF() - a.greenF()) * amount,
+                            a.blueF() + (b.blueF() - a.blueF()) * amount);
 }
 
-// Apply the style and return the name of the one in use
-static QString applyStyle(const QString &styleName, bool isDark)
+// The style sheet for the classic style with a dark theme. Backgrounds and
+// text refer to the palette (palette(button) and so on), so widgets with a
+// palette of their own, such as the highlighted dropouts button, keep it;
+// borders and hover/pressed shades are derived from the palette in use, so the
+// look follows every theme, custom ones included.
+static QString classicDarkStyleSheet(const QPalette &palette)
+{
+    const QColor button = palette.color(QPalette::Button);
+    const QColor text = palette.color(QPalette::ButtonText);
+    const QColor window = palette.color(QPalette::Window);
+    const QColor highlight = palette.color(QPalette::Highlight);
+
+    const QString border = mixColours(button, text, 0.30).name();
+    const QString borderDisabled = mixColours(button, text, 0.15).name();
+    const QString textDisabled = mixColours(button, text, 0.45).name();
+    const QString pressed = mixColours(button, highlight, 0.35).name();
+    const QString handle = mixColours(window, text, 0.30).name();
+    const QString handleHover = mixColours(window, text, 0.45).name();
+    const QString hover = highlight.name();
+    const QString toolTipBase = palette.color(QPalette::ToolTipBase).name();
+    const QString toolTipText = palette.color(QPalette::ToolTipText).name();
+
+    return QString(
+        "QPushButton, QToolButton {"
+        "  background-color: palette(button); color: palette(button-text);"
+        "  border: 1px solid %1; padding: 1px 3px; }"
+        "QPushButton:hover, QToolButton:hover { border-color: %2; }"
+        "QPushButton:pressed, QToolButton:pressed, QPushButton:checked, QToolButton:checked {"
+        "  background-color: %3; border-color: %2; }"
+        "QPushButton:disabled, QToolButton:disabled { color: %4; border-color: %5; }"
+        "QLineEdit, QAbstractSpinBox, QComboBox {"
+        "  background-color: palette(base); color: palette(text);"
+        "  border: 1px solid %1; padding: 1px 2px;"
+        "  selection-background-color: palette(highlight); selection-color: palette(highlighted-text); }"
+        "QLineEdit:hover, QAbstractSpinBox:hover, QComboBox:hover { border-color: %2; }"
+        "QComboBox QAbstractItemView {"
+        "  background-color: palette(base); color: palette(text); border: 1px solid %1; }"
+        "QScrollBar:vertical { background: palette(window); width: 17px; }"
+        "QScrollBar:horizontal { background: palette(window); height: 17px; }"
+        "QScrollBar::handle:vertical { background: %6; min-height: 24px; margin: 2px 4px; }"
+        "QScrollBar::handle:horizontal { background: %6; min-width: 24px; margin: 4px 2px; }"
+        "QScrollBar::handle:hover { background: %7; }"
+        "QScrollBar::add-line, QScrollBar::sub-line { width: 0px; height: 0px; border: none; background: none; }"
+        "QScrollBar::add-page, QScrollBar::sub-page { background: none; }"
+        "QSlider::groove:horizontal { height: 4px; background: %1; }"
+        "QSlider::handle:horizontal { background: palette(highlight); width: 8px; margin: -8px 0px; }"
+        "QStatusBar::item { border: none; }"
+        "QToolTip { background-color: %8; color: %9; border: 1px solid %1; }")
+        .arg(border, hover, pressed, textDisabled, borderDisabled, handle, handleHover, toolTipBase, toolTipText);
+}
+
+// Apply the style
+static void applyStyle(const QString &styleName, bool isDark)
 {
     // Remember the platform default before the first change
     const QString platformName = platformStyleName();
-    if (isStyleFromCommandLine()) return QApplication::style()->name();
+    classicDarkActive = false;
+    if (isStyleFromCommandLine()) return;
 
     QString name = styleName;
     if (name.isEmpty()) {
 #ifdef Q_OS_WIN
-        // Auto: the classic Windows 10 look when light; when dark, the
-        // Windows 11 style, whose own dark scheme matches the system
-        name = isDark ? QStringLiteral("windows11") : QStringLiteral("windowsvista");
-        if (!hasStyle(name)) name = isDark ? QStringLiteral("fusion") : platformName;
+        // Auto: the classic Windows 10 look, except on Windows 11 with a dark
+        // theme, where the Windows 11 style draws the system's dark scheme
+        name = (isDark && isWindows11() && hasStyle("windows11")) ? QStringLiteral("windows11")
+                                                                  : QStringLiteral("windowsvista");
 #else
         name = platformName;
 #endif
     }
 
-    if (!hasStyle(name)) name = platformName;
+    if (!availableStyles().contains(name, Qt::CaseInsensitive)) name = platformName;
 
-    // The classic style is wrapped so that it can also be dark (ClassicStyle).
-    // Switching between light and dark changes some of its sizes, so it is set
-    // again then, which makes every widget recompute its size and layout.
-    static bool classicIsDark = false;
-    if (isLightOnlyStyle(name)) {
-        if (!isClassicStyleInUse() || classicIsDark != isDark) QApplication::setStyle(new ClassicStyle(isDark));
-        classicIsDark = isDark;
-        return name;
+    // The classic style cannot be dark: the "windows" style and a style sheet
+    // stand in for it (see classicDarkStyleSheet)
+    if (isDark && isLightOnlyStyle(name)) {
+        classicDarkActive = true;
+        name = QStringLiteral("windows");
     }
 
-    if (isClassicStyleInUse() || QApplication::style()->name().compare(name, Qt::CaseInsensitive) != 0) {
+    if (QApplication::style()->name().compare(name, Qt::CaseInsensitive) != 0) {
         if (QStyle *style = QStyleFactory::create(name)) QApplication::setStyle(style);
     }
-    return QApplication::style()->name();
 }
 
 bool applyAppearance(const QString &styleName, ThemeMode mode, const QString &customPalette)
@@ -478,8 +420,7 @@ bool applyAppearance(const QString &styleName, ThemeMode mode, const QString &cu
         break;
     }
 
-    // Set before the style, whose painting and sizes (ClassicStyle) depend on
-    // it; PlotWidget::isDarkTheme() also reads it, so the graphs match
+    // PlotWidget::isDarkTheme() reads this, so the graphs match the theme
     app->setProperty("isDarkTheme", isDark);
 
     // The style first: changing it re-polishes the widgets with its palette
@@ -500,6 +441,17 @@ bool applyAppearance(const QString &styleName, ThemeMode mode, const QString &cu
     app->setPalette(QPalette());
 
     if (hasPalette) app->setPalette(palette);
+
+    // The classic style's dark look is built from the colours just set, so its
+    // style sheet comes last; it is removed again for any other style
+    static bool styleSheetSet = false;
+    if (classicDarkActive) {
+        app->setStyleSheet(classicDarkStyleSheet(app->palette()));
+        styleSheetSet = true;
+    } else if (styleSheetSet) {
+        app->setStyleSheet(QString());
+        styleSheetSet = false;
+    }
 
     return isDark;
 }

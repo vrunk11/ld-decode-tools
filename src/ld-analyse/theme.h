@@ -58,16 +58,17 @@ bool isDarkPalette(const QPalette &palette);
 
 // Widget styles are Qt style names (as listed by QStyleFactory), stored in the
 // configuration file. An empty name means Auto: on Windows the classic style
-// ("windowsvista", the Windows 10 look) with a light theme, and with a dark one
-// the Windows 11 style using its own dark scheme (Fusion if unavailable); on
-// other platforms the platform's default style.
+// ("windowsvista", the Windows 10 look), except on Windows 11 with a dark theme
+// where the Windows 11 style draws the system's dark scheme; on other
+// platforms the platform's default style. The "windows11" style is only
+// offered on Windows 11.
 
 // The styles available on this machine
 QStringList availableStyles();
 // A readable name for the View > Style menu
 QString styleDisplayName(const QString &styleName);
-// The classic Windows style, which on its own cannot be dark: with a dark theme
-// it is painted by the Windows 11 style while keeping its classic layout
+// The classic Windows style, which cannot be dark on its own: with a dark theme
+// the "windows" style and a style sheet giving the classic look stand in for it
 bool isLightOnlyStyle(const QString &styleName);
 
 // Apply a style (empty for Auto) and a theme to the whole application. It can

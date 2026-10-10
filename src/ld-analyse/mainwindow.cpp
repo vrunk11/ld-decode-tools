@@ -1787,13 +1787,12 @@ void MainWindow::setupAppearanceMenus()
         QString text;
         if (name.isEmpty()) {
 #ifdef Q_OS_WIN
-            text = tr("Auto (Classic, Windows 11 when dark)");
+            text = tr("Auto (Classic look)");
 #else
             text = tr("Auto (system)");
 #endif
         } else {
             text = styleDisplayName(name);
-            if (isLightOnlyStyle(name)) text += tr(" - Windows 11 painting when dark");
         }
 
         QAction *action = styleMenu->addAction(text);
