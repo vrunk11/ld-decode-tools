@@ -35,6 +35,8 @@
 #include "chromadecoderconfigdialog.h"
 #include "configuration.h"
 #include "tbcsource.h"
+#include "theme.h"
+#include "themeeditordialog.h"
 
 namespace Ui {
 class MainWindow;
@@ -151,6 +153,13 @@ private:
     qint32 currentFieldNumber, currentFrameNumber;
     double scaleFactor;
     QPalette buttonPalette;
+
+    // Colour theme and widget style (View > Theme, View > Style)
+    ThemeMode themeMode = ThemeMode::Auto;
+    QString customPalette;       // custom theme colours (serialised)
+    QString styleName;           // empty: Auto
+    bool isDarkTheme = false;
+    QAction *customThemeAction = nullptr;
     QString lastFilename;
     
     // Slider debouncing
@@ -176,6 +185,13 @@ private:
     void setCurrentFrame(qint32 frame);
     void setCurrentField(qint32 field);
     void sanitizeCurrentPosition();
+
+    // Analysis graphs and colour theme
+    void updateGraphs();
+    void setupAppearanceMenus();
+    void updateAppearance();
+    void refreshAfterAppearanceChange(bool updateGraphData);
+    void customizeTheme();
 
 	// Image display methods
     void showImage();

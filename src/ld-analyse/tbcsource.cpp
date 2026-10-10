@@ -89,6 +89,23 @@ QString TbcSource::getCurrentSourceFilename()
     return currentSourceFilename;
 }
 
+// Method returns the filename of the metadata loaded with the current source
+QString TbcSource::getCurrentMetadataFilename()
+{
+    if (!sourceReady) return QString();
+
+    return currentMetadataFilename;
+}
+
+// Method returns the format of the loaded metadata, for display
+QString TbcSource::getMetadataFormatName()
+{
+    if (!sourceReady) return QString();
+
+    return ldDecodeMetaData.getFormat() == LdDecodeMetaData::MetadataFormat::Json ? QStringLiteral("JSON")
+                                                                                   : QStringLiteral("SQLite");
+}
+
 // Return a description of the last IO error
 QString TbcSource::getLastIOError()
 {

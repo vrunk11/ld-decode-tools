@@ -13,6 +13,8 @@
 #include "ui_mainwindow.h"
 #include "tbc/logging.h"
 
+#include <QActionGroup>
+
 MainWindow::MainWindow(QString inputFilenameParam, QWidget *parent) :
     QMainWindow(parent),
     ui(new Ui::MainWindow)
@@ -86,6 +88,23 @@ MainWindow::MainWindow(QString inputFilenameParam, QWidget *parent) :
     // Load view options from configuration
     resizeFrameWithWindow = configuration.getResizeFrameWithWindow();
     ui->actionResizeFrameWithWindow->setChecked(resizeFrameWithWindow);
+
+    // Colour theme and widget style: View > Theme and View > Style, saved in the
+    // configuration. --force-dark-theme overrides the theme for this session
+    // without changing the setting.
+    customPalette = configuration.getCustomPalette();
+    const qint32 savedTheme = configuration.getThemeMode();
+    themeMode = (savedTheme >= static_cast<qint32>(ThemeMode::Auto) && savedTheme <= static_cast<qint32>(ThemeMode::DarkGrey))
+        ? static_cast<ThemeMode>(savedTheme) : ThemeMode::Auto;
+    if (themeMode == ThemeMode::Custom && customPalette.isEmpty()) themeMode = ThemeMode::Auto;
+    if (qApp->property("forceDarkTheme").toBool()) themeMode = ThemeMode::Dark;
+
+    // A saved style that is not installed here falls back to Auto
+    styleName = configuration.getStyleName();
+    if (!styleName.isEmpty() && !availableStyles().contains(styleName, Qt::CaseInsensitive)) styleName.clear();
+
+    isDarkTheme = applyAppearance(styleName, themeMode, customPalette);
+    setupAppearanceMenus();
 
     // Store the current button palette for the show dropouts button
     // Use application palette to ensure it respects theme settings
@@ -298,7 +317,11 @@ void MainWindow::updateGuiLoaded()
         statusText += tr(" sequential frames available");
     }
 
+    // Which metadata was loaded: SQLite (.tbc.db) or JSON (.tbc.json)
+    statusText += tr(" - Metadata: ") + tbcSource.getMetadataFormatName();
+
     sourceVideoStatus.setText(statusText);
+    sourceVideoStatus.setToolTip(tbcSource.getCurrentMetadataFilename());
 
     // Update source mode button
     updateSourcesPushButton();
@@ -393,21 +416,11 @@ void MainWindow::updateAspectPushButton()
 // Update the source selection button
 void MainWindow::updateSourcesPushButton()
 {
-	// Only show the button if there are multiple sources (not ONE_SOURCE) AND a source is loaded
-	if (tbcSource.getSourceMode() != TbcSource::ONE_SOURCE && tbcSource.getIsSourceLoaded()) {
-		ui->sourcesPushButton->setVisible(true);
-	} else {
-		// Hide the button by default (no source loaded or only one source)
-		ui->sourcesPushButton->setVisible(false);
-		chromaDecoderConfigDialog->updateSourceMode(tbcSource.getSourceMode());
-		return;
-	}
-	
 	if (this->width() >= 930)
 	{
 		switch (tbcSource.getSourceMode()) {
 		case TbcSource::ONE_SOURCE:
-			// This case should not be reached due to early return above
+			ui->sourcesPushButton->setText(tr("One Source"));
 			break;
 		case TbcSource::LUMA_SOURCE:
 			ui->sourcesPushButton->setText(tr("Y Source"));
@@ -424,7 +437,7 @@ void MainWindow::updateSourcesPushButton()
 	{
 		switch (tbcSource.getSourceMode()) {
 		case TbcSource::ONE_SOURCE:
-			// This case should not be reached due to early return above
+			ui->sourcesPushButton->setText(tr(".TBC"));
 			break;
 		case TbcSource::LUMA_SOURCE:
 			ui->sourcesPushButton->setText(tr("Y"));
@@ -496,8 +509,13 @@ void MainWindow::showImage()
 
     // If there are dropouts in the frame, highlight the show dropouts button
     if (tbcSource.getIsDropoutPresent()) {
+        // Light grey on a light theme (as before themes existed); on a dark
+        // one a lighter shade of the button, so it stands out without
+        // becoming a light patch with unreadable light text
         QPalette tempPalette = buttonPalette;
-        tempPalette.setColor(QPalette::Button, QColor(Qt::lightGray));
+        const QColor highlightColour = isDarkTheme ? buttonPalette.color(QPalette::Button).lighter(170)
+                                                   : QColor(Qt::lightGray);
+        tempPalette.setColor(QPalette::Button, highlightColour);
         ui->dropoutsPushButton->setAutoFillBackground(true);
         ui->dropoutsPushButton->setPalette(tempPalette);
         ui->dropoutsPushButton->update();
@@ -657,11 +675,7 @@ void MainWindow::setViewValues()
 			currentNumber = currentFieldNumber;
 			maximum = tbcSource.getNumberOfFields();
 			spinLabel = QString("Field #:");
-			if (tbcSource.getStretchField()) {
-				buttonLabel = QString("Field 2:1");
-			} else {
-				buttonLabel = QString("Field 1:1");
-			}
+			buttonLabel = QString("Field View");
 		} else {
 			currentNumber = currentFrameNumber;
 			maximum = tbcSource.getNumberOfFrames();
@@ -680,11 +694,7 @@ void MainWindow::setViewValues()
 			currentNumber = currentFieldNumber;
 			maximum = tbcSource.getNumberOfFields();
 			spinLabel = QString("Field #:");
-			if (tbcSource.getStretchField()) {
-				buttonLabel = QString("Field 2:1");
-			} else {
-				buttonLabel = QString("Field 1:1");
-			}
+			buttonLabel = QString("Field");
 		} else {
 			currentNumber = currentFrameNumber;
 			maximum = tbcSource.getNumberOfFrames();
@@ -1243,20 +1253,20 @@ void MainWindow::on_aspectPushButton_clicked()
 
 void MainWindow::resize_on_aspect()
 {
-#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
-    int width = ui->imageViewerLabel->pixmap().width();
-    int height = ui->imageViewerLabel->pixmap().height();
-#elif QT_VERSION >= QT_VERSION_CHECK(5, 15, 0)
-    int width = ui->imageViewerLabel->pixmap(Qt::ReturnByValue).width();
-    int height = ui->imageViewerLabel->pixmap(Qt::ReturnByValue).height();
-#else
-    int width = ui->imageViewerLabel->pixmap()->width();
-    int height = ui->imageViewerLabel->pixmap()->height();
-#endif
-
 	if(!this->isFullScreen() && !this->isMaximized() && autoResize)
 	{
-		this->resize(width + 20, height + 140);
+		// Size the window so that the scroll area shows the whole image without
+		// scroll bars. The room taken by everything around the image (layout
+		// margins, frame, buttons, menus, status bar) depends on the platform
+		// style and fonts, so it is measured rather than assumed: the window
+		// grows or shrinks by the difference between the scroll area's wanted
+		// and current sizes. The image itself is in the content's size hint.
+		// Fixed margins (+20, +140) left the window slightly too small.
+		QScrollArea *scrollArea = ui->scrollArea;
+		const int frame = 2 * scrollArea->frameWidth();
+		const QSize contentSize = scrollArea->widget()->sizeHint();
+		const QSize wantedSize(contentSize.width() + frame, contentSize.height() + frame);
+		this->resize(this->size() + (wantedSize - scrollArea->size()));
 	}
 }
 
@@ -1400,25 +1410,19 @@ void MainWindow::on_viewPushButton_clicked()
             break;
 
         case TbcSource::ViewMode::SPLIT_VIEW:
-            tbcDebugStream() << "Changing to FIELD_VIEW mode (1:1)";
+            tbcDebugStream() << "Changing to FIELD_VIEW mode";
 
-            // Set field mode with 1:1 aspect
+            // Set field mode, stretched 2:1 to frame height (the 1:1 field
+            // mode was removed as it added a click without being useful)
             tbcSource.setViewMode(TbcSource::ViewMode::FIELD_VIEW);
-            tbcSource.setStretchField(false);
+            tbcSource.setStretchField(true);
             break;
 
         case TbcSource::ViewMode::FIELD_VIEW:
-            if (!tbcSource.getStretchField()) {
-                tbcDebugStream() << "Changing to FIELD_VIEW mode (2:1)";
+            tbcDebugStream() << "Changing to FRAME_VIEW mode";
 
-                // Set field mode with 2:1 aspect
-                tbcSource.setStretchField(true);
-            } else {
-                tbcDebugStream() << "Changing to FRAME_VIEW mode";
-
-                // Set frame mode
-                tbcSource.setViewMode(TbcSource::ViewMode::FRAME_VIEW);
-            }
+            // Set frame mode
+            tbcSource.setViewMode(TbcSource::ViewMode::FRAME_VIEW);
             break;
     }
 
@@ -1699,6 +1703,167 @@ void MainWindow::on_busy(QString infoMessage)
 }
 
 // Signal handler for finishedLoading signal from TbcSource class
+// Fill the analysis graphs from the loaded source
+void MainWindow::updateGraphs()
+{
+    dropoutAnalysisDialog->startUpdate(tbcSource.getNumberOfFrames());
+    visibleDropoutAnalysisDialog->startUpdate(tbcSource.getNumberOfFrames());
+    blackSnrAnalysisDialog->startUpdate(tbcSource.getNumberOfFrames());
+    whiteSnrAnalysisDialog->startUpdate(tbcSource.getNumberOfFrames());
+
+    QVector<double> doGraphData = tbcSource.getDropOutGraphData();
+    QVector<double> visibleDoGraphData = tbcSource.getVisibleDropOutGraphData();
+    QVector<double> blackSnrGraphData = tbcSource.getBlackSnrGraphData();
+    QVector<double> whiteSnrGraphData = tbcSource.getWhiteSnrGraphData();
+
+    for (qint32 frameNumber = 0; frameNumber < tbcSource.getNumberOfFrames(); frameNumber++) {
+        dropoutAnalysisDialog->addDataPoint(frameNumber + 1, doGraphData[frameNumber]);
+        visibleDropoutAnalysisDialog->addDataPoint(frameNumber + 1, visibleDoGraphData[frameNumber]);
+        blackSnrAnalysisDialog->addDataPoint(frameNumber + 1, blackSnrGraphData[frameNumber]);
+        whiteSnrAnalysisDialog->addDataPoint(frameNumber + 1, whiteSnrGraphData[frameNumber]);
+    }
+
+    dropoutAnalysisDialog->finishUpdate(currentFrameNumber);
+    visibleDropoutAnalysisDialog->finishUpdate(currentFrameNumber);
+    blackSnrAnalysisDialog->finishUpdate(currentFrameNumber);
+    whiteSnrAnalysisDialog->finishUpdate(currentFrameNumber);
+}
+
+// Add View > Theme (Auto/Light/Dark) and View > Style (Auto/Windows 11/Classic/
+// Fusion), with the current choices checked
+void MainWindow::setupAppearanceMenus()
+{
+    QMenu *themeMenu = new QMenu(tr("Theme"), this);
+    QActionGroup *themeGroup = new QActionGroup(this);
+    themeGroup->setExclusive(true);
+
+    const struct {
+        ThemeMode mode;
+        QString text;
+    } themeEntries[] = {
+        // The system's own appearance
+        { ThemeMode::Auto, tr("Auto (follow system)") },
+        { ThemeMode::Light, tr("Light") },
+        { ThemeMode::Dark, tr("Dark") },
+        // Fixed palettes
+        { ThemeMode::SoftLight, tr("Soft light") },
+        { ThemeMode::Dim, tr("Dim") },
+        { ThemeMode::DarkGrey, tr("Dark grey") },
+        { ThemeMode::Custom, tr("Custom") },
+    };
+
+    for (const auto &entry : themeEntries) {
+        if (entry.mode == ThemeMode::SoftLight) themeMenu->addSeparator();
+        QAction *action = themeMenu->addAction(entry.text);
+        action->setCheckable(true);
+        action->setChecked(entry.mode == themeMode);
+        themeGroup->addAction(action);
+        const ThemeMode mode = entry.mode;
+        if (mode == ThemeMode::Custom) {
+            // Only selectable once a custom theme has been saved
+            customThemeAction = action;
+            action->setEnabled(!customPalette.isEmpty());
+        }
+        connect(action, &QAction::triggered, this, [this, mode]() {
+            themeMode = mode;
+            configuration.setThemeMode(static_cast<qint32>(mode));
+            updateAppearance();
+        });
+    }
+
+    themeMenu->addSeparator();
+    QAction *customizeAction = themeMenu->addAction(tr("Customize..."));
+    connect(customizeAction, &QAction::triggered, this, &MainWindow::customizeTheme);
+
+    QMenu *styleMenu = new QMenu(tr("Style"), this);
+    QActionGroup *styleGroup = new QActionGroup(this);
+    styleGroup->setExclusive(true);
+
+    // Auto first, then every style Qt finds on this machine
+    QStringList names = { QString() };
+    names += availableStyles();
+
+    for (const QString &name : names) {
+        QString text;
+        if (name.isEmpty()) {
+#ifdef Q_OS_WIN
+            text = tr("Auto (Classic, Windows 11 when dark)");
+#else
+            text = tr("Auto (system)");
+#endif
+        } else {
+            text = styleDisplayName(name);
+            if (isLightOnlyStyle(name)) text += tr(" - Windows 11 painting when dark");
+        }
+
+        QAction *action = styleMenu->addAction(text);
+        action->setCheckable(true);
+        action->setChecked(name.compare(styleName, Qt::CaseInsensitive) == 0);
+        action->setData(name);
+        styleGroup->addAction(action);
+        connect(action, &QAction::triggered, this, [this, name]() {
+            styleName = name;
+            configuration.setStyleName(name);
+            updateAppearance();
+        });
+    }
+    ui->menuView->addSeparator();
+    ui->menuView->addMenu(themeMenu);
+    ui->menuView->addMenu(styleMenu);
+}
+
+// Apply the theme and style now and remember the choice
+void MainWindow::updateAppearance()
+{
+    configuration.writeConfiguration();
+
+    isDarkTheme = applyAppearance(styleName, themeMode, customPalette);
+    refreshAfterAppearanceChange(true);
+}
+
+// Update what keeps its own copy of the colours. The graphs only depend on
+// whether the theme is dark, and are costly to rebuild on a long capture, so
+// the live preview of the theme editor only rebuilds them when that changes.
+void MainWindow::refreshAfterAppearanceChange(bool updateGraphData)
+{
+    buttonPalette = QApplication::palette();
+
+    if (tbcSource.getIsSourceLoaded()) {
+        if (updateGraphData) updateGraphs();
+        showImage();
+    }
+}
+
+// View > Theme > Customize...: edit the custom theme with a live preview
+void MainWindow::customizeTheme()
+{
+    const ThemeMode previousMode = themeMode;
+    const QString previousPalette = customPalette;
+
+    ThemeEditorDialog editor(QApplication::palette(), this);
+    connect(&editor, &ThemeEditorDialog::previewChanged, this, [this](const QString &palette) {
+        const bool wasDark = isDarkTheme;
+        isDarkTheme = applyAppearance(styleName, ThemeMode::Custom, palette);
+        refreshAfterAppearanceChange(isDarkTheme != wasDark);
+    });
+
+    if (editor.exec() == QDialog::Accepted) {
+        customPalette = editor.palette();
+        themeMode = ThemeMode::Custom;
+        configuration.setCustomPalette(customPalette);
+        configuration.setThemeMode(static_cast<qint32>(themeMode));
+        if (customThemeAction) {
+            customThemeAction->setEnabled(true);
+            customThemeAction->setChecked(true);
+        }
+    } else {
+        themeMode = previousMode;
+        customPalette = previousPalette;
+    }
+
+    updateAppearance();
+}
+
 void MainWindow::on_finishedLoading(bool success)
 {
     tbcDebugStream() << "MainWindow::on_finishedLoading(): Called";
@@ -1709,27 +1874,7 @@ void MainWindow::on_finishedLoading(bool success)
     // Ensure source loaded ok
     if (success) {
         // Generate the graph data
-        dropoutAnalysisDialog->startUpdate(tbcSource.getNumberOfFrames());
-        visibleDropoutAnalysisDialog->startUpdate(tbcSource.getNumberOfFrames());
-        blackSnrAnalysisDialog->startUpdate(tbcSource.getNumberOfFrames());
-        whiteSnrAnalysisDialog->startUpdate(tbcSource.getNumberOfFrames());
-
-        QVector<double> doGraphData = tbcSource.getDropOutGraphData();
-        QVector<double> visibleDoGraphData = tbcSource.getVisibleDropOutGraphData();
-        QVector<double> blackSnrGraphData = tbcSource.getBlackSnrGraphData();
-        QVector<double> whiteSnrGraphData = tbcSource.getWhiteSnrGraphData();
-
-        for (qint32 frameNumber = 0; frameNumber < tbcSource.getNumberOfFrames(); frameNumber++) {
-            dropoutAnalysisDialog->addDataPoint(frameNumber + 1, doGraphData[frameNumber]);
-            visibleDropoutAnalysisDialog->addDataPoint(frameNumber + 1, visibleDoGraphData[frameNumber]);
-            blackSnrAnalysisDialog->addDataPoint(frameNumber + 1, blackSnrGraphData[frameNumber]);
-            whiteSnrAnalysisDialog->addDataPoint(frameNumber + 1, whiteSnrGraphData[frameNumber]);
-        }
-
-        dropoutAnalysisDialog->finishUpdate(currentFrameNumber);
-        visibleDropoutAnalysisDialog->finishUpdate(currentFrameNumber);
-        blackSnrAnalysisDialog->finishUpdate(currentFrameNumber);
-        whiteSnrAnalysisDialog->finishUpdate(currentFrameNumber);
+        updateGraphs();
 
         // Update the GUI
         resetGui();
@@ -1834,11 +1979,7 @@ void MainWindow::resizeEvent(QResizeEvent *event)
 	if (this->width() >= 930)
 	{
 		if (tbcSource.getFieldViewEnabled()) {
-			if (tbcSource.getStretchField()) {
-				ui->viewPushButton->setText(tr("Field 2:1"));
-			} else {
-				ui->viewPushButton->setText(tr("Field 1:1"));
-			}
+			ui->viewPushButton->setText(tr("Field View"));
 		} else {
 			if (tbcSource.getSplitViewEnabled()) {
 				ui->viewPushButton->setText(tr("Split View"));
@@ -1850,11 +1991,7 @@ void MainWindow::resizeEvent(QResizeEvent *event)
 	else
 	{
 		if (tbcSource.getFieldViewEnabled()) {
-			if (tbcSource.getStretchField()) {
-				ui->viewPushButton->setText(tr("Field 2:1"));
-			} else {
-				ui->viewPushButton->setText(tr("Field 1:1"));
-			}
+			ui->viewPushButton->setText(tr("Field"));
 		} else {
 			if (tbcSource.getSplitViewEnabled()) {
 				ui->viewPushButton->setText(tr("Split"));

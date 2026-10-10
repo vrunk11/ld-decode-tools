@@ -19,6 +19,8 @@ set(ld-analyse_SOURCES
     visibledropoutanalysisdialog.cpp visibledropoutanalysisdialog.ui
     whitesnranalysisdialog.cpp whitesnranalysisdialog.ui
     plotwidget.cpp
+    theme.cpp
+    themeeditordialog.cpp
 )
 
 qt_add_resources(ld-analyse_SOURCES ld-analyse-resources.qrc)

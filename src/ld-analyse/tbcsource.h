@@ -59,6 +59,8 @@ public:
     bool getIsSourceLoaded();
     void saveSourceMetadata();
     QString getCurrentSourceFilename();
+    QString getCurrentMetadataFilename();
+    QString getMetadataFormatName();
     QString getLastIOError();
 
     void setHighlightDropouts(bool _state);

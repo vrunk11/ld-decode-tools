@@ -66,6 +66,15 @@ public:
     bool getToggleChromaDuringSeek(void);
     void setResizeFrameWithWindow(bool resizeFrameWithWindow);
     bool getResizeFrameWithWindow(void);
+    // Colour theme: 0 = auto (follow the system), 1 = light, 2 = dark (see ThemeMode)
+    void setThemeMode(qint32 themeMode);
+    qint32 getThemeMode(void);
+    // Widget style: a Qt style name, or empty for auto (see theme.h)
+    void setStyleName(QString styleName);
+    QString getStyleName(void);
+    // Custom theme colours as "Key=#rrggbb;..." (see theme.h), empty if none
+    void setCustomPalette(QString customPalette);
+    QString getCustomPalette(void);
 
 signals:
 
@@ -100,6 +109,9 @@ private:
     struct ViewOptions {
         bool toggleChromaDuringSeek;
         bool resizeFrameWithWindow;
+        qint32 themeMode;
+        QString styleName;
+        QString customPalette;
     };
 
     // Overall settings structure

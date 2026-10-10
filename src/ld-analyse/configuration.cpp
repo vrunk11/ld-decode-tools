@@ -73,6 +73,10 @@ void Configuration::writeConfiguration(void)
     configuration->beginGroup("viewOptions");
     configuration->setValue("toggleChromaDuringSeek", settings.viewOptions.toggleChromaDuringSeek);
     configuration->setValue("resizeFrameWithWindow", settings.viewOptions.resizeFrameWithWindow);
+    configuration->setValue("themeMode", settings.viewOptions.themeMode);
+    configuration->setValue("styleName", settings.viewOptions.styleName);
+    configuration->remove("styleMode"); // replaced by styleName
+    configuration->setValue("customPalette", settings.viewOptions.customPalette);
     configuration->endGroup();
 
     // Sync the settings with disk
@@ -112,7 +116,10 @@ void Configuration::readConfiguration(void)
     // View options
     configuration->beginGroup("viewOptions");
     settings.viewOptions.toggleChromaDuringSeek = configuration->value("toggleChromaDuringSeek", false).toBool();
-    settings.viewOptions.resizeFrameWithWindow = configuration->value("resizeFrameWithWindow", true).toBool();
+    settings.viewOptions.resizeFrameWithWindow = configuration->value("resizeFrameWithWindow", false).toBool();
+    settings.viewOptions.themeMode = configuration->value("themeMode", 0).toInt();
+    settings.viewOptions.styleName = configuration->value("styleName", QString()).toString();
+    settings.viewOptions.customPalette = configuration->value("customPalette", QString()).toString();
     configuration->endGroup();
 }
 
@@ -141,7 +148,10 @@ void Configuration::setDefault(void)
 
     // View options
     settings.viewOptions.toggleChromaDuringSeek = false;
-    settings.viewOptions.resizeFrameWithWindow = true;
+    settings.viewOptions.resizeFrameWithWindow = false;
+    settings.viewOptions.themeMode = 0;
+    settings.viewOptions.styleName.clear();
+    settings.viewOptions.customPalette.clear();
 
     // Write the configuration
     writeConfiguration();
@@ -310,4 +320,34 @@ void Configuration::setResizeFrameWithWindow(bool resizeFrameWithWindow)
 bool Configuration::getResizeFrameWithWindow(void)
 {
     return settings.viewOptions.resizeFrameWithWindow;
+}
+
+void Configuration::setThemeMode(qint32 themeMode)
+{
+    settings.viewOptions.themeMode = themeMode;
+}
+
+qint32 Configuration::getThemeMode(void)
+{
+    return settings.viewOptions.themeMode;
+}
+
+void Configuration::setStyleName(QString styleName)
+{
+    settings.viewOptions.styleName = styleName;
+}
+
+QString Configuration::getStyleName(void)
+{
+    return settings.viewOptions.styleName;
+}
+
+void Configuration::setCustomPalette(QString customPalette)
+{
+    settings.viewOptions.customPalette = customPalette;
+}
+
+QString Configuration::getCustomPalette(void)
+{
+    return settings.viewOptions.customPalette;
 }
