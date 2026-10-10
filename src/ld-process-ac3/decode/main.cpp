@@ -60,6 +60,15 @@ int main(int argc, char *argv[]) {
     _setmode(_fileno(stdin), O_BINARY);	
 #endif
 
+    // -h and --help show the help and succeed; getopt only knows short options,
+    // so --help would otherwise be an unknown option and an error
+    for (int i = 1; i < argc; i++) {
+        if (std::strcmp(argv[i], "--help") == 0 || std::strcmp(argv[i], "-h") == 0) {
+            doHelp(argv[0]);
+            return 0;
+        }
+    }
+
     while (true) {
         switch (getopt(argc, argv, "v:h?")) {
             // could have stdin/stdout as defaults, with switches to change them

@@ -6,7 +6,11 @@
   "builtin-baseline": "e5a1490e1409d175932ef6014519e9ae149ddb7c",
   "dependencies": [
     "fftw3",
-    "pkgconf"
+    "pkgconf",
+    {
+      "name": "getopt",
+      "platform": "windows & !mingw"
+    }
   ],
   "features": {
     "qt": {

@@ -148,7 +148,10 @@ jobs:
           find "$QT_ROOT_DIR/plugins/sqldrivers" -name 'libqsql*.so' ! -name 'libqsqlite.so' -print -delete
 
           exe_args=()
+          # ELF binaries only: the helper scripts (ld-compress, pcm2wav) are
+          # installed alongside them but have no libraries to bundle
           for exe in AppDir/usr/bin/*; do
+            [[ "$(head -c 4 "$exe")" == $'\x7fELF' ]] || continue
             exe_args+=(--executable "$exe")
           done
 
@@ -167,8 +170,10 @@ jobs:
           set -euo pipefail
           # Each command-line tool must start from the bundle and parse --help.
           for exe in AppDir/usr/bin/*; do
-            # linuxdeploy-plugin-qt leaves a qt.conf beside the binaries.
+            # Binaries only: linuxdeploy-plugin-qt leaves a qt.conf beside them,
+            # and the helper scripts (ld-compress, pcm2wav) take no --help
             [[ -f "$exe" && -x "$exe" ]] || continue
+            [[ "$(head -c 4 "$exe")" == $'\x7fELF' ]] || continue
             name="$(basename "$exe")"
             [[ "$name" == ld-analyse ]] && continue
             "$exe" --help > /dev/null

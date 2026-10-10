@@ -1,13 +1,6 @@
-cmake_minimum_required(VERSION 3.16)
-
-project(ld-process-efm)
-
-find_package(Qt6 REQUIRED COMPONENTS Core)
-
 add_executable(ld-process-efm
     efmprocess.cpp
     main.cpp
-    ../../tools/library/tbc/logging.cpp
     Datatypes/audio.cpp
     Datatypes/f1frame.cpp
     Datatypes/f2frame.cpp
@@ -26,14 +19,12 @@ add_executable(ld-process-efm
     Decoders/syncf3frames.cpp
 )
 
-target_include_directories(ld-process-efm PRIVATE . ../../tools/library/tbc ${EZPWD_DIR})
+# Reed-Solomon headers: the shared ezpwd (EZPWD_DIR, see the root CMakeLists.txt)
+target_include_directories(ld-process-efm PRIVATE . ${EZPWD_DIR})
 
-# Define application version info
-target_compile_definitions(ld-process-efm PRIVATE 
-    APP_BRANCH="prototypes"
-    APP_COMMIT="unknown"
-)
-
-target_link_libraries(ld-process-efm PRIVATE Qt6::Core)
+target_link_libraries(ld-process-efm PRIVATE Qt::Core lddecode-library)
 
 install(TARGETS ld-process-efm)
+
+# MSVC does not define ssize_t (a POSIX type), which the ezpwd headers use
+target_compile_definitions(ld-process-efm PRIVATE $<$<CXX_COMPILER_ID:MSVC>:ssize_t=ptrdiff_t>)

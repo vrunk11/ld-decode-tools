@@ -1,6 +1,6 @@
 ## ld-process-efm
 
-Note: This tool is depreciated - use the [efm-decoder](../EFM-Tools/efm-decoder.md) tools instead
+Note: the [efm-decoder](../EFM-Tools/efm-decoder.md) tools are an alternative that decodes the same data in separate stages and can stack several captures.
 
 
 | Format       | Info           | Sample Rate | Bit-Depth    | Extention |

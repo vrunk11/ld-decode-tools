@@ -8,12 +8,7 @@ ld-process-ac3/ld-ac3-* tools decode AC3 Audio.
 
 ## Building
 
-```
-mkdir build
-cd build
-cmake ..
-make all
-```
+The tools are built and installed with the rest of ld-decode-tools (see [BUILD.md](../../BUILD.md)). They use POSIX `getopt`; with MSVC on Windows it comes from vcpkg's `getopt` port, which `build.bat` and the CI install from `vcpkg.json`.
 
 ## Usage
 

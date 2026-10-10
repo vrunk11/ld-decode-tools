@@ -7,9 +7,11 @@ This is the complete suite of tools for processing LaserDisc captures and TBC (T
 ### Core Processing Tools
 - **ld-process-vbi** - Decode Vertical Blanking Interval data
 - **ld-process-vits** - Process Vertical Interval Test Signals
+- **ld-process-efm** - Decode the EFM digital audio or data in a single step
+- **ld-ac3-demodulate / ld-ac3-decode** (ld-process-ac3) - Extract Dolby Digital AC3 audio tracks
 
 ### EFM Decoder Suite
-*Replaces ld-process-efm with staged decoding and stacking capabilities*
+*Staged EFM decoding with stacking capabilities; an alternative to ld-process-efm*
 - **efm-decoder-f2** - Convert EFM T-values to F2 sections
 - **efm-decoder-d24** - Convert F2 sections to Data24 format
 - **efm-decoder-audio** - Convert EFM Data24 sections to 16-bit stereo PCM audio
@@ -32,13 +34,12 @@ This is the complete suite of tools for processing LaserDisc captures and TBC (T
 - **ld-json-converter** - Convert JSON metadata (`.tbc.json`) to SQLite (`.tbc.db`)
 - **ld-sqlite-to-json** - Convert SQLite metadata (`.tbc.db`) to JSON (`.tbc.json`)
 
-### Prototypes (not built)
-`prototypes/` keeps tools that are no longer part of the build: **ld-process-ac3** (Dolby Digital AC3
-extraction) and **ld-process-efm** (replaced by the EFM decoder suite). See [prototypes/README.md](prototypes/README.md).
+### Utility Scripts
+- **ld-compress** - Compress `.lds` captures to `.ldf` (FLAC through ffmpeg), uncompress them back, and verify them (in scripts/)
+- **pcm2wav** - Wrap the 44.1 kHz 16-bit stereo PCM audio of a decode in a WAV file (in scripts/)
 
-### Test scripts
-`scripts/` holds the drivers of the functional tests, `test-chroma` and `test-decode-pretbc`
-(see [TESTING.md](TESTING.md)).
+Both are bash scripts using ffmpeg; they are installed on Linux and macOS. `scripts/` also holds the
+drivers of the functional tests, `test-chroma` and `test-decode-pretbc` (see [TESTING.md](TESTING.md)).
 
 ## Building
 

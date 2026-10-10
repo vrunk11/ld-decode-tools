@@ -71,6 +71,8 @@ and command lines working (see §2 and §10).
 | `src/ld-chroma-decoder/` | `ld-chroma-decoder`, `ld-chroma-encoder` | PAL/NTSC colour decoding to RGB/YUV; test encoder |
 | `src/ld-process-vbi/` | `ld-process-vbi` | Decode VBI (frame numbers, timecodes, VITC, closed captions) |
 | `src/ld-process-vits/` | `ld-process-vits` | Vertical interval test signal measurements |
+| `src/ld-process-efm/` | `ld-process-efm` | Single-step EFM decoding (digital audio or data) |
+| `src/ld-process-ac3/` | `ld-ac3-demodulate`, `ld-ac3-decode` | AC3 (Dolby Digital) RF decoding; POSIX getopt (vcpkg on MSVC) |
 | `src/ld-dropout-correct/` | `ld-dropout-correct` | Dropout concealment |
 | `src/ld-disc-stacker/` | `ld-disc-stacker` | Combine several captures of one disc |
 | `src/ld-discmap/` | `ld-discmap` | Map and repair TBC field order against VBI |
@@ -92,10 +94,9 @@ and command lines working (see §2 and §10).
 ├── flake.nix / flake.lock    # the package and the dev shell
 ├── src/                      # one directory per tool, plus src/library
 │   └── efm-decoder/libs/efm/     # EFM library (Reed-Solomon via external ezpwd, see §3)
-├── scripts/                  # test-chroma, test-decode-pretbc (Python test drivers)
+├── scripts/                  # ld-compress, pcm2wav; test-chroma, test-decode-pretbc (test drivers)
 ├── test-data/                # pre-generated TBC/EFM/PCM fixtures for functional tests
 ├── tools/                    # repository scripts run by CI (check-spdx-new-files.sh)
-├── prototypes/               # unbuilt experiments (ld-process-ac3, ld-process-efm)
 ├── docs/                     # per-tool user documentation (Markdown)
 └── .github/workflows/        # CI/CD — see §7
 ```
@@ -123,7 +124,6 @@ and command lines working (see §2 and §10).
 | --- | --- |
 | ezpwd-reed-solomon | External Reed-Solomon headers, never copied into the tree or edited. Nix takes them from a flake input; the packaging workflows clone the same pinned revision into `external/`. Keep the two revisions in step |
 | `test-data/**` | Golden fixtures. Do not regenerate or modify them to make a test pass. A change that legitimately alters output updates the **expected values** in `CMakeLists.txt`, with the reason in the PR |
-| `prototypes/**` | Not built. Leave alone unless the task is about them |
 
 ## 4. Coding standards
 

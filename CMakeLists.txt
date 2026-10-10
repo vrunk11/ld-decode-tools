@@ -185,11 +185,20 @@ add_subdirectory(src/ld-export-decode-metadata)
 add_subdirectory(src/ld-export-metadata)
 add_subdirectory(src/ld-json-converter)
 add_subdirectory(src/ld-lds-converter)
+add_subdirectory(src/ld-process-ac3)
+add_subdirectory(src/ld-process-efm)
 add_subdirectory(src/ld-process-vbi)
 add_subdirectory(src/ld-process-vits)
 add_subdirectory(src/ld-sqlite-to-json)
 add_subdirectory(src/library)
 add_subdirectory(src/efm-decoder)
+
+# Helper scripts (bash, so not installed on Windows): ld-compress compresses
+# .lds captures to .ldf (FLAC through ffmpeg) and back, pcm2wav wraps the
+# analogue PCM audio of a decode in a WAV file
+if(UNIX)
+    install(PROGRAMS scripts/ld-compress scripts/pcm2wav TYPE BIN)
+endif()
 
 if(BUILD_TESTING)
     add_subdirectory(src/library/filter/testfilter)
