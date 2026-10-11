@@ -278,6 +278,46 @@ static void testFileMetadata(const QString &directory)
     CHECK(read.read(fileName) && read.numberOfFrames == 7);
 }
 
+static void testPhaseGaps()
+{
+    std::cerr << "Testing the filling of phase gaps\n";
+
+    // The sequence expects 1, 2, 3, 4 and round again: gaps follow the nearest measured field
+    QVector<qint32> phases = {-1, -1, 3, -1, -1, 2, -1};
+    Cvbs::fillPhaseGaps(phases, 4);
+    // 3 at index 2: indexes 0 and 1 count back, and 3 and 4 count on from it. Index 5 was
+    // measured as 2, where the sequence expected 1: a break, so it stays, and 6 follows it
+    CHECK((phases == QVector<qint32>{1, 2, 3, 4, 1, 2, 3}));
+
+    // Nothing measured, nothing to follow
+    QVector<qint32> none = {-1, -1, -1};
+    Cvbs::fillPhaseGaps(none, 4);
+    CHECK((none == QVector<qint32>{-1, -1, -1}));
+
+    // A run follows on from the field before it (from the previous run)
+    QVector<qint32> carried = {-1, -1, -1};
+    Cvbs::fillPhaseGaps(carried, 4, -1, 2);        // after a field with phase 2
+    CHECK((carried == QVector<qint32>{3, 4, 1}));
+
+    // The anchor can be a field of the run, which then has its phase unless it was measured
+    QVector<qint32> anchored = {-1, -1, -1, -1, -1};
+    Cvbs::fillPhaseGaps(anchored, 4, 0, 4);        // the field at index 0 had phase 4
+    CHECK((anchored == QVector<qint32>{4, 1, 2, 3, 4}));
+    QVector<qint32> measured = {2, -1, -1};
+    Cvbs::fillPhaseGaps(measured, 4, 0, 4);        // a measurement wins over the anchor
+    CHECK((measured == QVector<qint32>{2, 3, 4}));
+
+    // The anchor is nearer to the fields after it than an older measurement
+    QVector<qint32> nearest = {1, -1, -1, -1};
+    Cvbs::fillPhaseGaps(nearest, 4, 1, 3);         // index 1 has 3, so 4 and 1 follow
+    CHECK((nearest == QVector<qint32>{1, 3, 4, 1}));
+
+    // PAL's sequence has 8 fields
+    QVector<qint32> pal = {7, -1, -1, -1};
+    Cvbs::fillPhaseGaps(pal, 8);
+    CHECK((pal == QVector<qint32>{7, 8, 1, 2}));
+}
+
 // A stream holding the bytes, as a FILE to read from
 static QString streamDirectory;
 static FILE *streamOf(const QByteArray &bytes)
@@ -391,6 +431,7 @@ int main(int argc, char *argv[])
     testDropouts(directory.path());
     testFileMetadata(directory.path());
     testAudio(directory.path());
+    testPhaseGaps();
     testStreamReader(directory.path());
 
     std::cerr << "Tests complete\n";

@@ -967,6 +967,15 @@ bool LdDecodeMetaData::readCvbsCore(QString fileName)
                                         })) {
             qWarning().noquote() << "Could not measure the field phases of" << burstFileName;
         }
+
+        // NTSC fields with no measurable burst follow the colour sequence (1 to 4, a
+        // field at a time); the measured ones are left as they are
+        if (fileMetadata.system == NTSC) {
+            QVector<qint32> phaseIDs(fields.size());
+            for (qint32 i = 0; i < fields.size(); i++) phaseIDs[i] = fields[i].fieldPhaseID;
+            Cvbs::fillPhaseGaps(phaseIDs, 4);
+            for (qint32 i = 0; i < fields.size(); i++) fields[i].fieldPhaseID = phaseIDs[i];
+        }
     }
 
     // The audio of the capture (one channel pair): give each field its share of it,

@@ -30,7 +30,8 @@
 void SourceField::loadFields(SourceVideo &sourceVideo, LdDecodeMetaData &ldDecodeMetaData,
                              qint32 firstFrameNumber, qint32 numFrames,
                              qint32 lookBehindFrames, qint32 lookAheadFrames,
-                             QVector<SourceField> &fields, qint32 &startIndex, qint32 &endIndex)
+                             QVector<SourceField> &fields, qint32 &startIndex, qint32 &endIndex,
+                             qint32 *carryPhase)
 {
     const LdDecodeMetaData::VideoParameters &videoParameters = ldDecodeMetaData.getVideoParameters();
 
@@ -110,5 +111,56 @@ void SourceField::loadFields(SourceVideo &sourceVideo, LdDecodeMetaData &ldDecod
         }
 
         frameNumber++;
+    }
+
+    // NTSC fields whose burst could not be measured follow the colour sequence: it goes
+    // 1, 2, 3, 4 and round again, a field at a time. A measured phase is never replaced
+    // (one that breaks the sequence is most likely a real break).
+    if (videoParameters.system == NTSC) {
+        QVector<qint32> phaseIDs(fields.size());
+        bool hasGaps = false;
+        for (qint32 i = 0; i < fields.size(); i++) {
+            phaseIDs[i] = fields[i].field.fieldPhaseID;
+            if (phaseIDs[i] < 1) hasGaps = true;
+        }
+
+        if (hasGaps) {
+            const qint32 carry = carryPhase ? *carryPhase : -1;
+            Cvbs::fillPhaseGaps(phaseIDs, 4, startIndex - 1, carry);
+
+            // At the start, with nothing before to follow from, the fields of the run may
+            // still have no phase: the colour burst is often missing from the first frames
+            // of a capture. Look at the frames after the run for one that has it.
+            bool isUnresolved = false;
+            for (qint32 i = startIndex; i < endIndex; i++) {
+                if (phaseIDs[i] < 1) isUnresolved = true;
+            }
+            if (isUnresolved && carry < 1) {
+                static constexpr qint32 PROBE_FRAMES = 8;
+                for (qint32 probe = 0; probe < PROBE_FRAMES; probe++, frameNumber++) {
+                    if (ldDecodeMetaData.isGenerated()) ldDecodeMetaData.ensureFields(2 * frameNumber);
+                    if (frameNumber > ldDecodeMetaData.getNumberOfFrames()) break;
+
+                    const qint32 firstFieldNumber = ldDecodeMetaData.getFirstFieldNumber(frameNumber);
+                    const qint32 secondFieldNumber = ldDecodeMetaData.getSecondFieldNumber(frameNumber);
+                    if (sourceVideo.isStream() && !sourceVideo.hasField(qMax(firstFieldNumber, secondFieldNumber))) break;
+
+                    for (qint32 fieldNumber: {firstFieldNumber, secondFieldNumber}) {
+                        const SourceVideo::Data data = sourceVideo.getVideoField(fieldNumber);
+                        phaseIDs.append(Cvbs::measureFieldPhaseID(data.constData(), NTSC,
+                                                                  ldDecodeMetaData.getField(fieldNumber).isFirstField));
+                    }
+                }
+                Cvbs::fillPhaseGaps(phaseIDs, 4, startIndex - 1, carry);
+            }
+
+            for (qint32 i = 0; i < fields.size(); i++) fields[i].field.fieldPhaseID = phaseIDs[i];
+        }
+
+        // The next run follows on from this one's last real field
+        if (carryPhase && endIndex > startIndex) {
+            const qint32 lastPhase = fields[endIndex - 1].field.fieldPhaseID;
+            *carryPhase = lastPhase >= 1 ? lastPhase : -1;
+        }
     }
 }

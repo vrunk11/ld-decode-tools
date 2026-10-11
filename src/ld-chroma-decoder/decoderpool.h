@@ -114,6 +114,7 @@ private:
     qint32 decoderLookAhead;
     qint32 inputFrameNumber;
     qint32 lastFrameNumber;
+    qint32 lastFieldPhase = -1;    // NTSC phase ID of the last field of the previous batch
     LdDecodeMetaData &ldDecodeMetaData;
     SourceVideo sourceVideo;
 

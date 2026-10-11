@@ -230,7 +230,7 @@ bool DecoderPool::getInputFrames(qint32 &startFrameNumber, QVector<SourceField> 
     // Load the fields
     SourceField::loadFields(sourceVideo, ldDecodeMetaData,
                             startFrameNumber, batchFrames, decoderLookBehind, decoderLookAhead,
-                            fields, startIndex, endIndex);
+                            fields, startIndex, endIndex, &lastFieldPhase);
 
     return true;
 }

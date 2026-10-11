@@ -37,10 +37,16 @@ struct SourceField {
     //
     // fields will contain {lookbehind fields... [startIndex] real fields... [endIndex] lookahead fields...}.
     // Fields requested outside the bounds of the file will have dummy metadata and black data.
+    //
+    // NTSC fields with no phase ID in the metadata have it measured from the colour burst,
+    // and where that fails it is the one the sequence expects. carryPhase, if given, is the
+    // phase ID of the last field before this run (-1 if unknown), which the expected ones
+    // follow from; it is set to that of this run's last field, for the next run.
     static void loadFields(SourceVideo &sourceVideo, LdDecodeMetaData &ldDecodeMetaData,
                            qint32 firstFrameNumber, qint32 numFrames,
                            qint32 lookBehindFrames, qint32 lookAheadFrames,
-                           QVector<SourceField> &fields, qint32 &startIndex, qint32 &endIndex);
+                           QVector<SourceField> &fields, qint32 &startIndex, qint32 &endIndex,
+                           qint32 *carryPhase = nullptr);
 
     // Return the vertical offset of this field within the interlaced frame
     // (i.e. 0 for the top field, 1 for the bottom field).

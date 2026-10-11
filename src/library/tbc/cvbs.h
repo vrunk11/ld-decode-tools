@@ -189,6 +189,16 @@ void fieldsToFrame(const quint16 *field1, const quint16 *field2, const Geometry 
 bool measureFieldPhaseIDs(const QString &dataFileName, VideoSystem system, SampleEncoding encoding, bool isChroma,
                           qint32 numberOfFrames, const std::function<void(qint32, qint32)> &setPhaseID);
 
+// Fill the fields whose phase ID could not be measured (-1) with the one the colour
+// sequence expects there: it goes up by one for each field, from 1 to modulus and
+// round again. Phase IDs that were measured are never changed, as a measurement that
+// differs from the expected one is most likely a real break in the sequence. The
+// expected IDs follow from the nearest measured field, before it or after it. anchorPhase
+// (if not -1) is the phase of the field at anchorIndex, which a run of fields follows on
+// from: either one of the fields (taken as measured if it has no ID), or the field just
+// before the first (anchorIndex -1). Fields with nothing to follow from stay at -1.
+void fillPhaseGaps(QVector<qint32> &phaseIDs, qint32 modulus, qint32 anchorIndex = -1, qint32 anchorPhase = -1);
+
 // The phase ID of a field of TBC samples (a whole field, its first lines at least),
 // measured the same way; for video that comes with no metadata. -1 if it cannot
 // be measured.

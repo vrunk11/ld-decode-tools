@@ -39,6 +39,8 @@ producer's output can be decoded with no files at all; the video then runs until
 - `--sample-encoding <u10|u16|tpg21|s16>`: The sample encoding of a CVBS pipe (default `u10`, `CVBS_U10_4FSC`)
 - `--buffer-frames <number>`: Frames read ahead of the one being decoded, and kept behind it (default 32)
 
+The NTSC phase of each field (its place in the 4-field colour sequence) is measured from the colour burst when the metadata has none. A field whose burst cannot be measured gets the phase the sequence expects there, from the nearest measured field before it, or after it (up to 8 frames ahead at the start of the input); a measured phase is never replaced, since one that breaks the sequence is most likely a real break. PAL finds its own phase from the burst of every line.
+
 #### Decoder Selection
 - `-f, --decoder <decoder>`: Decoder to use (pal2d, transform2d, transform3d, ntsc1d, ntsc2d, ntsc3d, ntsc3dnoadapt, mono; default automatic)
 

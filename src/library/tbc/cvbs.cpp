@@ -738,6 +738,56 @@ bool measureFieldPhaseIDs(const QString &dataFileName, VideoSystem system, Sampl
     return true;
 }
 
+void fillPhaseGaps(QVector<qint32> &phaseIDs, qint32 modulus, qint32 anchorIndex, qint32 anchorPhase)
+{
+    const qint32 count = phaseIDs.size();
+
+    // The phase ID a given number of fields after (or, negative, before) one with a known ID
+    auto offsetPhase = [modulus](qint32 phaseID, qint32 steps) {
+        return ((phaseID - 1 + steps) % modulus + modulus) % modulus + 1;
+    };
+
+    // A field of the run with no measured ID has the anchor's
+    if (anchorPhase >= 1 && anchorIndex >= 0 && anchorIndex < count && phaseIDs[anchorIndex] < 1) {
+        phaseIDs[anchorIndex] = anchorPhase;
+    }
+
+    // For each field, the ID that follows from the nearest known field before it (the
+    // anchor counts, even when it is just before the first field) and from the one after it
+    QVector<qint32> before(count, -1);
+    QVector<qint32> after(count, -1);
+
+    bool haveLast = anchorPhase >= 1 && anchorIndex < 0;
+    qint32 lastIndex = anchorIndex;
+    qint32 lastPhase = anchorPhase;
+    for (qint32 i = 0; i < count; i++) {
+        if (haveLast) before[i] = offsetPhase(lastPhase, i - lastIndex);
+        if (phaseIDs[i] >= 1) {
+            haveLast = true;
+            lastIndex = i;
+            lastPhase = phaseIDs[i];
+        }
+    }
+
+    bool haveNext = false;
+    qint32 nextIndex = 0;
+    qint32 nextPhase = 0;
+    for (qint32 i = count - 1; i >= 0; i--) {
+        if (haveNext) after[i] = offsetPhase(nextPhase, i - nextIndex);
+        if (phaseIDs[i] >= 1) {
+            haveNext = true;
+            nextIndex = i;
+            nextPhase = phaseIDs[i];
+        }
+    }
+
+    // Measured IDs stay; the others follow the nearest known one, before in preference
+    for (qint32 i = 0; i < count; i++) {
+        if (phaseIDs[i] >= 1) continue;
+        phaseIDs[i] = before[i] >= 1 ? before[i] : after[i];
+    }
+}
+
 qint32 measureFieldPhaseID(const quint16 *field, VideoSystem system, bool isFirstField)
 {
     const Geometry frame = geometry(system);
