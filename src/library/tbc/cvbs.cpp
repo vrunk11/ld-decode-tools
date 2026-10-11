@@ -461,6 +461,25 @@ bool FileMetadata::write(const QString &fileName) const
     return db.commit();
 }
 
+bool setAudioChannelPair(const QString &metaFileName, qint32 pair, const QString &description)
+{
+    SqliteFile sqlite(metaFileName);
+    if (!sqlite.isOpen() || !sqlite.hasTable("audio_channel_pair")) {
+        qCritical().noquote() << "Cannot record the audio in" << metaFileName;
+        return false;
+    }
+
+    QSqlQuery query(sqlite.database());
+    query.prepare("INSERT OR REPLACE INTO audio_channel_pair (channel_pair, description) VALUES (?, ?)");
+    query.addBindValue(pair);
+    query.addBindValue(description.isEmpty() ? QVariant() : QVariant(description));
+    if (!query.exec()) {
+        qCritical().noquote() << "Cannot record the audio in" << metaFileName << "-" << query.lastError().text();
+        return false;
+    }
+    return true;
+}
+
 // Sample conversion --------------------------------------------------------------------------------------------------
 
 SampleConverter::SampleConverter(SampleEncoding _encoding, VideoSystem system)

@@ -19,6 +19,7 @@
 #include "tbc/logging.h"
 #include "tbc/metadataoptions.h"
 #include "cvbs.h"
+#include "cvbsaudio.h"
 #include "lddecodemetadata.h"
 #include "sourcevideo.h"
 #include "targetvideo.h"
@@ -146,6 +147,12 @@ int main(int argc, char *argv[])
                                       QCoreApplication::translate("main", "encoding"));
     parser.addOption(encodingOption);
 
+    // Option to declare the sample rate of the audio
+    QCommandLineOption sampleRateOption(QStringList() << "r" << "samplerate",
+                                        QCoreApplication::translate("main", "Sample rate of the audio in Hz (default: from the metadata, else 44100). The audio is copied as it is, not resampled"),
+                                        QCoreApplication::translate("main", "Hz"));
+    parser.addOption(sampleRateOption);
+
     // Positional arguments
     parser.addPositionalArgument("input", QCoreApplication::translate("main", "Specify input TBC file"));
     parser.addPositionalArgument("output", QCoreApplication::translate("main", "Specify output CVBS file (default input.cvbs)"));
@@ -179,6 +186,17 @@ int main(int argc, char *argv[])
         if (!Cvbs::parseSampleEncodingName(name, encoding)
             && !Cvbs::parseSampleEncodingName("CVBS_" + name + "_4FSC", encoding)) {
             qCritical().noquote() << "Unknown sample encoding" << name << "- use u10, u16, tpg21 or s16";
+            return -1;
+        }
+    }
+
+    // Sample rate the audio is declared to have
+    quint32 sampleRate = 0;
+    if (parser.isSet(sampleRateOption)) {
+        bool ok;
+        sampleRate = parser.value(sampleRateOption).toUInt(&ok);
+        if (!ok || sampleRate < 1000 || sampleRate > 384000) {
+            qCritical().noquote() << "Invalid sample rate" << parser.value(sampleRateOption);
             return -1;
         }
     }
@@ -310,10 +328,43 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    // The CVBS format carries audio as 48 kHz WAV channel pairs
+    // The audio: the CVBS format carries it as a 24-bit WAV channel pair. The
+    // samples are copied as they are, declared to be at the sample rate asked
+    // for, else the one in the metadata, else ld-decode's 44.1 kHz.
     const QString pcmFileName = inputBaseName(inputFileName) + ".pcm";
     if (QFileInfo::exists(pcmFileName)) {
-        qInfo().noquote() << "Note:" << pcmFileName << "was not converted - CVBS audio is 48 kHz WAV, not converted yet";
+        const bool hasParameters = inputMetaData.hasPcmAudioParameters();
+        if (hasParameters && (inputMetaData.getPcmAudioParameters().bits != 16
+                              || !inputMetaData.getPcmAudioParameters().isSigned
+                              || !inputMetaData.getPcmAudioParameters().isLittleEndian)) {
+            qWarning().noquote() << pcmFileName << "is not 16-bit signed little-endian audio - not converted";
+        } else {
+            if (sampleRate == 0) {
+                sampleRate = hasParameters ? static_cast<quint32>(inputMetaData.getPcmAudioParameters().sampleRate)
+                                           : CvbsAudio::TBC_SAMPLE_RATE;
+            }
+            // All of the audio is kept, even any that belongs to fields left out
+            const qint64 audioSamples = QFileInfo(pcmFileName).size() / 4;
+
+            const QString wavFileName = CvbsAudio::wavFileName(outputBase, 0);
+            if (QFileInfo::exists(wavFileName)) {
+                qCritical().noquote() << "Output file" << wavFileName << "already exists - the audio was not converted";
+            } else {
+                const qint64 written = CvbsAudio::pcmToWav(pcmFileName, 0, audioSamples, wavFileName, sampleRate);
+                if (written < 0 || !Cvbs::setAudioChannelPair(Cvbs::metaFileName(outputFileName), 0, "Analogue audio")) {
+                    qCritical() << "Writing the CVBS audio failed";
+                    return 1;
+                }
+                qInfo().noquote() << "Wrote" << written << "audio samples to" << wavFileName << "declared as" << sampleRate
+                                  << "Hz (not resampled)";
+                if (sampleRate != CvbsAudio::CVBS_SAMPLE_RATE) {
+                    qWarning().noquote() << "decode-orc only accepts CVBS audio at" << CvbsAudio::CVBS_SAMPLE_RATE
+                                         << "Hz and refuses the whole capture otherwise; use --samplerate"
+                                         << CvbsAudio::CVBS_SAMPLE_RATE << "to declare that (the audio is not resampled,"
+                                         << "so it then plays faster)";
+                }
+            }
+        }
     }
 
     qInfo().noquote() << "Wrote" << numberOfFrames << "frames to" << outputFileName

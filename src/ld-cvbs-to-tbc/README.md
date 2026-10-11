@@ -17,7 +17,7 @@ For `capture.cvbs` it writes `capture.tbc` and `capture.tbc.db`. The metadata co
 from `capture.meta` and `capture.dropouts.meta`. A Y/C pair (`capture.cvbsy` and `capture.cvbsc`)
 becomes `capture.tbc` and `capture_chroma.tbc`.
 
-The CVBS audio (`capture_audio_N.wav`) is not converted to `.pcm`.
+The audio of the first channel pair (`capture_audio_0.wav`) is copied to `capture.pcm` as 16-bit PCM, without resampling; the sample rate declared in the metadata is the WAV's own (normally 48000 Hz), or `--samplerate`. Other channel pairs are not converted (a TBC capture has one audio track).
 
 ## Usage
 
@@ -33,6 +33,9 @@ ld-cvbs-to-tbc [options] <input> [output]
 - `-v, --version`: Display version information
 - `-d, --debug`: Show debug information
 - `-q, --quiet`: Suppress info and warning messages
+
+### Audio
+- `-r, --samplerate <Hz>`: The sample rate the PCM is declared to have (default: that of the WAV file, normally 48000). The audio is copied, not resampled
 
 ### Metadata
 - `--meta <db|json>`: Format of the TBC metadata to write (default: that of the companion, or SQLite)

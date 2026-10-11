@@ -17,6 +17,7 @@
 #include "tbc/logging.h"
 #include "tbc/metadataoptions.h"
 #include "cvbs.h"
+#include "cvbsaudio.h"
 #include "lddecodemetadata.h"
 #include "sourcevideo.h"
 #include "targetvideo.h"
@@ -58,6 +59,12 @@ int main(int argc, char *argv[])
     MetadataOptions metadataOptions(MetadataOptions::FormatOnly | MetadataOptions::CreatesMetadata);
     metadataOptions.addTo(parser);
 
+    // Option to declare the sample rate of the audio
+    QCommandLineOption sampleRateOption(QStringList() << "r" << "samplerate",
+                                        QCoreApplication::translate("main", "Sample rate of the audio in Hz (default: that of the WAV file, normally 48000). The audio is copied as it is, not resampled"),
+                                        QCoreApplication::translate("main", "Hz"));
+    parser.addOption(sampleRateOption);
+
     // Positional arguments
     parser.addPositionalArgument("input", QCoreApplication::translate("main", "Specify input CVBS file (.cvbs, or .cvbsy for Y/C)"));
     parser.addPositionalArgument("output", QCoreApplication::translate("main", "Specify output TBC file (default input.tbc)"));
@@ -93,6 +100,16 @@ int main(int argc, char *argv[])
         return -1;
     }
 
+    quint32 sampleRate = 0;
+    if (parser.isSet(sampleRateOption)) {
+        bool ok;
+        sampleRate = parser.value(sampleRateOption).toUInt(&ok);
+        if (!ok || sampleRate < 1000 || sampleRate > 384000) {
+            qCritical().noquote() << "Invalid sample rate" << parser.value(sampleRateOption);
+            return -1;
+        }
+    }
+
     // Output file names
     QString outputFileName = Cvbs::baseName(inputFileName) + ".tbc";
     if (positionalArguments.count() == 2) outputFileName = positionalArguments.at(1);
@@ -121,7 +138,14 @@ int main(int argc, char *argv[])
                                                                                        : metaData.getFormat();
     const QString outputMetadataFileName = LdDecodeMetaData::metadataFileName(outputFileName, outputFormat);
 
+    const QString outputBase = outputFileName.endsWith(".tbc", Qt::CaseInsensitive)
+            ? outputFileName.left(outputFileName.length() - 4) : outputFileName;
+    const QString wavFileName = CvbsAudio::wavFileName(Cvbs::baseName(inputFileName), 0);
+    const QString outputPcmFileName = outputBase + ".pcm";
+    const bool hasAudio = QFileInfo::exists(wavFileName);
+
     QStringList outputFiles = {outputFileName, outputMetadataFileName};
+    if (hasAudio) outputFiles.append(outputPcmFileName);
     if (isYc) outputFiles.append(outputChromaFileName);
     for (const QString &fileName: outputFiles) {
         if (QFileInfo::exists(fileName)) {
@@ -162,15 +186,45 @@ int main(int argc, char *argv[])
     targetVideo.close();
     if (isYc) chromaTargetVideo.close();
 
+    // The audio of channel pair 0 becomes the PCM, copied as it is (16 bits, not
+    // resampled) and declared to be at the sample rate asked for, else the WAV's
+    if (hasAudio) {
+        CvbsAudio::WavInfo wavInfo;
+        if (!CvbsAudio::readWavInfo(wavFileName, wavInfo)) return 1;
+        if (sampleRate == 0) sampleRate = wavInfo.sampleRate;
+
+        if (CvbsAudio::wavToPcm(wavFileName, outputPcmFileName) < 0) {
+            qCritical() << "Writing the PCM audio failed";
+            return 1;
+        }
+
+        // Each field gets its share of the audio, as the TBC metadata keeps count of it
+        for (qint32 fieldNumber = 1; fieldNumber <= numberOfFields; fieldNumber++) {
+            LdDecodeMetaData::Field field = metaData.getField(fieldNumber);
+            field.audioSamples = static_cast<qint32>(wavInfo.numberOfSamples * fieldNumber / numberOfFields
+                                                     - wavInfo.numberOfSamples * (fieldNumber - 1) / numberOfFields);
+            metaData.updateField(field, fieldNumber);
+        }
+
+        LdDecodeMetaData::PcmAudioParameters audioParameters;
+        audioParameters.sampleRate = sampleRate;
+        audioParameters.bits = 16;
+        audioParameters.isSigned = true;
+        audioParameters.isLittleEndian = true;
+        audioParameters.isValid = true;
+        metaData.setPcmAudioParameters(audioParameters);
+
+        qInfo().noquote() << "Wrote" << wavInfo.numberOfSamples << "audio samples to" << outputPcmFileName
+                          << "declared as" << sampleRate << "Hz (not resampled)";
+        if (QFileInfo::exists(CvbsAudio::wavFileName(Cvbs::baseName(inputFileName), 1))) {
+            qWarning() << "Only the first audio channel pair is converted: a TBC capture has one audio track";
+        }
+    }
+
     metaData.setFormat(outputFormat);
     if (!metaData.write(outputMetadataFileName)) {
         qCritical() << "Writing the TBC metadata failed";
         return 1;
-    }
-
-    // Audio stays as the CVBS WAV channel pairs
-    if (QFileInfo::exists(Cvbs::baseName(inputFileName) + "_audio_0.wav")) {
-        qInfo().noquote() << "Note: the audio (" + Cvbs::baseName(inputFileName) + "_audio_N.wav) was not converted to .pcm";
     }
 
     qInfo().noquote() << "Wrote" << numberOfFields << "fields to" << outputFileName

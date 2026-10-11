@@ -24,7 +24,11 @@ metadata), it is worked out from the black level as decode-orc does: on the 7.5 
 PAL-M, or at black for NTSC-J. A field without a partner (a capture starting or ending half-way
 through a frame) is left out, since CVBS files hold whole frames.
 
-The `.pcm` audio is not converted (the CVBS format carries 48 kHz WAV channel pairs).
+The `.pcm` audio is copied to `capture_audio_0.wav` (the CVBS format carries 24-bit WAV channel pairs) and recorded in `capture.meta`. It is **not resampled**: the samples are copied as they are, and `--samplerate` sets the rate the WAV declares.
+
+> [!WARNING]
+> decode-orc only accepts CVBS audio declared at 48000 Hz, and refuses the whole capture otherwise. ld-decode's audio is 44100 Hz, so the default (44100 Hz, or the rate in the metadata) is faithful but orc will not load it; `--samplerate 48000` makes orc load it, but the audio then plays about 9 % too fast.
+
 
 ## Usage
 
@@ -44,6 +48,9 @@ ld-tbc-to-cvbs [options] <input> [output]
 ### Metadata
 - `--meta <db|json>`: Read `input.db` or `input.json` when both exist (default: `.db`)
 - `--input-metadata <filename>`: Specify the input metadata file
+
+### Audio
+- `-r, --samplerate <Hz>`: The sample rate the audio is declared to have (default: from the metadata, else 44100). The audio is copied, not resampled
 
 ### Output
 - `-e, --encoding <encoding>`: Sample encoding of the output: `u10` (`CVBS_U10_4FSC`, the default and

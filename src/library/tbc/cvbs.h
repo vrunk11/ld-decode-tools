@@ -138,6 +138,11 @@ struct FileMetadata {
     bool write(const QString &fileName) const;
 };
 
+// Record an audio channel pair (0-7, matching <base>_audio_<pair>.wav) in the
+// core metadata, replacing any row for that pair. Returns false, having logged
+// why, on failure.
+bool setAudioChannelPair(const QString &metaFileName, qint32 pair, const QString &description);
+
 // Sample conversion --------------------------------------------------------------------------------------------------
 
 // Converts between stored sample words and the 16-bit TBC domain

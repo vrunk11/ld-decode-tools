@@ -71,7 +71,7 @@ each GitHub release.
   - CVBS files hold whole frames; the tools read each frame as its two fields, so every tool that reads TBC also reads CVBS. Time-base stable 4fsc captures (`STANDARD_STABLE_*`) in any of the four 4fsc sample encodings are supported
   - Field metadata that the CVBS format has no place for (VBI, VITS, ...) is kept in a companion `capture.cvbs.db` (or `capture.cvbs.json`) in the usual ld-decode format; `capture.meta` and `capture.dropouts.meta` are kept up to date beside it, so decode-orc reads the result
   - Tools that write video (`ld-dropout-correct`, `ld-disc-stacker`, `ld-discmap`) write CVBS for CVBS input and TBC for TBC input; `ld-tbc-to-cvbs` and `ld-cvbs-to-tbc` convert between the two
-  - Audio stays as it is: the 48 kHz WAV channel pairs of a CVBS capture are not converted to or from `.pcm` yet
+  - Audio: the converters copy the `.pcm` to the first channel pair `capture_audio_0.wav` (24-bit WAV) and back, without resampling. `--samplerate` sets the rate the audio is declared to have: by default 44100 Hz for a TBC source and the WAV's own rate (normally 48000 Hz) for a CVBS source. decode-orc only accepts 48000 Hz, so use `--samplerate 48000` for a capture it should read (the audio then plays faster, as it is not resampled)
 - **File Extensions**: TBC files use `.tbc` extension, metadata uses `.tbc.db` (SQLite) or `.tbc.json` (JSON)
 - **Dependencies**: Qt 6 and FFTW3; FFmpeg is only needed for the chroma tests and to turn the decoded output into video files
 - **Performance**: Many tools support multi-threading for faster processing

@@ -1,5 +1,6 @@
 add_library(lddecode-library STATIC
     tbc/cvbs.cpp
+    tbc/cvbsaudio.cpp
     tbc/dropouts.cpp
     tbc/filters.cpp
     tbc/jsonio.cpp

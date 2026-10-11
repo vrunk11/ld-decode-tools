@@ -9,12 +9,15 @@
  ******************************************************************************/
 
 #include <QCoreApplication>
+#include <QFile>
 #include <QTemporaryDir>
 #include <QVector>
 #include <cstdlib>
+#include <cstring>
 #include <iostream>
 
 #include "cvbs.h"
+#include "cvbsaudio.h"
 
 // assert() is compiled out of release builds, so check explicitly
 #define CHECK(condition) \
@@ -167,6 +170,41 @@ static void testDropouts(const QString &directory)
     }
 }
 
+static void testAudio(const QString &directory)
+{
+    std::cerr << "Testing the audio copy\n";
+
+    // 1000 stereo samples of 16-bit PCM
+    const QString pcmFileName = directory + "/a.pcm";
+    QVector<qint16> samples(2000);
+    for (qint32 i = 0; i < samples.size(); i++) samples[i] = static_cast<qint16>((i * 977) % 65536 - 32768);
+    {
+        QFile pcm(pcmFileName);
+        CHECK(pcm.open(QIODevice::WriteOnly));
+        pcm.write(reinterpret_cast<const char *>(samples.constData()), samples.size() * 2);
+    }
+
+    // Copy 600 samples from sample 100: the WAV declares the rate and holds 24 bits
+    const QString wavFileName = CvbsAudio::wavFileName(directory + "/a", 0);
+    CHECK(wavFileName.endsWith("/a_audio_0.wav"));
+    CHECK(CvbsAudio::pcmToWav(pcmFileName, 100, 600, wavFileName, 44100) == 600);
+
+    CvbsAudio::WavInfo info;
+    CHECK(CvbsAudio::readWavInfo(wavFileName, info));
+    CHECK(info.sampleRate == 44100 && info.bits == 24 && info.numberOfSamples == 600);
+
+    // Asking for more than there is copies what there is
+    CHECK(CvbsAudio::pcmToWav(pcmFileName, 900, 600, directory + "/b.wav", 48000) == 100);
+
+    // And back to PCM gives the same samples
+    const QString backFileName = directory + "/back.pcm";
+    CHECK(CvbsAudio::wavToPcm(wavFileName, backFileName) == 600);
+    QFile back(backFileName);
+    CHECK(back.open(QIODevice::ReadOnly) && back.size() == 2400);
+    const QByteArray data = back.readAll();
+    CHECK(memcmp(data.constData(), samples.constData() + 200, 2400) == 0);
+}
+
 static void testFileMetadata(const QString &directory)
 {
     std::cerr << "Testing the core metadata\n";
@@ -219,6 +257,7 @@ int main(int argc, char *argv[])
     testFrameFields();
     testDropouts(directory.path());
     testFileMetadata(directory.path());
+    testAudio(directory.path());
 
     std::cerr << "Tests complete\n";
     return 0;
