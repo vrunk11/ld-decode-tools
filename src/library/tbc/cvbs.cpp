@@ -738,6 +738,18 @@ bool measureFieldPhaseIDs(const QString &dataFileName, VideoSystem system, Sampl
     return true;
 }
 
+qint32 measureFieldPhaseID(const quint16 *field, VideoSystem system, bool isFirstField)
+{
+    const Geometry frame = geometry(system);
+    const PhaseMeter meter(system, standardLevels(system).blanking);
+
+    // The 10-bit domain, as decode-orc measures in
+    QVector<double> region(PHASE_LINES * frame.lineWidth);
+    for (qint32 i = 0; i < region.size(); i++) region[i] = field[i] / 64.0;
+
+    return meter.phaseID(region.constData(), isFirstField ? 0 : frame.field1Lines, isFirstField);
+}
+
 // Dropout extension --------------------------------------------------------------------------------------------------
 
 bool readDropouts(const QString &fileName, VideoSystem system, qint32 numberOfFrames,

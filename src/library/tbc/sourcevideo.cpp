@@ -47,7 +47,25 @@ SourceVideo::SourceVideo()
 
 SourceVideo::~SourceVideo()
 {
+    // The reader of a stream must stop before the file it reads is closed
+    stream.reset();
     if (isSourceVideoOpen) inputFile.close();
+}
+
+void SourceVideo::setStreamOptions(const StreamReader::Options &options)
+{
+    streamOptions = options;
+}
+
+bool SourceVideo::isStream() const
+{
+    return stream != nullptr;
+}
+
+bool SourceVideo::hasField(qint32 fieldNumber)
+{
+    if (stream) return stream->hasField(fieldNumber - 1);
+    return availableFields == -1 || (fieldNumber >= 1 && fieldNumber <= availableFields);
 }
 
 // Source Video file manipulation methods -----------------------------------------------------------------------------
@@ -74,15 +92,27 @@ bool SourceVideo::open(QString filename, qint32 _fieldLength, qint32 _fieldLineL
     isCvbs = false;
     if (filename != "-" && Cvbs::isDataFileName(filename)) {
         if (!openCvbs(filename)) return false;
-    } else if (filename == "-") {
-        if (!inputFile.open(stdin, QIODevice::ReadOnly)) {
-            // Failed to open stdin
-            qWarning() << "Could not open stdin as source video input file";
+    } else if (filename == "-" || (QFileInfo::exists(filename) && !QFileInfo(filename).isFile())) {
+        // Standard input, or a named pipe: read ahead on a thread of its own. We
+        // don't know how long the input will be.
+        if (streamOptions.cvbs && Cvbs::geometry(streamOptions.system).fieldLength() != fieldLength) {
+            qWarning() << "The CVBS stream is" << Cvbs::presetName(streamOptions.system)
+                       << "but the video parameters describe fields of" << fieldLength << "samples";
             return false;
         }
 
-        // When reading from stdin, we don't know how long the input will be
+        FILE *streamFile = stdin;
+        if (filename != "-") {
+            streamFile = fopen(QFile::encodeName(filename).constData(), "rb");
+            if (!streamFile) {
+                qWarning() << "Could not open" << filename << "as source video input file";
+                return false;
+            }
+        }
+        stream = std::make_unique<StreamReader>(streamFile, filename != "-", fieldLength, streamOptions);
+        stream->start();
         availableFields = -1;
+        tbcDebugStream() << "SourceVideo::open(): Reading a stream with a buffer of" << streamOptions.bufferFrames << "frames";
     } else {
         if (!inputFile.open(QIODevice::ReadOnly)) {
             // Failed to open named input file
@@ -114,6 +144,7 @@ void SourceVideo::close()
     }
 
     tbcDebugStream() << "SourceVideo::close(): Called, closing the source video file and emptying the frame cache";
+    stream.reset();
     inputFile.close();
     isSourceVideoOpen = false;
     inputFilePos = -1;
@@ -133,6 +164,8 @@ bool SourceVideo::isSourceValid()
 // Returns -1 if the length is unknown (e.g. we're reading from stdin).
 qint32 SourceVideo::getNumberOfAvailableFields()
 {
+    // A stream's length is only known once it has ended
+    if (stream) return stream->numberOfFields();
     return availableFields;
 }
 
@@ -153,6 +186,23 @@ SourceVideo::Data SourceVideo::getVideoField(qint32 fieldNumber, qint32 startFie
 
     // Ensure source video is open
     if (!isSourceVideoOpen) qFatal("Application requested TBC field before opening TBC file - Fatal error");
+
+    if (stream) {
+        Data field;
+        if (!stream->getField(fieldNumber, field)) {
+            qFatal("The input stream ended after %d fields, but field %d was asked for - "
+                   "the metadata describes more video than the stream holds",
+                   stream->fieldsRead(), fieldNumber + 1);
+        }
+        if (startFieldLine == -1 && endFieldLine == -1) return field;
+
+        if (fieldLineLength == -1) qFatal("Application did not set field line length when opening TBC file");
+        const qint32 lineSamples = fieldLineLength / 2;
+        if (startFieldLine < 1 || endFieldLine < startFieldLine || endFieldLine * lineSamples > field.size()) {
+            qFatal("Application requested out-of-bounds field line");
+        }
+        return field.mid((startFieldLine - 1) * lineSamples, (endFieldLine - startFieldLine + 1) * lineSamples);
+    }
 
     if (isCvbs) {
         // Fields come from whole frames, which are cached as two fields

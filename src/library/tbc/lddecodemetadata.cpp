@@ -713,6 +713,7 @@ void LdDecodeMetaData::clear()
 
     fields.clear();
     cvbsFileMetadata.reset();
+    generated = false;
 }
 
 // Read all metadata, in whichever format the file is in
@@ -821,6 +822,78 @@ void LdDecodeMetaData::setCvbsFileMetadata(const Cvbs::FileMetadata &fileMetadat
     cvbsFileMetadata = std::make_unique<Cvbs::FileMetadata>(fileMetadata);
 }
 
+// The video parameters that follow from the video system alone, with ld-decode's
+// colour burst and active video positions for the standard
+void LdDecodeMetaData::setStandardVideoParameters(VideoSystem system)
+{
+    const Cvbs::Geometry geometry = Cvbs::geometry(system);
+
+    videoParameters.system = system;
+    videoParameters.isWidescreen = false;
+    videoParameters.isMapped = false;
+
+    if (system == PAL) {
+        videoParameters.colourBurstStart = 98;
+        videoParameters.colourBurstEnd = 138;
+        videoParameters.activeVideoStart = 185;
+        videoParameters.activeVideoEnd = 1107;
+    } else {
+        videoParameters.colourBurstStart = 74;
+        videoParameters.colourBurstEnd = 110;
+        videoParameters.activeVideoStart = 134;
+        videoParameters.activeVideoEnd = (system == PAL_M) ? 893 : 894;
+    }
+
+    videoParameters.fieldWidth = geometry.lineWidth;
+    videoParameters.fieldHeight = geometry.fieldHeight();
+    videoParameters.isValid = true;
+}
+
+void LdDecodeMetaData::initialiseDefault(VideoSystem system, qint32 black16bIre, qint32 white16bIre,
+                                         bool isSubcarrierLocked)
+{
+    clear();
+    generated = true;
+    setStandardVideoParameters(system);
+    videoParameters.numberOfSequentialFields = 0;
+    videoParameters.isSubcarrierLocked = isSubcarrierLocked;
+
+    // The levels of the 16-bit TBC domain, which is the 10-bit CVBS one times 64
+    const Cvbs::Levels levels = Cvbs::standardLevels(system);
+    const qint32 white = white16bIre > 0 ? white16bIre : levels.white * 64;
+    qint32 black = black16bIre >= 0 ? black16bIre : levels.black * 64;
+    qint32 blanking;
+    if (system == PAL) {
+        // No setup: black is blanking
+        blanking = black16bIre >= 0 ? black16bIre : levels.blanking * 64;
+        black = blanking;
+    } else if (black16bIre >= 0) {
+        // Black on the 7.5 IRE setup above blanking
+        blanking = black - static_cast<qint32>(std::lround(7.5 * (white - black) / 92.5));
+    } else {
+        blanking = levels.blanking * 64;
+    }
+    videoParameters.white16bIre = white;
+    videoParameters.black16bIre = black;
+    videoParameters.blanking16bIre = blanking;
+
+    initialiseVideoSystemParameters();
+    videoParameters.sampleRate = 4.0 * videoParameters.fSC;
+}
+
+void LdDecodeMetaData::ensureFields(qint32 numberOfFields)
+{
+    const qint32 have = fields.size();
+    if (numberOfFields <= have) return;
+
+    fields.resize(numberOfFields);
+    for (qint32 i = have; i < numberOfFields; i++) {
+        fields[i].seqNo = i + 1;
+        fields[i].isFirstField = (i % 2) == 0;
+    }
+    videoParameters.numberOfSequentialFields = numberOfFields;
+}
+
 // Read CVBS core metadata. It holds no per-field metadata, so the fields are
 // filled in as a TBC capture of the same video would have them, with the
 // dropouts of the dropout extension.
@@ -855,37 +928,19 @@ bool LdDecodeMetaData::readCvbsCore(QString fileName)
 
     const Cvbs::Levels levels = Cvbs::standardLevels(fileMetadata.system);
 
-    videoParameters.system = fileMetadata.system;
+    setStandardVideoParameters(fileMetadata.system);
     videoParameters.numberOfSequentialFields = numberOfFrames * 2;
     videoParameters.isSubcarrierLocked = fileMetadata.isPhaseLocked();
-    videoParameters.isWidescreen = false;
-
-    // ld-decode's colour burst and active video positions for the standard
-    if (fileMetadata.system == PAL) {
-        videoParameters.colourBurstStart = 98;
-        videoParameters.colourBurstEnd = 138;
-        videoParameters.activeVideoStart = 185;
-        videoParameters.activeVideoEnd = 1107;
-    } else {
-        videoParameters.colourBurstStart = 74;
-        videoParameters.colourBurstEnd = 110;
-        videoParameters.activeVideoStart = 134;
-        videoParameters.activeVideoEnd = (fileMetadata.system == PAL_M) ? 893 : 894;
-    }
 
     // The 16-bit TBC domain is the 10-bit CVBS domain times 64
     videoParameters.white16bIre = levels.white * 64;
     videoParameters.blanking16bIre = levels.blanking * 64;
     videoParameters.black16bIre = fileMetadata.blackLevel.value_or(levels.black) * 64;
 
-    videoParameters.fieldWidth = geometry.lineWidth;
-    videoParameters.fieldHeight = geometry.fieldHeight();
-    videoParameters.isMapped = false;
     // CVBS capture notes are free text, not the tape format the TBC
     // capture_notes column holds, so they stay in the core metadata
     videoParameters.gitBranch = fileMetadata.gitBranch;
     videoParameters.gitCommit = fileMetadata.gitCommit;
-    videoParameters.isValid = true;
 
     // Frames hold the first field, then the second
     fields.resize(numberOfFrames * 2);

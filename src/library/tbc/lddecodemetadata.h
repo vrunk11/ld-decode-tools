@@ -246,6 +246,18 @@ public:
 
     void clear();
 
+    // Metadata for video that comes without any, as from a pipe: the standard video
+    // parameters of the system, with the black and white levels in the 16-bit TBC
+    // domain (-1: the standard ones; the blanking level follows from them, as in
+    // decode-orc). Fields have no metadata beyond their number and order, and are
+    // added by ensureFields as the video turns out to be long enough.
+    void initialiseDefault(VideoSystem system, qint32 black16bIre = -1, qint32 white16bIre = -1,
+                           bool isSubcarrierLocked = true);
+    // Make sure there are at least numberOfFields fields (see initialiseDefault)
+    void ensureFields(qint32 numberOfFields);
+    // True for metadata made by initialiseDefault
+    bool isGenerated() const { return generated; }
+
     // Read metadata; the format is detected from the file contents. CVBS core
     // metadata (<base>.meta) is read too, with the fields it does not hold
     // filled in: see isCvbs().
@@ -349,10 +361,12 @@ private:
     bool writeJson(QString fileName) const;
     bool readSqlite(QString fileName);
     bool writeSqlite(QString fileName) const;
+    void setStandardVideoParameters(VideoSystem system);
     bool readCvbsCore(QString fileName);
     bool writeCvbs(QString fileName) const;
 
     std::unique_ptr<Cvbs::FileMetadata> cvbsFileMetadata;
+    bool generated = false;
 
     void initialiseVideoSystemParameters();
     qint32 getFieldNumber(qint32 frameNumber, qint32 field);

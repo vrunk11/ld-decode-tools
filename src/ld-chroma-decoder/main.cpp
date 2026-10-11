@@ -30,11 +30,13 @@
 #include <QtGlobal>
 #include <QCommandLineParser>
 #include <QThread>
+#include <QFileInfo>
 #include <fstream>
 #include <memory>
 
 #include "decoderpool.h"
 #include "lddecodemetadata.h"
+#include "cvbs.h"
 #include "tbc/logging.h"
 #include "tbc/metadataoptions.h"
 
@@ -135,6 +137,45 @@ int main(int argc, char *argv[])
     // Metadata options: --meta and --input-metadata
     MetadataOptions metadataOptions(MetadataOptions::InputFile);
     metadataOptions.addTo(parser);
+
+    // -- Input from a pipe --
+
+    // Option to say what a pipe carries
+    QCommandLineOption inputFormatOption(QStringList() << "input-format",
+                                         QCoreApplication::translate("main", "Piped input: tbc (fields, the default) or cvbs (frames, as decode-orc writes them)"),
+                                         QCoreApplication::translate("main", "format"));
+    parser.addOption(inputFormatOption);
+
+    // Options for piped input that comes without metadata
+    QCommandLineOption systemOption(QStringList() << "system",
+                                    QCoreApplication::translate("main", "Piped input without metadata: the video system (pal, ntsc or pal-m)"),
+                                    QCoreApplication::translate("main", "system"));
+    parser.addOption(systemOption);
+
+    QCommandLineOption blackLevelOption(QStringList() << "black-level",
+                                        QCoreApplication::translate("main", "Piped TBC input without metadata: the black16bIre of the capture (default: the standard level of the system)"),
+                                        QCoreApplication::translate("main", "number"));
+    parser.addOption(blackLevelOption);
+
+    QCommandLineOption whiteLevelOption(QStringList() << "white-level",
+                                        QCoreApplication::translate("main", "Piped TBC input without metadata: the white16bIre of the capture (default: the standard level of the system)"),
+                                        QCoreApplication::translate("main", "number"));
+    parser.addOption(whiteLevelOption);
+
+    QCommandLineOption subcarrierLockedOption(QStringList() << "subcarrier-locked",
+                                              QCoreApplication::translate("main", "Piped input without metadata: whether PAL was sampled locked to the subcarrier, which puts the second field 2 samples off (yes or no; default yes for CVBS, no for TBC)"),
+                                              QCoreApplication::translate("main", "yes|no"));
+    parser.addOption(subcarrierLockedOption);
+
+    QCommandLineOption sampleEncodingOption(QStringList() << "sample-encoding",
+                                            QCoreApplication::translate("main", "Piped CVBS input: u10 (CVBS_U10_4FSC, the default), u16, tpg21 or s16"),
+                                            QCoreApplication::translate("main", "encoding"));
+    parser.addOption(sampleEncodingOption);
+
+    QCommandLineOption bufferFramesOption(QStringList() << "buffer-frames",
+                                          QCoreApplication::translate("main", "Piped input: frames read ahead of the one being decoded, and kept behind it (default 32)"),
+                                          QCoreApplication::translate("main", "number"));
+    parser.addOption(bufferFramesOption);
 
     // Option to select start frame (sequential) (-s)
     QCommandLineOption startFrameOption(QStringList() << "s" << "start",
@@ -308,11 +349,41 @@ int main(int argc, char *argv[])
         return -1;
     }
 
-    // Check filename arguments are reasonable
-    if (inputFileName == "-" && !metadataOptions.isInputFileSet()) {
-        // Quit with error
-        qCritical("With piped input, you must also specify the input metadata file");
-        return -1;
+    // Piped input is standard input or a named pipe. It can come without metadata, when
+    // the video system is given (the levels and the rest have defaults, as decode-orc's
+    // stream sources have), and then runs until the input ends.
+    const bool isPipe = inputFileName == "-"
+                        || (QFileInfo::exists(inputFileName) && !QFileInfo(inputFileName).isFile());
+    const bool hasNoMetadata = isPipe && !metadataOptions.isInputFileSet();
+
+    StreamReader::Options streamOptions;
+    bool encodingGiven = false;
+    if (parser.isSet(inputFormatOption)) {
+        const QString format = parser.value(inputFormatOption).toLower();
+        if (format != "tbc" && format != "cvbs") {
+            qCritical().noquote() << "Unknown input format" << format << "- use tbc or cvbs";
+            return -1;
+        }
+        streamOptions.cvbs = format == "cvbs";
+    }
+    if (parser.isSet(sampleEncodingOption)) {
+        const QString name = parser.value(sampleEncodingOption);
+        if (!Cvbs::parseSampleEncodingName(name, streamOptions.encoding)
+            && !Cvbs::parseSampleEncodingName("CVBS_" + name + "_4FSC", streamOptions.encoding)) {
+            qCritical().noquote() << "Unknown sample encoding" << name << "- use u10, u16, tpg21 or s16";
+            return -1;
+        }
+        encodingGiven = true;
+    }
+    if (parser.isSet(bufferFramesOption)) {
+        streamOptions.bufferFrames = parser.value(bufferFramesOption).toInt();
+        if (streamOptions.bufferFrames < 1) {
+            qCritical("The buffer must hold at least 1 frame");
+            return -1;
+        }
+    }
+    if (!isPipe && (parser.isSet(inputFormatOption) || parser.isSet(bufferFramesOption))) {
+        qWarning() << "--input-format and --buffer-frames only apply to piped input";
     }
     if (inputFileName == outputFileName && outputFileName != "-") {
         // Quit with error
@@ -462,16 +533,67 @@ int main(int argc, char *argv[])
     }
 
     // Work out the metadata filename
-    QString inputMetadataFileName;
-    if (!metadataOptions.selectInput(inputFileName, true, inputMetadataFileName)) return -1;
-
-    // Load the source video metadata
     LdDecodeMetaData metaData;
-    if (!metaData.read(inputMetadataFileName)) {
-        qCritical() << "Unable to open ld-decode metadata file:" << inputMetadataFileName;
-        return -1;
+    if (hasNoMetadata) {
+        // Piped input with no metadata: the video system must be said, the rest has defaults
+        if (!parser.isSet(systemOption)) {
+            qCritical("Piped input without metadata needs the video system (--system pal, ntsc or pal-m), "
+                      "or the input metadata file (--input-metadata)");
+            return -1;
+        }
+        const QString systemName = parser.value(systemOption).toUpper().replace('-', '_');
+        VideoSystem system;
+        if (!parseVideoSystemName(systemName, system)) {
+            qCritical().noquote() << "Unknown video system" << parser.value(systemOption) << "- use pal, ntsc or pal-m";
+            return -1;
+        }
+
+        qint32 blackLevel = -1;
+        qint32 whiteLevel = -1;
+        if (parser.isSet(blackLevelOption)) blackLevel = parser.value(blackLevelOption).toInt();
+        if (parser.isSet(whiteLevelOption)) whiteLevel = parser.value(whiteLevelOption).toInt();
+        if ((parser.isSet(blackLevelOption) && blackLevel < 0) || (parser.isSet(whiteLevelOption) && whiteLevel < 1)) {
+            qCritical("The black and white levels must be positive");
+            return -1;
+        }
+        if (streamOptions.cvbs && (parser.isSet(blackLevelOption) || parser.isSet(whiteLevelOption))) {
+            qWarning() << "--black-level and --white-level apply to TBC input, not CVBS (which has standard levels): ignored";
+            blackLevel = whiteLevel = -1;
+        }
+
+        // ld-decode 8 and decode-orc mark the CVBS they write as locked
+        bool isSubcarrierLocked = streamOptions.cvbs;
+        if (parser.isSet(subcarrierLockedOption)) {
+            const QString value = parser.value(subcarrierLockedOption).toLower();
+            if (value != "yes" && value != "no") {
+                qCritical().noquote() << "--subcarrier-locked must be yes or no, not" << value;
+                return -1;
+            }
+            isSubcarrierLocked = value == "yes";
+        }
+
+        metaData.initialiseDefault(system, blackLevel, whiteLevel, isSubcarrierLocked);
+        qInfo().noquote() << "No metadata: assuming" << Cvbs::presetName(system) << "video at the standard levels"
+                          << (blackLevel >= 0 || whiteLevel > 0 ? "(except those given)" : "")
+                          << "that runs until the input ends";
+    } else {
+        QString inputMetadataFileName;
+        if (!metadataOptions.selectInput(inputFileName, true, inputMetadataFileName)) return -1;
+
+        // Load the source video metadata
+        if (!metaData.read(inputMetadataFileName)) {
+            qCritical() << "Unable to open ld-decode metadata file:" << inputMetadataFileName;
+            return -1;
+        }
+
+        // CVBS core metadata says how its samples are stored
+        if (metaData.isCvbs() && !encodingGiven) streamOptions.encoding = metaData.getCvbsFileMetadata().sampleEncoding;
+        if (parser.isSet(systemOption) || parser.isSet(blackLevelOption) || parser.isSet(whiteLevelOption)) {
+            qWarning() << "--system, --black-level and --white-level are for input without metadata: the metadata is used";
+        }
     }
-    
+    streamOptions.system = metaData.getVideoParameters().system;
+
     metaData.processLineParameters(lineParameters);
     
     // Reverse field order if required
@@ -579,6 +701,7 @@ int main(int argc, char *argv[])
     
     // Perform the processing
     DecoderPool decoderPool(*decoder, inputFileName, metaData, outputConfig, outputFileName, startFrame, length, maxThreads);
+    decoderPool.setStreamOptions(streamOptions);
     if (!decoderPool.process()) {
         return -1;
     }

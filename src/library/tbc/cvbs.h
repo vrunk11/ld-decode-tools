@@ -189,6 +189,11 @@ void fieldsToFrame(const quint16 *field1, const quint16 *field2, const Geometry 
 bool measureFieldPhaseIDs(const QString &dataFileName, VideoSystem system, SampleEncoding encoding, bool isChroma,
                           qint32 numberOfFrames, const std::function<void(qint32, qint32)> &setPhaseID);
 
+// The phase ID of a field of TBC samples (a whole field, its first lines at least),
+// measured the same way; for video that comes with no metadata. -1 if it cannot
+// be measured.
+qint32 measureFieldPhaseID(const quint16 *field, VideoSystem system, bool isFirstField);
+
 // Dropout extension (<base>.dropouts.meta) ---------------------------------------------------------------------------
 
 // Read the per-frame dropout runs as per-field TBC dropouts (1-based field

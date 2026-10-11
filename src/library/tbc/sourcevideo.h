@@ -32,6 +32,7 @@
 #include <memory>
 
 #include "cvbs.h"
+#include "streamreader.h"
 
 class SourceVideo
 {
@@ -51,11 +52,22 @@ public:
 
     // File handling methods. A .cvbs, .cvbsy or .cvbsc file is read as TBC
     // fields: each stored frame becomes two fields of _fieldLength samples.
+    // "-" (standard input), or a named pipe, is read as a stream: see StreamReader.
+    // Fields can then only be asked for in about the order they come in (within
+    // the buffer), and the stream may end sooner than the metadata says.
     bool open(QString filename, qint32 _fieldLength, qint32 _fieldLineLength = -1);
     void close(void);
 
+    // How a stream is read: TBC fields (the default) or CVBS frames, and the buffer
+    // size. Call before open().
+    void setStreamOptions(const StreamReader::Options &options);
+    bool isStream() const;
+
     // Field handling methods
     Data getVideoField(qint32 fieldNumber, qint32 startFieldLine = -1, qint32 endFieldLine = -1);
+    // True if the field (numbered from 1) exists. Waits for it, if it is not yet read
+    // from a stream that is still going; a false means the stream ended before it.
+    bool hasField(qint32 fieldNumber);
 
     // Get and set methods
     bool isSourceValid();
@@ -76,6 +88,10 @@ private:
 
     // Field caching
     QCache<qint32, Data> fieldCache;
+
+    // Stream input (standard input or a named pipe)
+    StreamReader::Options streamOptions;
+    std::unique_ptr<StreamReader> stream;
 
     // CVBS input (.cvbs, .cvbsy, .cvbsc): whole frames, split into fields
     bool isCvbs;

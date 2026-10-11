@@ -48,6 +48,12 @@ public:
                          OutputWriter::Configuration &outputConfig, QString outputFileName,
                          qint32 startFrame, qint32 length, qint32 maxThreads);
 
+    // How standard input or a named pipe is read (frames of CVBS rather than fields of
+    // TBC, the buffer size): call before process()
+    void setStreamOptions(const StreamReader::Options &options) {
+        sourceVideo.setStreamOptions(options);
+    }
+
     // Decode fields to frames as specified by the constructor args.
     // Returns true on success; on failure, prints a message and returns false.
     bool process();

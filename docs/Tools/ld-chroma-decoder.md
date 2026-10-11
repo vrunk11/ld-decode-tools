@@ -213,6 +213,31 @@ Options:
   --input-metadata <filename>                 Specify the input metadata file
                                               (default input.db or input.json,
                                               see --meta)
+  --input-format <format>                     Piped input: tbc (fields, the
+                                              default) or cvbs (frames, as
+                                              decode-orc writes them)
+  --system <system>                           Piped input without metadata: the
+                                              video system (pal, ntsc or pal-m)
+  --black-level <number>                      Piped TBC input without metadata:
+                                              the black16bIre of the capture
+                                              (default: the standard level of
+                                              the system)
+  --white-level <number>                      Piped TBC input without metadata:
+                                              the white16bIre of the capture
+                                              (default: the standard level of
+                                              the system)
+  --subcarrier-locked <yes|no>                Piped input without metadata:
+                                              whether PAL was sampled locked to
+                                              the subcarrier, which puts the
+                                              second field 2 samples off (yes or
+                                              no; default yes for CVBS, no for
+                                              TBC)
+  --sample-encoding <encoding>                Piped CVBS input: u10
+                                              (CVBS_U10_4FSC, the default), u16,
+                                              tpg21 or s16
+  --buffer-frames <number>                    Piped input: frames read ahead of
+                                              the one being decoded, and kept
+                                              behind it (default 32)
   -s, --start <number>                        Specify the start frame number
   -l, --length <number>                       Specify the length (number of
                                               frames to process)

@@ -18,6 +18,7 @@
 
 #include "cvbs.h"
 #include "cvbsaudio.h"
+#include "streamreader.h"
 
 // assert() is compiled out of release builds, so check explicitly
 #define CHECK(condition) \
@@ -277,6 +278,105 @@ static void testFileMetadata(const QString &directory)
     CHECK(read.read(fileName) && read.numberOfFrames == 7);
 }
 
+// A stream holding the bytes, as a FILE to read from
+static QString streamDirectory;
+static FILE *streamOf(const QByteArray &bytes)
+{
+    static qint32 count = 0;
+    const QString fileName = QString("%1/stream%2.bin").arg(streamDirectory).arg(count++);
+    FILE *file = fopen(QFile::encodeName(fileName).constData(), "w+b");
+    CHECK(file != nullptr);
+    CHECK(fwrite(bytes.constData(), 1, bytes.size(), file) == static_cast<size_t>(bytes.size()));
+    rewind(file);
+    return file;
+}
+
+static void testStreamReader(const QString &directory)
+{
+    streamDirectory = directory;
+    std::cerr << "Testing the stream reader\n";
+
+    // TBC fields of 1000 samples, each with its own value; a window of 4 frames
+    {
+        const qint32 fieldLength = 1000;
+        const qint32 numberOfFields = 50;
+        QVector<quint16> samples(fieldLength * numberOfFields);
+        for (qint32 i = 0; i < samples.size(); i++) samples[i] = static_cast<quint16>(i / fieldLength * 100 + i % 7);
+        QByteArray bytes(reinterpret_cast<const char *>(samples.constData()), samples.size() * 2);
+        // Half a field at the end is not a field
+        bytes.append(QByteArray(900, '\x55'));
+
+        StreamReader::Options options;
+        options.bufferFrames = 4;
+        StreamReader reader(streamOf(bytes), true, fieldLength, options);
+        reader.start();
+
+        for (qint32 field = 0; field < numberOfFields; field++) {
+            QVector<quint16> data;
+            CHECK(reader.getField(field, data));
+            CHECK(data.size() == fieldLength);
+            CHECK(memcmp(data.constData(), samples.constData() + field * fieldLength, fieldLength * 2) == 0);
+        }
+
+        // The stream is over: it holds 50 fields and no more
+        QVector<quint16> data;
+        CHECK(!reader.getField(numberOfFields, data));
+        CHECK(!reader.hasField(numberOfFields));
+        CHECK(reader.numberOfFields() == numberOfFields);
+        // The last few fields are still in the window
+        CHECK(reader.getField(numberOfFields - 1, data));
+    }
+
+    // A stream that is not asked for much is not read far: only a window of it
+    {
+        const qint32 fieldLength = 100;
+        QByteArray bytes(fieldLength * 2 * 1000, '\x01');
+        StreamReader::Options options;
+        options.bufferFrames = 2;
+        StreamReader reader(streamOf(bytes), true, fieldLength, options);
+        reader.start();
+        QVector<quint16> data;
+        CHECK(reader.getField(0, data));
+        QThread::msleep(100);
+        // up to the 4 fields of the window, and the one being read
+        CHECK(reader.fieldsRead() <= 6);
+        CHECK(reader.numberOfFields() == -1);
+        // Asking for a later field moves the window (stopping the reader here is safe too)
+        CHECK(reader.getField(500, data));
+    }
+
+    // CVBS frames: each is two fields, as frameToFields makes them
+    {
+        const Cvbs::Geometry geometry = Cvbs::geometry(NTSC);
+        const qint32 numberOfFrames = 3;
+        QVector<qint16> frames(static_cast<qint32>(geometry.frameSamples) * numberOfFrames);
+        for (qint32 i = 0; i < frames.size(); i++) frames[i] = static_cast<qint16>(100 + (i * 31) % 800);
+        const QByteArray bytes(reinterpret_cast<const char *>(frames.constData()), frames.size() * 2);
+
+        StreamReader::Options options;
+        options.cvbs = true;
+        options.system = NTSC;
+        StreamReader reader(streamOf(bytes), true, geometry.fieldLength(), options);
+        reader.start();
+
+        const Cvbs::SampleConverter converter(options.encoding, NTSC);
+        const quint16 pad = static_cast<quint16>(Cvbs::standardLevels(NTSC).blanking * 64);
+        for (qint32 frame = 0; frame < numberOfFrames; frame++) {
+            QVector<quint16> expected1(geometry.fieldLength()), expected2(geometry.fieldLength());
+            Cvbs::frameToFields(frames.constData() + frame * geometry.frameSamples, geometry, converter, pad,
+                                expected1.data(), expected2.data());
+            QVector<quint16> field1, field2;
+            CHECK(reader.getField(frame * 2, field1));
+            CHECK(reader.getField(frame * 2 + 1, field2));
+            CHECK(field1 == expected1);
+            CHECK(field2 == expected2);
+        }
+        QVector<quint16> data;
+        CHECK(!reader.getField(numberOfFrames * 2, data));
+        CHECK(reader.numberOfFields() == numberOfFrames * 2);
+    }
+}
+
 int main(int argc, char *argv[])
 {
     QCoreApplication app(argc, argv);
@@ -291,6 +391,7 @@ int main(int argc, char *argv[])
     testDropouts(directory.path());
     testFileMetadata(directory.path());
     testAudio(directory.path());
+    testStreamReader(directory.path());
 
     std::cerr << "Tests complete\n";
     return 0;

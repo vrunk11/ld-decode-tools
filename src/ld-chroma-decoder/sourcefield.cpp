@@ -25,6 +25,7 @@
 #include "sourcefield.h"
 
 #include "sourcevideo.h"
+#include "cvbs.h"
 
 void SourceField::loadFields(SourceVideo &sourceVideo, LdDecodeMetaData &ldDecodeMetaData,
                              qint32 firstFrameNumber, qint32 numFrames,
@@ -39,18 +40,32 @@ void SourceField::loadFields(SourceVideo &sourceVideo, LdDecodeMetaData &ldDecod
     endIndex = startIndex + (2 * numFrames);
     fields.resize(endIndex + (2 * lookAheadFrames));
 
+    // Video from a stream that came without metadata has fields made as it turns
+    // out to be long enough: the first two are needed for the blank frames
+    const bool isGenerated = ldDecodeMetaData.isGenerated();
+    if (isGenerated) ldDecodeMetaData.ensureFields(2);
+
     // Populate fields
-    const qint32 numInputFrames = ldDecodeMetaData.getNumberOfFrames();
     qint32 frameNumber = firstFrameNumber - lookBehindFrames;
     for (qint32 i = 0; i < fields.size(); i += 2) {
 
-        // Is this frame outside the bounds of the input file?
+        // Is this frame outside the bounds of the input file? Metadata that is made
+        // up has no bounds, but the stream it goes with may end, anywhere.
         // If so, use real metadata (from frame 1) and black fields.
-        const bool useBlankFrame = frameNumber < 1 || frameNumber > numInputFrames;
+        if (isGenerated && frameNumber >= 1) ldDecodeMetaData.ensureFields(2 * frameNumber);
+        bool useBlankFrame = frameNumber < 1 || frameNumber > ldDecodeMetaData.getNumberOfFrames();
 
         // Get the first frame from the file (using frame 1 if outside bounds)
         qint32 firstFieldNumber = ldDecodeMetaData.getFirstFieldNumber(useBlankFrame ? 1 : frameNumber);
         qint32 secondFieldNumber = ldDecodeMetaData.getSecondFieldNumber(useBlankFrame ? 1 : frameNumber);
+
+        // A stream may end before the metadata says it does
+        if (!useBlankFrame && sourceVideo.isStream()
+            && !sourceVideo.hasField(qMax(firstFieldNumber, secondFieldNumber))) {
+            useBlankFrame = true;
+            firstFieldNumber = ldDecodeMetaData.getFirstFieldNumber(1);
+            secondFieldNumber = ldDecodeMetaData.getSecondFieldNumber(1);
+        }
 
         // Fetch the input metadata
         fields[i].field = ldDecodeMetaData.getField(firstFieldNumber);
@@ -66,6 +81,17 @@ void SourceField::loadFields(SourceVideo &sourceVideo, LdDecodeMetaData &ldDecod
             // Fetch the input fields
             fields[i].data = sourceVideo.getVideoField(firstFieldNumber);
             fields[i + 1].data = sourceVideo.getVideoField(secondFieldNumber);
+
+            // Without the phase of the field in the metadata (a CVBS capture, or a
+            // stream with none) it is measured from the colour burst
+            if (videoParameters.system == NTSC) {
+                for (SourceField *sourceField: {&fields[i], &fields[i + 1]}) {
+                    if (sourceField->field.fieldPhaseID < 1) {
+                        sourceField->field.fieldPhaseID = Cvbs::measureFieldPhaseID(sourceField->data.constData(), NTSC,
+                                                                                    sourceField->field.isFirstField);
+                    }
+                }
+            }
 
             if ((videoParameters.system == PAL || videoParameters.system == PAL_M) && videoParameters.isSubcarrierLocked) {
                 // With subcarrier-locked 4fSC PAL sampling, we have four

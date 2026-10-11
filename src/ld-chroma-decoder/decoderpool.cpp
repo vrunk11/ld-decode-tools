@@ -26,6 +26,8 @@
 
 #include "decoderpool.h"
 
+#include <limits>
+
 DecoderPool::DecoderPool(Decoder &_decoder, QString _inputFileName,
                          LdDecodeMetaData &_ldDecodeMetaData,
                          OutputWriter::Configuration &_outputConfig, QString _outputFileName,
@@ -66,18 +68,26 @@ bool DecoderPool::process()
     // If no startFrame parameter was specified, set the start frame to 1
     if (startFrame == -1) startFrame = 1;
 
-    if (startFrame > ldDecodeMetaData.getNumberOfFrames()) {
-        qInfo() << "Specified start frame is out of bounds, only" << ldDecodeMetaData.getNumberOfFrames() << "frames available";
-        return false;
-    }
+    // Metadata that is made up has no length: the video goes on until the input ends
+    const bool isUnbounded = ldDecodeMetaData.isGenerated();
 
-    // If no length parameter was specified set the length to the number of available frames
-    if (length == -1) {
-        length = ldDecodeMetaData.getNumberOfFrames() - (startFrame - 1);
+    if (isUnbounded) {
+        // length is the frames asked for, or unlimited
+        if (length == -1) length = std::numeric_limits<qint32>::max() - startFrame - 1;
     } else {
-        if (length + (startFrame - 1) > ldDecodeMetaData.getNumberOfFrames()) {
-            qInfo() << "Specified length of" << length << "exceeds the number of available frames, setting to" << ldDecodeMetaData.getNumberOfFrames() - (startFrame - 1);
+        if (startFrame > ldDecodeMetaData.getNumberOfFrames()) {
+            qInfo() << "Specified start frame is out of bounds, only" << ldDecodeMetaData.getNumberOfFrames() << "frames available";
+            return false;
+        }
+
+        // If no length parameter was specified set the length to the number of available frames
+        if (length == -1) {
             length = ldDecodeMetaData.getNumberOfFrames() - (startFrame - 1);
+        } else {
+            if (length + (startFrame - 1) > ldDecodeMetaData.getNumberOfFrames()) {
+                qInfo() << "Specified length of" << length << "exceeds the number of available frames, setting to" << ldDecodeMetaData.getNumberOfFrames() - (startFrame - 1);
+                length = ldDecodeMetaData.getNumberOfFrames() - (startFrame - 1);
+            }
         }
     }
 
@@ -110,7 +120,11 @@ bool DecoderPool::process()
     }
 
     qInfo() << "Using" << maxThreads << "threads";
-    qInfo() << "Processing from start frame #" << startFrame << "with a length of" << length << "frames";
+    if (length == std::numeric_limits<qint32>::max() - startFrame - 1) {
+        qInfo() << "Processing from start frame #" << startFrame << "until the end of the input";
+    } else {
+        qInfo() << "Processing from start frame #" << startFrame << "with a length of" << length << "frames";
+    }
 
     // Initialise processing state
     inputFrameNumber = startFrame;
@@ -148,6 +162,9 @@ bool DecoderPool::process()
         return false;
     }
 
+    // A stream may have ended sooner than expected: the frames done are the ones there were
+    length = lastFrameNumber - (startFrame - 1);
+
     double totalSecs = (static_cast<double>(totalTimer.elapsed()) / 1000.0);
     qInfo() << "Processing complete -" << length << "frames in" << totalSecs << "seconds (" <<
                length / totalSecs << "FPS )";
@@ -173,6 +190,34 @@ bool DecoderPool::getInputFrames(qint32 &startFrameNumber, QVector<SourceField> 
 
     // Work out how many frames will be in this batch
     qint32 batchFrames = qMin(maxBatchSize, lastFrameNumber + 1 - inputFrameNumber);
+
+    // A stream may end before the frames asked for (or the metadata) say: count how many
+    // of the frames of this batch it holds, waiting for them to arrive, and treat the
+    // end of the stream as the end of the input
+    if (sourceVideo.isStream()) {
+        qint32 available = 0;
+        while (available < batchFrames) {
+            const qint32 frameNumber = inputFrameNumber + available;
+            if (ldDecodeMetaData.isGenerated()) {
+                ldDecodeMetaData.ensureFields(2 * frameNumber);
+            } else if (frameNumber > ldDecodeMetaData.getNumberOfFrames()) {
+                break;
+            }
+            const qint32 lastField = qMax(ldDecodeMetaData.getFirstFieldNumber(frameNumber),
+                                          ldDecodeMetaData.getSecondFieldNumber(frameNumber));
+            if (!sourceVideo.hasField(lastField)) break;
+            available++;
+        }
+
+        if (available < batchFrames) {
+            if (lastFrameNumber != inputFrameNumber + available - 1) {
+                qInfo() << "The input ended after" << (inputFrameNumber + available - startFrame) << "frames";
+            }
+            batchFrames = available;
+            lastFrameNumber = inputFrameNumber + available - 1;
+        }
+    }
+
     if (batchFrames == 0) {
         // No more input frames
         return false;

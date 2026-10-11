@@ -28,6 +28,17 @@ ld-chroma-decoder [options] <input.tbc> <output.rgb>
 - `-l, --length <number>`: Specify the length (number of frames to process)
 - `-t, --threads <number>`: Specify the number of concurrent threads (default number of logical CPUs)
 
+#### Piped input
+Input can be piped: give `-` as the input (or the path of a named pipe). With `--input-metadata` the metadata is
+used as for a file. Without it the video system must be said, and everything else has a default, so that a
+producer's output can be decoded with no files at all; the video then runs until the input ends.
+- `--input-format <tbc|cvbs>`: What the pipe carries: TBC fields (the default), or CVBS frames as decode-orc writes them (`.cvbs`, no `.meta`)
+- `--system <pal|ntsc|pal-m>`: The video system (required without metadata)
+- `--black-level <number>`, `--white-level <number>`: The `black16bIre` and `white16bIre` of a TBC capture (default: the standard levels of the system; copy them from the capture's metadata for an exact result)
+- `--subcarrier-locked <yes|no>`: Whether PAL was sampled locked to the subcarrier, which puts the second field 2 samples off (default yes for CVBS, no for TBC)
+- `--sample-encoding <u10|u16|tpg21|s16>`: The sample encoding of a CVBS pipe (default `u10`, `CVBS_U10_4FSC`)
+- `--buffer-frames <number>`: Frames read ahead of the one being decoded, and kept behind it (default 32)
+
 #### Decoder Selection
 - `-f, --decoder <decoder>`: Decoder to use (pal2d, transform2d, transform3d, ntsc1d, ntsc2d, ntsc3d, ntsc3dnoadapt, mono; default automatic)
 
@@ -108,12 +119,17 @@ ld-chroma-decoder -p transform -s 1000 -l 500 input.tbc output.rgb
 
 # With Chroma Adjustments
 ld-chroma-decoder -p transform --chroma-gain 1.2 --chroma-phase -2.0 input.tbc output.rgb
+
+# Decode what a producer writes to a pipe, with no files (NTSC TBC, then CVBS from decode-orc)
+producer | ld-chroma-decoder --system ntsc - output.rgb
+orc-cli ... -o "CVBSSink=output_path=-" | ld-chroma-decoder --input-format cvbs --system pal - output.rgb
 ```
 
 ## Input/Output
 
 ### Input Format
 - TBC files: 16-bit unsigned composite video
+- Piped TBC fields or CVBS frames (see "Piped input"), read ahead on a thread of their own so that a slow or bursty producer does not hold the decoding up; if the input ends early the frames decoded so far are kept
 - Metadata: SQLite format
 - Standards: PAL (625-line), NTSC (525-line), PAL-M (525-line PAL)
 
