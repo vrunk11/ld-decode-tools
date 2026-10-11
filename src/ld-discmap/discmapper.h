@@ -32,6 +32,7 @@
 
 // TBC library includes
 #include "sourcevideo.h"
+#include "targetvideo.h"
 #include "sourceaudio.h"
 #include "lddecodemetadata.h"
 

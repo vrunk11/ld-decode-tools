@@ -32,6 +32,7 @@
 
 // TBC library includes
 #include "lddecodemetadata.h"
+#include "cvbs.h"
 #include "vbidecoder.h"
 
 #include "frame.h"
@@ -73,6 +74,9 @@ public:
     void debugFrameDetails(qint32 frameNumber);
     void addPadding(qint32 startFrame, qint32 numberOfFrames);
     qint32 getVideoFieldLength();
+    // The source's video system, and sample encoding if it is CVBS
+    VideoSystem getVideoSystem();
+    Cvbs::SampleEncoding getSampleEncoding() const;
     qint32 getApproximateAudioFieldLength();
 
     qint32 getFirstFieldNumber(qint32 frameNumber) const;

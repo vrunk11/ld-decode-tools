@@ -142,6 +142,12 @@ int main(int argc, char *argv[])
         }
     }
 
+    // CVBS captures carry their audio as WAV channel pairs, which are not mapped yet
+    if (!noAudio && Cvbs::isDataFileName(inputFilename)) {
+        qInfo() << "The input is CVBS: its audio (WAV channel pairs) is not mapped, as with --no-audio";
+        noAudio = true;
+    }
+
     // Put the input and output file names into QFileInfo for portability
     QFileInfo inputFileInfo(inputFilename);
     QFileInfo outputFileInfo(outputFilename);
@@ -167,6 +173,8 @@ int main(int argc, char *argv[])
             qCritical("The specified output file already exists - please delete the existing file or use another output file name");
             return -1;
         }
+        // The output stays in the input's container (TBC or CVBS)
+        if (!checkSameVideoContainer(inputFileInfo.filePath(), outputFileInfo.filePath())) return -1;
     }
 
     // Perform disc mapping

@@ -12,6 +12,7 @@
 #include <limits>
 
 #include "tbcsource.h"
+#include "cvbs.h"
 #include "tbc/logging.h"
 
 #include "sourcefield.h"
@@ -102,8 +103,13 @@ QString TbcSource::getMetadataFormatName()
 {
     if (!sourceReady) return QString();
 
-    return ldDecodeMetaData.getFormat() == LdDecodeMetaData::MetadataFormat::Json ? QStringLiteral("JSON")
-                                                                                   : QStringLiteral("SQLite");
+    const QString format = ldDecodeMetaData.getFormat() == LdDecodeMetaData::MetadataFormat::Json ? QStringLiteral("JSON")
+                                                                                                   : QStringLiteral("SQLite");
+    if (!ldDecodeMetaData.isCvbs()) return format;
+
+    // A CVBS capture: its core metadata alone, or with the companion
+    if (currentMetadataFilename.endsWith(".meta", Qt::CaseInsensitive)) return QStringLiteral("CVBS");
+    return QStringLiteral("CVBS + ") + format;
 }
 
 // Return a description of the last IO error
@@ -1217,8 +1223,16 @@ bool TbcSource::startBackgroundLoad(QString sourceFilename)
     // SQLite (.tbc.db), or JSON (.tbc.json) when that is all there is
     QString metadataFileName = LdDecodeMetaData::findMetadataFile(sourceFilename);
 
-    const bool isChromaTbc = sourceFilename.endsWith("_chroma.tbc");
-    if (isChromaTbc && !QFileInfo::exists(metadataFileName)) {
+    const bool isCvbs = Cvbs::isDataFileName(sourceFilename);
+    const bool isChromaTbc = sourceFilename.endsWith("_chroma.tbc")
+                             || (isCvbs && Cvbs::channel(sourceFilename) == Cvbs::Channel::Chroma);
+    if (isCvbs && isChromaTbc) {
+        // The user specified a .cvbsc file: the pair shares its metadata with
+        // the .cvbsy file, so open both, defaulting to the chroma view
+        const QString lumaFilename = Cvbs::pairedDataFileName(sourceFilename);
+        metadataFileName = LdDecodeMetaData::findMetadataFile(lumaFilename);
+        if (QFileInfo::exists(lumaFilename)) sourceFilename = lumaFilename;
+    } else if (isChromaTbc && !QFileInfo::exists(metadataFileName)) {
         // The user specified a _chroma.tbc file, and it doesn't have metadata.
 
         // The corresponding luma file should have metadata, so use that.
@@ -1240,7 +1254,7 @@ bool TbcSource::startBackgroundLoad(QString sourceFilename)
         currentSourceFilename.clear();
 
         // Show an error to the user and give up
-        lastIOError = "Could not load source TBC metadata file";
+        lastIOError = "Could not load the metadata file";
         return false;
     }
 
@@ -1249,25 +1263,29 @@ bool TbcSource::startBackgroundLoad(QString sourceFilename)
 
     // Open the new source video
     tbcDebugStream() << "TbcSource::startBackgroundLoad(): Loading TBC file...";
-    emit busy("Loading TBC file...");
+    emit busy("Loading video file...");
     if (!sourceVideo.open(sourceFilename, videoParameters.fieldWidth * videoParameters.fieldHeight)) {
         // Open failed
         qWarning() << "Open TBC file failed for filename" << sourceFilename;
         currentSourceFilename.clear();
 
         // Show an error to the user and give up
-        lastIOError = "Could not open source TBC data file";
+        lastIOError = "Could not open the video file";
         return false;
     }
 
-    // Is there a separate _chroma.tbc file?
+    // Is there a separate _chroma.tbc file (or the .cvbsc of a .cvbsy)?
     QString chromaSourceFilename = sourceFilename;
-    chromaSourceFilename.chop(4);
-    chromaSourceFilename += "_chroma.tbc";
-    if (QFileInfo::exists(chromaSourceFilename)) {
+    if (isCvbs) {
+        chromaSourceFilename = Cvbs::pairedDataFileName(sourceFilename);
+    } else {
+        chromaSourceFilename.chop(4);
+        chromaSourceFilename += "_chroma.tbc";
+    }
+    if (!chromaSourceFilename.isEmpty() && QFileInfo::exists(chromaSourceFilename)) {
         // Yes! Open it.
         tbcDebugStream() << "TbcSource::startBackgroundLoad(): Loading chroma TBC file...";
-        emit busy("Loading chroma TBC file...");
+        emit busy("Loading chroma file...");
         if (!chromaSourceVideo.open(chromaSourceFilename, videoParameters.fieldWidth * videoParameters.fieldHeight)) {
             // Open failed
             qWarning() << "Open chroma TBC file failed for filename" << chromaSourceFilename;
@@ -1275,7 +1293,7 @@ bool TbcSource::startBackgroundLoad(QString sourceFilename)
             sourceVideo.close();
 
             // Show an error to the user and give up
-            lastIOError = "Could not open source chroma TBC data file";
+            lastIOError = "Could not open the chroma file";
             return false;
         }
 
@@ -1319,6 +1337,27 @@ bool TbcSource::startBackgroundSave(QString metadataFilename)
     // The general idea here is that decoding takes a long time -- so we want
     // to be careful not to destroy the user's only copy of their metadata file if
     // something goes wrong!
+
+    // A CVBS capture: the field metadata goes to the companion file, which is
+    // written along with <base>.meta and <base>.dropouts.meta (decode-orc's
+    // files, which must keep their own format), so save to the companion
+    if (ldDecodeMetaData.isCvbs()) {
+        const QString companionFilename = LdDecodeMetaData::metadataFileName(currentSourceFilename,
+                                                                             ldDecodeMetaData.getFormat());
+        if (QFile::exists(companionFilename) && !QFile::exists(companionFilename + ".bup")
+            && !QFile::copy(companionFilename, companionFilename + ".bup")) {
+            lastIOError = "Could not back up the existing metadata file";
+            return false;
+        }
+        if (!ldDecodeMetaData.write(companionFilename)) {
+            lastIOError = "Could not write the metadata files";
+            return false;
+        }
+        currentMetadataFilename = companionFilename;
+
+        tbcDebugStream() << "TbcSource::startBackgroundSave(): Save complete";
+        return true;
+    }
 
     // Write the metadata out to a new temporary file
     QString newMetadataFilename = metadataFilename + ".new";

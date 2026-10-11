@@ -18,6 +18,7 @@
 #include <QTemporaryFile>
 #include <QDebug>
 #include <array>
+#include <memory>
 
 #include "dropouts.h"
 
@@ -25,6 +26,10 @@ class JsonReader;
 class JsonWriter;
 class SqliteReader;
 class SqliteWriter;
+
+namespace Cvbs {
+struct FileMetadata;
+}
 
 // The video system (combination of a line standard and a colour standard)
 // Note: If you update this, be sure to update VIDEO_SYSTEM_DEFAULTS also
@@ -225,6 +230,7 @@ public:
     };
 
     LdDecodeMetaData();
+    ~LdDecodeMetaData();
 
     // Prevent copying or assignment
     LdDecodeMetaData(const LdDecodeMetaData &) = delete;
@@ -240,11 +246,22 @@ public:
 
     void clear();
 
-    // Read metadata; the format is detected from the file contents.
+    // Read metadata; the format is detected from the file contents. CVBS core
+    // metadata (<base>.meta) is read too, with the fields it does not hold
+    // filled in: see isCvbs().
     bool read(QString fileName);
     // Write metadata: JSON for a ".json" file name, SQLite for ".db", and
     // otherwise the format the metadata was read in (see getFormat()).
+    // For a CVBS capture (<base>.meta or a <base>.cvbs.db/.json companion),
+    // the companion, <base>.meta and <base>.dropouts.meta are all written.
     bool write(QString fileName) const;
+
+    // CVBS captures (.cvbs, .cvbsy, .cvbsc): the core metadata decode-orc
+    // reads, set when CVBS metadata was read or for a capture to be written
+    // as CVBS. Field metadata the CVBS core lacks is kept in the companion.
+    bool isCvbs() const;
+    const Cvbs::FileMetadata &getCvbsFileMetadata() const;
+    void setCvbsFileMetadata(const Cvbs::FileMetadata &fileMetadata);
 
     // The format of the last file read (SQLite if none), used for outputs
     // that do not name a format, so JSON in gives JSON out.
@@ -256,8 +273,11 @@ public:
     static MetadataFormat detectFormat(const QString &fileName);
     // The metadata file belonging to a TBC file: <tbc>.db if it exists,
     // otherwise <tbc>.json if that exists, otherwise <tbc>.db.
+    // For CVBS data files the companion <base>.cvbs.db or .cvbs.json is used
+    // the same way, then <base>.meta.
     static QString findMetadataFile(const QString &tbcFileName);
-    // The metadata file name for a TBC file in a given format.
+    // The metadata file name for a TBC file in a given format; for a CVBS
+    // data file, its companion (<base>.cvbs.db or <base>.cvbs.json).
     static QString metadataFileName(const QString &tbcFileName, MetadataFormat format);
 
     void readFields(JsonReader &reader);
@@ -268,6 +288,8 @@ public:
     const VideoParameters &getVideoParameters();
     void setVideoParameters(const VideoParameters &videoParameters);
 
+    // False when the capture has no PCM audio (CVBS captures, for one)
+    bool hasPcmAudioParameters() const;
     const PcmAudioParameters &getPcmAudioParameters();
     void setPcmAudioParameters(const PcmAudioParameters &pcmAudioParam);
 
@@ -327,6 +349,10 @@ private:
     bool writeJson(QString fileName) const;
     bool readSqlite(QString fileName);
     bool writeSqlite(QString fileName) const;
+    bool readCvbsCore(QString fileName);
+    bool writeCvbs(QString fileName) const;
+
+    std::unique_ptr<Cvbs::FileMetadata> cvbsFileMetadata;
 
     void initialiseVideoSystemParameters();
     qint32 getFieldNumber(qint32 frameNumber, qint32 field);

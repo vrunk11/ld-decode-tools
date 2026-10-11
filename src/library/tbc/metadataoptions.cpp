@@ -9,6 +9,7 @@
  ******************************************************************************/
 
 #include "metadataoptions.h"
+#include "cvbs.h"
 
 #include <QCoreApplication>
 #include <QDebug>
@@ -146,6 +147,11 @@ bool MetadataOptions::selectInput(const QString &tbcFileName, bool useInputFile,
         metadataFileName = sqliteFileName;
     } else if (hasJson) {
         metadataFileName = jsonFileName;
+    } else if (hasSqlite) {
+        metadataFileName = sqliteFileName;
+    } else if (Cvbs::isDataFileName(tbcFileName) && QFileInfo::exists(Cvbs::metaFileName(tbcFileName))) {
+        // A CVBS capture with only the core metadata (as decode-orc writes it)
+        metadataFileName = Cvbs::metaFileName(tbcFileName);
     } else {
         // Neither exists: name the default so that the read reports it
         metadataFileName = sqliteFileName;

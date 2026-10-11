@@ -79,9 +79,10 @@ and command lines working (see §2 and §10).
 | `src/ld-export-metadata/`, `src/ld-export-decode-metadata/` | same | Export metadata to external formats |
 | `src/ld-json-converter/` | `ld-json-converter` | JSON → SQLite metadata conversion |
 | `src/ld-sqlite-to-json/` | `ld-sqlite-to-json` | SQLite → JSON metadata conversion |
+| `src/ld-tbc-to-cvbs/`, `src/ld-cvbs-to-tbc/` | same | TBC ↔ CVBS capture conversion |
 | `src/ld-lds-converter/` | `ld-lds-converter` | 10-bit packed ↔ 16-bit sample conversion |
 | `src/efm-decoder/` | `efm-decoder-{f2,d24,audio,data}`, `efm-stacker-f2`, `vfs-verifier` | Staged EFM decoding |
-| `src/library/` | `lddecode-library` (static) | Shared TBC I/O, metadata (SQLite), VBI/VITC decoders, filters |
+| `src/library/` | `lddecode-library` (static) | Shared TBC and CVBS I/O, metadata (SQLite, JSON, CVBS), VBI/VITC decoders, filters |
 
 ### 1.2 Repository layout
 
@@ -115,6 +116,14 @@ and command lines working (see §2 and §10).
   `ld-json-converter` (JSON → SQLite) and `ld-sqlite-to-json` (SQLite → JSON).
 - Video-system names: SQLite uses `PAL`, `NTSC`, `PAL_M`; JSON spells the last one `PAL-M`,
   as every JSON reader expects. Readers accept both spellings.
+- **CVBS captures** (the [CVBS file format](https://github.com/decode-orc/cvbs-file-format-specification)
+  of ld-decode 8 and decode-orc) are supported too, through `src/library/tbc/cvbs.h`: `SourceVideo`
+  reads `.cvbs` / `.cvbsy` / `.cvbsc` frames as TBC fields, `TargetVideo` writes fields as CVBS frames,
+  and `LdDecodeMetaData` reads `<base>.meta` + `<base>.dropouts.meta` and writes them back beside a
+  companion `<base>.cvbs.db` / `.cvbs.json` (the ld-decode metadata, for the field data the CVBS core
+  has no place for). The goal is compatibility: read what ld-decode and decode-orc write, and write
+  what decode-orc reads; the specification is the guideline. Video output stays in the input's
+  container (`checkSameVideoContainer`); `ld-tbc-to-cvbs` and `ld-cvbs-to-tbc` convert.
 - Any change to the on-disk format (TBC, `.tbc.db`, EFM, PCM output) is a compatibility
   change: call it out in the PR and ask before making it (§10).
 

@@ -12,6 +12,7 @@
 
 #include "lddecodemetadata.h"
 
+#include "cvbs.h"
 #include "jsonio.h"
 #include "sqliteio.h"
 
@@ -697,6 +698,8 @@ LdDecodeMetaData::LdDecodeMetaData()
     clear();
 }
 
+LdDecodeMetaData::~LdDecodeMetaData() = default;
+
 // Reset the metadata to the defaults
 void LdDecodeMetaData::clear()
 {
@@ -708,23 +711,47 @@ void LdDecodeMetaData::clear()
     pcmAudioParameters = PcmAudioParameters();
 
     fields.clear();
+    cvbsFileMetadata.reset();
 }
 
 // Read all metadata, in whichever format the file is in
 bool LdDecodeMetaData::read(QString fileName)
 {
+    // CVBS core metadata, as written by decode-orc. Its companion, created
+    // when the metadata is written back, is SQLite unless asked otherwise.
+    if (Cvbs::isCoreMetadataFile(fileName)) {
+        if (!readCvbsCore(fileName)) return false;
+        format = MetadataFormat::Sqlite;
+        return true;
+    }
+
     const MetadataFormat fileFormat = detectFormat(fileName);
     const bool ok = (fileFormat == MetadataFormat::Json) ? readJson(fileName) : readSqlite(fileName);
+    if (!ok) return false;
 
     // Remember the format so that outputs which do not name one match the input
-    if (ok) format = fileFormat;
+    format = fileFormat;
 
-    return ok;
+    // The companion of a CVBS capture: the core metadata says how its samples
+    // are stored
+    const QString dataFileName = Cvbs::dataFileForMetadata(fileName);
+    if (!dataFileName.isEmpty()) {
+        Cvbs::FileMetadata fileMetadata;
+        fileMetadata.system = videoParameters.system;
+        const QString metaFileName = Cvbs::metaFileName(dataFileName);
+        if (QFileInfo::exists(metaFileName) && !fileMetadata.read(metaFileName)) return false;
+        cvbsFileMetadata = std::make_unique<Cvbs::FileMetadata>(fileMetadata);
+    }
+
+    return true;
 }
 
 // Write all metadata, choosing the format from the file name or the input
 bool LdDecodeMetaData::write(QString fileName) const
 {
+    // A CVBS capture: the companion and the files decode-orc reads
+    if (!Cvbs::dataFileForMetadata(fileName).isEmpty()) return writeCvbs(fileName);
+
     MetadataFormat outputFormat = format;
     if (fileName.endsWith(".json", Qt::CaseInsensitive)) outputFormat = MetadataFormat::Json;
     else if (fileName.endsWith(".db", Qt::CaseInsensitive)) outputFormat = MetadataFormat::Sqlite;
@@ -761,13 +788,172 @@ QString LdDecodeMetaData::findMetadataFile(const QString &tbcFileName)
     const QString sqliteFileName = metadataFileName(tbcFileName, MetadataFormat::Sqlite);
     const QString jsonFileName = metadataFileName(tbcFileName, MetadataFormat::Json);
 
-    if (!QFileInfo::exists(sqliteFileName) && QFileInfo::exists(jsonFileName)) return jsonFileName;
+    if (QFileInfo::exists(sqliteFileName)) return sqliteFileName;
+    if (QFileInfo::exists(jsonFileName)) return jsonFileName;
+
+    // A CVBS capture without a companion yet: its core metadata
+    if (Cvbs::isDataFileName(tbcFileName) && QFileInfo::exists(Cvbs::metaFileName(tbcFileName))) {
+        return Cvbs::metaFileName(tbcFileName);
+    }
     return sqliteFileName;
 }
 
 QString LdDecodeMetaData::metadataFileName(const QString &tbcFileName, MetadataFormat _format)
 {
+    if (Cvbs::isDataFileName(tbcFileName)) return Cvbs::companionFileName(tbcFileName, _format == MetadataFormat::Json);
     return tbcFileName + (_format == MetadataFormat::Json ? ".json" : ".db");
+}
+
+bool LdDecodeMetaData::isCvbs() const
+{
+    return cvbsFileMetadata != nullptr;
+}
+
+const Cvbs::FileMetadata &LdDecodeMetaData::getCvbsFileMetadata() const
+{
+    static const Cvbs::FileMetadata defaults;
+    return cvbsFileMetadata ? *cvbsFileMetadata : defaults;
+}
+
+void LdDecodeMetaData::setCvbsFileMetadata(const Cvbs::FileMetadata &fileMetadata)
+{
+    cvbsFileMetadata = std::make_unique<Cvbs::FileMetadata>(fileMetadata);
+}
+
+// Read CVBS core metadata. It holds no per-field metadata, so the fields are
+// filled in as a TBC capture of the same video would have them, with the
+// dropouts of the dropout extension.
+bool LdDecodeMetaData::readCvbsCore(QString fileName)
+{
+    clear();
+
+    Cvbs::FileMetadata fileMetadata;
+    if (!fileMetadata.read(fileName)) return false;
+
+    // Fixed line lengths and 4fsc sampling are what the tools are built on
+    if (!fileMetadata.isStandardStable()) {
+        qCritical().noquote() << fileName << "describes a" << fileMetadata.signalStatePreset
+                              << "capture - only time-base stable 4fsc captures (STANDARD_STABLE_*) can be processed";
+        return false;
+    }
+
+    const QString dataFileName = Cvbs::dataFileForMetadata(fileName);
+    const Cvbs::Geometry geometry = Cvbs::geometry(fileMetadata.system);
+
+    qint32 numberOfFrames = fileMetadata.numberOfFrames;
+    if (numberOfFrames < 1) {
+        // Not recorded: count the frames in the data file
+        const QFileInfo dataFile(dataFileName);
+        if (!dataFile.exists()) {
+            qCritical().noquote() << fileName << "does not give the number of frames and" << dataFileName
+                                  << "does not exist";
+            return false;
+        }
+        numberOfFrames = static_cast<qint32>(dataFile.size() / (geometry.frameSamples * 2));
+    }
+
+    const Cvbs::Levels levels = Cvbs::standardLevels(fileMetadata.system);
+
+    videoParameters.system = fileMetadata.system;
+    videoParameters.numberOfSequentialFields = numberOfFrames * 2;
+    videoParameters.isSubcarrierLocked = fileMetadata.isPhaseLocked();
+    videoParameters.isWidescreen = false;
+
+    // ld-decode's colour burst and active video positions for the standard
+    if (fileMetadata.system == PAL) {
+        videoParameters.colourBurstStart = 98;
+        videoParameters.colourBurstEnd = 138;
+        videoParameters.activeVideoStart = 185;
+        videoParameters.activeVideoEnd = 1107;
+    } else {
+        videoParameters.colourBurstStart = 74;
+        videoParameters.colourBurstEnd = 110;
+        videoParameters.activeVideoStart = 134;
+        videoParameters.activeVideoEnd = (fileMetadata.system == PAL_M) ? 893 : 894;
+    }
+
+    // The 16-bit TBC domain is the 10-bit CVBS domain times 64
+    videoParameters.white16bIre = levels.white * 64;
+    videoParameters.blanking16bIre = levels.blanking * 64;
+    videoParameters.black16bIre = fileMetadata.blackLevel.value_or(levels.black) * 64;
+
+    videoParameters.fieldWidth = geometry.lineWidth;
+    videoParameters.fieldHeight = geometry.fieldHeight();
+    videoParameters.isMapped = false;
+    // CVBS capture notes are free text, not the tape format the TBC
+    // capture_notes column holds, so they stay in the core metadata
+    videoParameters.gitBranch = fileMetadata.gitBranch;
+    videoParameters.gitCommit = fileMetadata.gitCommit;
+    videoParameters.isValid = true;
+
+    // Frames hold the first field, then the second
+    fields.resize(numberOfFrames * 2);
+    for (qint32 i = 0; i < fields.size(); i++) {
+        fields[i].seqNo = i + 1;
+        fields[i].isFirstField = (i % 2) == 0;
+    }
+
+    Cvbs::readDropouts(Cvbs::dropoutsFileName(dataFileName), fileMetadata.system, numberOfFrames,
+                       [this](qint32 fieldIndex, const DropOuts &dropOuts) {
+                           fields[fieldIndex].dropOuts = dropOuts;
+                       });
+
+    initialiseVideoSystemParameters();
+    videoParameters.sampleRate = 4.0 * videoParameters.fSC;
+    generatePcmAudioMap();
+
+    cvbsFileMetadata = std::make_unique<Cvbs::FileMetadata>(fileMetadata);
+    tbcDebugStream() << "LdDecodeMetaData::readCvbsCore(): Read" << numberOfFrames << "frames of CVBS metadata from"
+                     << fileName;
+    return true;
+}
+
+// Write the metadata of a CVBS capture: the companion with all the field
+// metadata, plus the core metadata and dropout extension that decode-orc reads
+bool LdDecodeMetaData::writeCvbs(QString fileName) const
+{
+    const QString dataFileName = Cvbs::dataFileForMetadata(fileName);
+
+    // Writing to <base>.meta itself puts the field metadata in the companion
+    const QString companionFileName = fileName.endsWith(".meta", Qt::CaseInsensitive)
+            ? Cvbs::companionFileName(dataFileName, format == MetadataFormat::Json)
+            : fileName;
+    const bool companionIsJson = companionFileName.endsWith(".json", Qt::CaseInsensitive);
+    if (!(companionIsJson ? writeJson(companionFileName) : writeSqlite(companionFileName))) return false;
+
+    const qint32 numberOfFrames = fields.size() / 2;
+
+    Cvbs::FileMetadata fileMetadata;
+    if (cvbsFileMetadata) {
+        fileMetadata = *cvbsFileMetadata;
+    } else {
+        // A capture becoming CVBS: describe it from its video parameters
+        fileMetadata.signalStatePreset = videoParameters.isSubcarrierLocked ? "STANDARD_STABLE_LOCKED"
+                                                                            : "STANDARD_STABLE_UNLOCKED";
+        fileMetadata.gitBranch = videoParameters.gitBranch;
+        fileMetadata.gitCommit = videoParameters.gitCommit;
+        fileMetadata.captureNotes = videoParameters.tapeFormat;
+    }
+    fileMetadata.system = videoParameters.system;
+    fileMetadata.signalType = (Cvbs::channel(dataFileName) == Cvbs::Channel::Composite) ? "composite" : "yc";
+    fileMetadata.numberOfFrames = numberOfFrames;
+
+    // A black level clearly away from the standard's (NTSC-J, for one) is an
+    // override; a measured level within about 2 IRE of it is not
+    if (videoParameters.black16bIre >= 0) {
+        const qint32 black = (videoParameters.black16bIre + 32) / 64;
+        if (std::abs(black - Cvbs::standardLevels(videoParameters.system).black) > 10) {
+            fileMetadata.blackLevel = black;
+            fileMetadata.hasNonstandardValues = true;
+        } else {
+            fileMetadata.blackLevel.reset();
+        }
+    }
+
+    if (!fileMetadata.write(Cvbs::metaFileName(dataFileName))) return false;
+
+    return Cvbs::writeDropouts(Cvbs::dropoutsFileName(dataFileName), videoParameters.system, numberOfFrames,
+                               [this](qint32 fieldIndex) -> const DropOuts & { return fields[fieldIndex].dropOuts; });
 }
 
 // Read all metadata from a JSON file
@@ -1239,6 +1425,11 @@ void LdDecodeMetaData::setVideoParameters(const LdDecodeMetaData::VideoParameter
 }
 
 // This method returns the pcmAudioParameters metadata
+bool LdDecodeMetaData::hasPcmAudioParameters() const
+{
+    return pcmAudioParameters.isValid;
+}
+
 const LdDecodeMetaData::PcmAudioParameters &LdDecodeMetaData::getPcmAudioParameters()
 {
     if (!pcmAudioParameters.isValid) {

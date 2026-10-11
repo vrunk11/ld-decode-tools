@@ -38,20 +38,10 @@ StackingPool::StackingPool(QString _outputFilename, QString _outputMetadataFilen
 bool StackingPool::process()
 {
     qInfo() << "Performing final sanity checks...";
-    // Open the target video
-    targetVideo.setFileName(outputFilename);
-    if (outputFilename == "-") {
-        if (!targetVideo.open(stdout, QIODevice::WriteOnly)) {
-                // Could not open stdout
-                qInfo() << "Unable to open stdout";
-                return false;
-        }
-    } else {
-        if (!targetVideo.open(QIODevice::WriteOnly)) {
-                // Could not open target video file
-                qInfo() << "Unable to open output video file";
-                return false;
-        }
+    // Open the target video (a CVBS output keeps the input's sample encoding)
+    if (!targetVideo.open(outputFilename, ldDecodeMetaData[0]->getVideoParameters().system,
+                          ldDecodeMetaData[0]->getCvbsFileMetadata().sampleEncoding)) {
+        return false;
     }
 
     // If there is a leading field in the TBC which is out of field order, we need to copy it
@@ -514,7 +504,7 @@ QVector<qint32> StackingPool::getAvailableSourcesForFrame(qint32 vbiFrameNumber)
 // Returns true on success, false on failure.
 bool StackingPool::writeOutputField(const SourceVideo::Data &fieldData)
 {
-    return targetVideo.write(reinterpret_cast<const char *>(fieldData.data()), 2 * fieldData.size());
+    return targetVideo.writeField(fieldData);
 }
 
 void StackingPool::correctPhaseIDs()

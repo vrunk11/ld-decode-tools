@@ -1,4 +1,5 @@
 add_library(lddecode-library STATIC
+    tbc/cvbs.cpp
     tbc/dropouts.cpp
     tbc/filters.cpp
     tbc/jsonio.cpp
@@ -9,6 +10,7 @@ add_library(lddecode-library STATIC
     tbc/navigation.cpp
     tbc/sourceaudio.cpp
     tbc/sourcevideo.cpp
+    tbc/targetvideo.cpp
     tbc/vbidecoder.cpp
     tbc/videoiddecoder.cpp
     tbc/vitcdecoder.cpp

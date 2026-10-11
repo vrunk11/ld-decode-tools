@@ -15,7 +15,7 @@ ld-analyse [options] <input.tbc>
 
 ### GUI Operation
 
-1. **Open File**: File → Open TBC file, or specify on command line
+1. **Open File**: File → Open file (a `.tbc` or `.cvbs` file), or specify on command line
 2. **Navigate**: Use media controls to move between frames/fields
    - Previous/Next buttons
    - Slider for quick navigation
@@ -54,7 +54,7 @@ ld-analyse [options] <input.tbc>
 ## Examples
 
 ```bash
-# Open TBC file for analysis
+# Open a TBC (or CVBS) file for analysis
 ld-analyse capture.tbc
 ```
 

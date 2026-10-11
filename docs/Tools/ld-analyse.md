@@ -6,7 +6,7 @@ The primary file-type is TBC (time-base corrected) video files containing the ra
 
 TBC files are usually identified by the `.tbc` & `_chroma.tbc` file-extensions.
 
-The application also presents source and tool-chain metadata (supplied by the TBC's metadata file, `.tbc.db` or `.tbc.json`) that provide additional details about the TBC file's contents such as VBI data and TV System.
+The application also presents source and tool-chain metadata (supplied by the TBC's metadata file, `.tbc.db` or `.tbc.json`; for a CVBS capture, `.meta` and its companion `.cvbs.db` or `.cvbs.json`) that provide additional details about the TBC file's contents such as VBI data and TV System.
 
 
 # Command line
@@ -146,17 +146,17 @@ Clicking again on the same button will revert back to normal field order.  Note 
 
 The file menu contains options for handling the loading and saving of various files.
 
-## Open TBC file
+## Open file
 
-This option opens a new TBC file as described above.
+This option opens a TBC file (`.tbc`) or a CVBS file (`.cvbs`, or either file of a `.cvbsy` / `.cvbsc` Y/C pair) as described above.
 
-## Reload TBC
+## Reload file
 
-This option reloads the current TBC file (this is useful when checking a TBC file that is still being decoded in order to view any new frames that have decoded since the file was originally loaded).
+This option reloads the current file (this is useful when checking a TBC file that is still being decoded in order to view any new frames that have decoded since the file was originally loaded).
 
 ## Save Metadata
 
-This action saves any changes you've made to the metadata of the current TBC file, in the format it was loaded from (SQLite `.tbc.db` or JSON `.tbc.json`). The menu item is greyed out if no changes have been made. The loaded format is shown in the status bar ("Metadata: SQLite" or "Metadata: JSON"), with the metadata file name in its tooltip.
+This action saves any changes you've made to the metadata of the current TBC file, in the format it was loaded from (SQLite `.tbc.db` or JSON `.tbc.json`). For a CVBS capture the changes go to its companion file (`.cvbs.db`, or `.cvbs.json`), and `.meta` and `.dropouts.meta` are updated alongside it. The menu item is greyed out if no changes have been made. The loaded format is shown in the status bar ("Metadata: SQLite", "Metadata: JSON", or for a CVBS capture "Metadata: CVBS" or "Metadata: CVBS + SQLite" when it has a companion file), with the metadata file name in its tooltip.
 
 ## Save frame as PNG
 

@@ -33,6 +33,7 @@
 #include <QThread>
 
 #include "sourcevideo.h"
+#include "targetvideo.h"
 #include "lddecodemetadata.h"
 #include "dropoutcorrect.h"
 
@@ -101,7 +102,7 @@ private:
 
     qint32 outputFrameNumber;
     QMap<qint32, OutputFrame> pendingOutputFrames;
-    QFile targetVideo;
+    TargetVideo targetVideo;
 
     // Local source information
     QVector<bool> sourceDiscTypeCav;

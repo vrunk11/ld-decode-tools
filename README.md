@@ -33,6 +33,8 @@ This is the complete suite of tools for processing LaserDisc captures and TBC (T
 - **ld-lds-converter** - Convert between 10-bit and 16-bit LaserDisc sample formats
 - **ld-json-converter** - Convert JSON metadata (`.tbc.json`) to SQLite (`.tbc.db`)
 - **ld-sqlite-to-json** - Convert SQLite metadata (`.tbc.db`) to JSON (`.tbc.json`)
+- **ld-tbc-to-cvbs** - Convert a TBC capture to the CVBS file format (`.cvbs`) read by decode-orc
+- **ld-cvbs-to-tbc** - Convert a CVBS capture (from ld-decode or decode-orc) to a TBC capture
 
 ### Utility Scripts
 - **ld-compress** - Compress `.lds` captures to `.ldf` (FLAC through ffmpeg), uncompress them back, and verify them (in scripts/)
@@ -65,6 +67,11 @@ each GitHub release.
   - Output metadata is always written in the same format as the input (JSON in, JSON out). The processing tools never convert between formats and refuse an output file in the other format; use `ld-json-converter` or `ld-sqlite-to-json` to convert
   - Updating metadata in place when both files exist warns that the other one is now out of date
   - The original `--input-json` / `--output-json` options are still accepted (hidden from `--help`) as aliases of `--input-metadata` / `--output-metadata`
+- **CVBS captures**: The tools also read and write the [CVBS file format](https://github.com/decode-orc/cvbs-file-format-specification) that ld-decode 8 and decode-orc write - `capture.cvbs` (or a `capture.cvbsy` / `capture.cvbsc` Y/C pair) with `capture.meta` and `capture.dropouts.meta`
+  - CVBS files hold whole frames; the tools read each frame as its two fields, so every tool that reads TBC also reads CVBS. Time-base stable 4fsc captures (`STANDARD_STABLE_*`) in any of the four 4fsc sample encodings are supported
+  - Field metadata that the CVBS format has no place for (VBI, VITS, ...) is kept in a companion `capture.cvbs.db` (or `capture.cvbs.json`) in the usual ld-decode format; `capture.meta` and `capture.dropouts.meta` are kept up to date beside it, so decode-orc reads the result
+  - Tools that write video (`ld-dropout-correct`, `ld-disc-stacker`, `ld-discmap`) write CVBS for CVBS input and TBC for TBC input; `ld-tbc-to-cvbs` and `ld-cvbs-to-tbc` convert between the two
+  - Audio stays as it is: the 48 kHz WAV channel pairs of a CVBS capture are not converted to or from `.pcm` yet
 - **File Extensions**: TBC files use `.tbc` extension, metadata uses `.tbc.db` (SQLite) or `.tbc.json` (JSON)
 - **Dependencies**: Qt 6 and FFTW3; FFmpeg is only needed for the chroma tests and to turn the decoded output into video files
 - **Performance**: Many tools support multi-threading for faster processing

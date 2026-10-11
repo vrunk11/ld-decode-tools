@@ -25,6 +25,7 @@
 #include "sourcevideo.h"
 
 #include <cstdio>
+#include <QFileInfo>
 #include "tbc/logging.h"
 
 // Class constructor
@@ -37,6 +38,8 @@ SourceVideo::SourceVideo()
     fieldLength = -1;
     fieldByteLength = -1;
     fieldLineLength = -1;
+    isCvbs = false;
+    cvbsPadValue = 0;
 
     // Set up the cache
     fieldCache.setMaxCost(100);
@@ -68,7 +71,10 @@ bool SourceVideo::open(QString filename, qint32 _fieldLength, qint32 _fieldLineL
 
     // Open the source video file
     inputFile.setFileName(filename);
-    if (filename == "-") {
+    isCvbs = false;
+    if (filename != "-" && Cvbs::isDataFileName(filename)) {
+        if (!openCvbs(filename)) return false;
+    } else if (filename == "-") {
         if (!inputFile.open(stdin, QIODevice::ReadOnly)) {
             // Failed to open stdin
             qWarning() << "Could not open stdin as source video input file";
@@ -111,6 +117,8 @@ void SourceVideo::close()
     inputFile.close();
     isSourceVideoOpen = false;
     inputFilePos = -1;
+    isCvbs = false;
+    cvbsConverter.reset();
 
     tbcDebugStream() << "SourceVideo::close(): Source video input file closed";
 }
@@ -145,6 +153,23 @@ SourceVideo::Data SourceVideo::getVideoField(qint32 fieldNumber, qint32 startFie
 
     // Ensure source video is open
     if (!isSourceVideoOpen) qFatal("Application requested TBC field before opening TBC file - Fatal error");
+
+    if (isCvbs) {
+        // Fields come from whole frames, which are cached as two fields
+        if (fieldNumber < 0 || fieldNumber >= availableFields) {
+            qFatal("Application requested field that exceeds the boundaries of the input CVBS file");
+        }
+        if (!fieldCache.contains(fieldNumber)) readCvbsFrame(fieldNumber / 2);
+        const Data &field = *fieldCache.object(fieldNumber);
+        if (startFieldLine == -1 && endFieldLine == -1) return field;
+
+        if (fieldLineLength == -1) qFatal("Application did not set field line length when opening TBC file");
+        const qint32 lineSamples = fieldLineLength / 2;
+        if (startFieldLine < 1 || endFieldLine < startFieldLine || endFieldLine * lineSamples > field.size()) {
+            qFatal("Application requested out-of-bounds field line");
+        }
+        return field.mid((startFieldLine - 1) * lineSamples, (endFieldLine - startFieldLine + 1) * lineSamples);
+    }
 
     // Calculate the position of the require field line data
     qint64 requiredStartPosition = static_cast<qint64>(fieldByteLength) * static_cast<qint64>(fieldNumber);
@@ -243,3 +268,79 @@ SourceVideo::Data SourceVideo::getVideoField(qint32 fieldNumber, qint32 startFie
 
 
 
+
+// CVBS input ---------------------------------------------------------------------------------------------------------
+
+// Open a .cvbs, .cvbsy or .cvbsc file. The sample encoding comes from the
+// <base>.meta metadata; without it, the default encoding (CVBS_U10_4FSC) is
+// assumed and the video system is deduced from the field length.
+bool SourceVideo::openCvbs(const QString &filename)
+{
+    VideoSystem system;
+    Cvbs::SampleEncoding encoding = Cvbs::SampleEncoding::U10_4FSC;
+    const QString metaFilename = Cvbs::metaFileName(filename);
+
+    if (QFileInfo::exists(metaFilename)) {
+        Cvbs::FileMetadata fileMetadata;
+        if (!fileMetadata.read(metaFilename)) return false;
+        system = fileMetadata.system;
+        encoding = fileMetadata.sampleEncoding;
+    } else if (!Cvbs::systemForFieldLength(fieldLength, system)) {
+        qWarning() << "Cannot tell the video system of" << filename << "- it has no metadata";
+        return false;
+    } else {
+        qInfo().noquote() << filename << "has no" << metaFilename << "- assuming"
+                          << Cvbs::sampleEncodingName(encoding) << "samples";
+    }
+
+    cvbsGeometry = Cvbs::geometry(system);
+    if (cvbsGeometry.fieldLength() != fieldLength) {
+        qWarning() << "The metadata field size does not match the" << Cvbs::presetName(system) << "CVBS file" << filename;
+        return false;
+    }
+    cvbsConverter = std::make_unique<Cvbs::SampleConverter>(encoding, system);
+
+    // Pad the second field's extra line with blanking (chroma: its zero level)
+    const qint32 padLevel = Cvbs::channel(filename) == Cvbs::Channel::Chroma ? 512
+                                                                              : Cvbs::standardLevels(system).blanking;
+    cvbsPadValue = static_cast<quint16>(padLevel * 64);
+
+    if (!inputFile.open(QIODevice::ReadOnly)) {
+        qWarning() << "Could not open" << filename << "as source video input file";
+        return false;
+    }
+
+    const qint64 frameBytes = cvbsGeometry.frameSamples * 2;
+    availableFields = static_cast<qint32>(inputFile.size() / frameBytes) * 2;
+    if (inputFile.size() % frameBytes != 0) {
+        qWarning() << filename << "ends with a partial frame, which is ignored";
+    }
+    cvbsFrameData.resize(static_cast<qint32>(cvbsGeometry.frameSamples));
+    isCvbs = true;
+
+    tbcDebugStream() << "SourceVideo::openCvbs(): Successful -" << availableFields << "fields available";
+    return true;
+}
+
+// Read a stored frame (0-based) and cache it as its two fields
+void SourceVideo::readCvbsFrame(qint32 frameNumber)
+{
+    const qint64 frameBytes = cvbsGeometry.frameSamples * 2;
+    const qint64 position = frameBytes * frameNumber;
+    if (inputFilePos != position) {
+        if (!inputFile.seek(position)) qFatal("Could not seek to required frame position in input CVBS file");
+        inputFilePos = position;
+    }
+
+    if (inputFile.read(reinterpret_cast<char *>(cvbsFrameData.data()), frameBytes) != frameBytes) {
+        qFatal("Could not read frame data from input CVBS file");
+    }
+    inputFilePos += frameBytes;
+
+    Data *field1 = new Data(cvbsGeometry.fieldLength());
+    Data *field2 = new Data(cvbsGeometry.fieldLength());
+    Cvbs::frameToFields(cvbsFrameData.constData(), cvbsGeometry, *cvbsConverter, cvbsPadValue,
+                        field1->data(), field2->data());
+    fieldCache.insert(frameNumber * 2, field1, 1);
+    fieldCache.insert(frameNumber * 2 + 1, field2, 1);
+}

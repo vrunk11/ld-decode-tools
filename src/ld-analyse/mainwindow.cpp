@@ -12,6 +12,7 @@
 #include "mainwindow.h"
 #include "ui_mainwindow.h"
 #include "tbc/logging.h"
+#include "cvbs.h"
 
 #include <QActionGroup>
 
@@ -437,7 +438,7 @@ void MainWindow::updateSourcesPushButton()
 	{
 		switch (tbcSource.getSourceMode()) {
 		case TbcSource::ONE_SOURCE:
-			ui->sourcesPushButton->setText(tr(".TBC"));
+			ui->sourcesPushButton->setText(Cvbs::isDataFileName(tbcSource.getCurrentSourceFilename()) ? tr(".CVBS") : tr(".TBC"));
 			break;
 		case TbcSource::LUMA_SOURCE:
 			ui->sourcesPushButton->setText(tr("Y"));
@@ -776,9 +777,9 @@ void MainWindow::on_actionOpen_TBC_file_triggered()
     tbcDebugStream() << "MainWindow::on_actionOpen_TBC_file_triggered(): Called";
 
     QString inputFileName = QFileDialog::getOpenFileName(this,
-                tr("Open TBC file"),
+                tr("Open TBC or CVBS file"),
                 configuration.getSourceDirectory()+tr("/ldsample.tbc"),
-                tr("TBC output (*.tbc);;All Files (*)"));
+                tr("TBC and CVBS files (*.tbc *.cvbs *.cvbsy *.cvbsc);;TBC output (*.tbc);;CVBS (*.cvbs *.cvbsy *.cvbsc);;All Files (*)"));
 
     // Was a filename specified?
     if (!inputFileName.isEmpty() && !inputFileName.isNull()) {

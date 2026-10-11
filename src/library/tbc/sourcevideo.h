@@ -29,6 +29,9 @@
 #include <QCache>
 #include <QDebug>
 #include <QVector>
+#include <memory>
+
+#include "cvbs.h"
 
 class SourceVideo
 {
@@ -46,7 +49,8 @@ public:
     SourceVideo(const SourceVideo &) = delete;
     SourceVideo& operator=(const SourceVideo &) = delete;
 
-    // File handling methods
+    // File handling methods. A .cvbs, .cvbsy or .cvbsc file is read as TBC
+    // fields: each stored frame becomes two fields of _fieldLength samples.
     bool open(QString filename, qint32 _fieldLength, qint32 _fieldLineLength = -1);
     void close(void);
 
@@ -72,6 +76,16 @@ private:
 
     // Field caching
     QCache<qint32, Data> fieldCache;
+
+    // CVBS input (.cvbs, .cvbsy, .cvbsc): whole frames, split into fields
+    bool isCvbs;
+    Cvbs::Geometry cvbsGeometry;
+    std::unique_ptr<Cvbs::SampleConverter> cvbsConverter;
+    quint16 cvbsPadValue;
+    QVector<qint16> cvbsFrameData;
+
+    bool openCvbs(const QString &filename);
+    void readCvbsFrame(qint32 frameNumber);
 };
 
 #endif // SOURCEVIDEO_H

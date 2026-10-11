@@ -702,7 +702,7 @@
   </action>
   <action name="actionOpen_TBC_file">
    <property name="text">
-    <string>Open TBC file...</string>
+    <string>Open file...</string>
    </property>
    <property name="shortcut">
     <string>Ctrl+O</string>
@@ -887,7 +887,7 @@
   </action>
   <action name="actionReload_TBC">
    <property name="text">
-    <string>Reload TBC</string>
+    <string>Reload file</string>
    </property>
    <property name="shortcut">
     <string>Ctrl+A</string>

@@ -651,6 +651,16 @@ qint32 DiscMap::getVideoFieldLength()
     return m_videoFieldLength;
 }
 
+VideoSystem DiscMap::getVideoSystem()
+{
+    return ldDecodeMetaData->getVideoParameters().system;
+}
+
+Cvbs::SampleEncoding DiscMap::getSampleEncoding() const
+{
+    return ldDecodeMetaData->getCvbsFileMetadata().sampleEncoding;
+}
+
 // Method to get the current audio field length (in bytes) from the metadata
 // Note: This actually varies from field to field, so this provides
 // a best guess
@@ -753,7 +763,9 @@ bool DiscMap::saveTargetMetadata(QFileInfo outputFileInfo)
     targetMetadata.setVideoParameters(sourceVideoParameters);
 
     // Store the PCM audio parameters
-    targetMetadata.setPcmAudioParameters(ldDecodeMetaData->getPcmAudioParameters());
+    if (ldDecodeMetaData->hasPcmAudioParameters()) {
+        targetMetadata.setPcmAudioParameters(ldDecodeMetaData->getPcmAudioParameters());
+    }
 
     // Set the number of sequential fields
     targetMetadata.setNumberOfFields(m_numberOfFrames * 2);

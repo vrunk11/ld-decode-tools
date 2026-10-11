@@ -644,11 +644,9 @@ bool DiscMapper::saveDiscMap(DiscMap &discMap)
     SourceVideo sourceVideo;
     sourceVideo.open(inputFileInfo.filePath(), discMap.getVideoFieldLength());
 
-    // Open the output video file
-    QFile targetVideo(outputFileInfo.filePath());
-    if (!targetVideo.open(QIODevice::WriteOnly)) {
-        // Could not open target video file
-        qInfo() << "Cannot open target video file:" << outputFileInfo.filePath();
+    // Open the output video file (a CVBS output keeps the input's sample encoding)
+    TargetVideo targetVideo;
+    if (!targetVideo.open(outputFileInfo.filePath(), discMap.getVideoSystem(), discMap.getSampleEncoding())) {
         sourceVideo.close();
         return false;
     }
@@ -716,16 +714,12 @@ bool DiscMapper::saveDiscMap(DiscMap &discMap)
             // Write the fields into the output TBC file in the same order as the source file
             if (firstFieldNumber < secondFieldNumber) {
                 // Save the first field and then second field to the output file
-                if (!targetVideo.write(reinterpret_cast<const char *>(sourceFirstField.data()),
-                                       sourceFirstField.size() * 2)) writeFail = true;
-                if (!targetVideo.write(reinterpret_cast<const char *>(sourceSecondField.data()),
-                                       sourceSecondField.size() * 2)) writeFail = true;
+                if (!targetVideo.writeField(sourceFirstField)) writeFail = true;
+                if (!targetVideo.writeField(sourceSecondField)) writeFail = true;
             } else {
                 // Save the second field and then first field to the output file
-                if (!targetVideo.write(reinterpret_cast<const char *>(sourceSecondField.data()),
-                                       sourceSecondField.size() * 2)) writeFail = true;
-                if (!targetVideo.write(reinterpret_cast<const char *>(sourceFirstField.data()),
-                                       sourceFirstField.size() * 2)) writeFail = true;
+                if (!targetVideo.writeField(sourceSecondField)) writeFail = true;
+                if (!targetVideo.writeField(sourceFirstField)) writeFail = true;
             }
 
             // Save the audio (not field order dependent)
@@ -757,10 +751,8 @@ bool DiscMapper::saveDiscMap(DiscMap &discMap)
             }
         } else {
             // Padded frame - write two dummy fields
-            if (!targetVideo.write(reinterpret_cast<const char *>(missingFieldData.data()),
-                                   missingFieldData.size() * 2)) writeFail = true;
-            if (!targetVideo.write(reinterpret_cast<const char *>(missingFieldData.data()),
-                                   missingFieldData.size() * 2)) writeFail = true;
+            if (!targetVideo.writeField(missingFieldData)) writeFail = true;
+            if (!targetVideo.writeField(missingFieldData)) writeFail = true;
 
             if (!noAudio) {
                 // Write the padded audio
