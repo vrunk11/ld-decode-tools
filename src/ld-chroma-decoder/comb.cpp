@@ -258,52 +258,6 @@ inline bool Comb::FrameBuffer::getLinePhase(qint32 lineNumber) const
     return isEvenLine ? isPositivePhaseOnEvenLines : !isPositivePhaseOnEvenLines;
 }
 
-// The NTSC phase ID (1-4) of a field, measured from its colour burst, for
-// sources whose metadata does not give it (CVBS captures carry no field
-// metadata). Fields 1 and 4 have the burst rising at the leading edge on even
-// lines, fields 2 and 3 on odd lines; with the field order that gives the ID.
-static qint32 measureFieldPhaseID(const SourceField &sourceField, const LdDecodeMetaData::VideoParameters &videoParameters)
-{
-    const qint32 width = videoParameters.fieldWidth;
-    const qint32 height = sourceField.data.size() / width;
-
-    // Burst phasor against the 4fsc sample grid, flipping the odd lines (the
-    // burst inverts every line, 227.5 cycles) so they all add up
-    double re = 0.0;
-    double im = 0.0;
-    for (qint32 fieldLine = 20; fieldLine < height - 10; fieldLine++) {
-        const quint16 *line = sourceField.data.constData() + (fieldLine * width);
-
-        double mean = 0.0;
-        for (qint32 x = videoParameters.colourBurstStart; x < videoParameters.colourBurstEnd; x++) mean += line[x];
-        mean /= videoParameters.colourBurstEnd - videoParameters.colourBurstStart;
-
-        const double sign = (fieldLine % 2 == 0) ? 1.0 : -1.0;
-        for (qint32 x = videoParameters.colourBurstStart; x < videoParameters.colourBurstEnd; x++) {
-            // cos and sin of x * 90 degrees
-            static constexpr double COS[4] = {1.0, 0.0, -1.0, 0.0};
-            static constexpr double SIN[4] = {0.0, 1.0, 0.0, -1.0};
-            const double value = sign * (line[x] - mean);
-            re += value * COS[x % 4];
-            im -= value * SIN[x % 4];
-        }
-    }
-
-    // Measured on ld-decode output: about -41 degrees for fields 1 and 4,
-    // +139 degrees for fields 2 and 3. Split the plane at -45 / +135 degrees.
-    const bool risingOnEvenLines = (re - im) > 0.0;
-    if (sourceField.field.isFirstField) return risingOnEvenLines ? 1 : 3;
-    return risingOnEvenLines ? 4 : 2;
-}
-
-// The phase ID of a field: from the metadata, or measured when it has none
-static qint32 fieldPhaseID(const SourceField &sourceField, const LdDecodeMetaData::VideoParameters &videoParameters)
-{
-    const qint32 phaseID = sourceField.field.fieldPhaseID;
-    if ((phaseID >= 1 && phaseID <= 4) || videoParameters.system != NTSC) return phaseID;
-    return measureFieldPhaseID(sourceField, videoParameters);
-}
-
 // Interlace two source fields into the framebuffer.
 void Comb::FrameBuffer::loadFields(const SourceField &firstField, const SourceField &secondField)
 {
@@ -317,8 +271,8 @@ void Comb::FrameBuffer::loadFields(const SourceField &firstField, const SourceFi
     }
 
     // Set the phase IDs for the frame
-    firstFieldPhaseID = fieldPhaseID(firstField, videoParameters);
-    secondFieldPhaseID = fieldPhaseID(secondField, videoParameters);
+    firstFieldPhaseID = firstField.field.fieldPhaseID;
+    secondFieldPhaseID = secondField.field.fieldPhaseID;
 
     // Clear clpbuffer
     for (qint32 buf = 0; buf < 3; buf++) {

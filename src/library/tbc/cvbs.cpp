@@ -20,6 +20,7 @@
 #include <QVariant>
 #include <QDebug>
 #include <algorithm>
+#include <cmath>
 
 namespace Cvbs {
 
@@ -554,6 +555,168 @@ void fieldsToFrame(const quint16 *field1, const quint16 *field2, const Geometry 
     for (qint32 i = 0; i < field2Samples; i++) destination[i] = converter.fromTbc(field2[i]);
     destination += field2Samples;
     if (geometry.extraSamples == 2) bridge(destination, destination[-1], destination[-1]);
+}
+
+// Field phase IDs ----------------------------------------------------------------------------------------------------
+
+namespace {
+
+// Lines of each field read to measure its phase: the first 8 lines are vertical
+// sync, and PAL needs lines up to 19
+constexpr qint32 PHASE_LINES = 40;
+// 10 subcarrier cycles of burst are demodulated
+constexpr qint32 BURST_SAMPLES = 40;
+// Below this amplitude (10-bit units) the burst is considered absent
+constexpr double MIN_BURST_AMPLITUDE = 20.0;
+
+// Measures colour burst phase on lines of a frame, following decode-orc's
+// colour frame phase observer, which mirrors ld-decode's own measurements
+class PhaseMeter
+{
+public:
+    PhaseMeter(VideoSystem _system, double _blanking)
+        : system(_system), geometry(Cvbs::geometry(_system)), blanking(_blanking),
+          burstStart(_system == PAL ? 98 : 72)
+    {
+    }
+
+    // The phase ID of a field whose first PHASE_LINES lines are in region, whose
+    // first line is frame line firstFrameLine. isLdFirst: the field ld-decode
+    // calls first (the first field of each stored frame).
+    qint32 phaseID(const double *region, qint32 firstFrameLine, bool isLdFirst) const
+    {
+        return system == NTSC ? ntscPhaseID(region, firstFrameLine, isLdFirst)
+                              : palPhaseID(region, firstFrameLine, isLdFirst);
+    }
+
+private:
+    VideoSystem system;
+    Cvbs::Geometry geometry;
+    double blanking;
+    qint32 burstStart;
+
+    // Demodulate the burst of a field line at the 4fsc sample grid of the frame
+    // buffer: the amplitude, and Q, which is positive for a rising burst
+    void burst(const double *region, qint32 firstFrameLine, qint32 line, double &amplitude, double &q) const
+    {
+        const qint64 offset = geometry.lineOffset(firstFrameLine + line) + burstStart;
+        const double *samples = region + static_cast<qint64>(line) * geometry.lineWidth + burstStart;
+
+        double i = 0.0;
+        q = 0.0;
+        for (qint32 n = 0; n < BURST_SAMPLES; n++) {
+            const double ac = samples[n] - blanking;
+            switch ((offset + n) % 4) {
+            case 0: i += ac; break;
+            case 1: q += ac; break;
+            case 2: i -= ac; break;
+            default: q -= ac; break;
+            }
+        }
+        amplitude = std::sqrt(i * i + q * q);
+    }
+
+    // NTSC: the majority of rising bursts on even lines, with the field order,
+    // gives the phase ID (SMPTE 244M / ld-decode FieldNTSC)
+    qint32 ntscPhaseID(const double *region, qint32 firstFrameLine, bool isLdFirst) const
+    {
+        qint32 rising = 0;
+        qint32 total = 0;
+        for (qint32 line = 8; line < PHASE_LINES; line += 2) {
+            double amplitude, q;
+            burst(region, firstFrameLine, line, amplitude, q);
+            if (amplitude >= MIN_BURST_AMPLITUDE) {
+                if (q > 0.0) rising++;
+                total++;
+            }
+        }
+        if (total == 0) return -1;
+
+        bool field14 = rising > total / 2;
+        // The second field starts 263 * 910 samples into the frame: 2 modulo 4,
+        // which rotates the demodulation by 180 degrees
+        if ((static_cast<qint64>(firstFrameLine) * geometry.lineWidth) % 4 == 2) field14 = !field14;
+
+        if (isLdFirst && field14) return 1;
+        if (!isLdFirst && !field14) return 2;
+        if (isLdFirst && !field14) return 3;
+        return 4;
+    }
+
+    // PAL and PAL-M: burst missing on field line 6 (EBU Tech. 3280-E) gives the
+    // position among 4 fields, and rising bursts on lines 7, 11, 15 and 19
+    // tell the first four fields from the second four (ld-decode FieldPAL)
+    qint32 palPhaseID(const double *region, qint32 firstFrameLine, bool isLdFirst) const
+    {
+        double amplitude, q;
+        burst(region, firstFrameLine, 19, amplitude, q);
+        const double reference = amplitude;
+        if (reference < MIN_BURST_AMPLITUDE) return -1;
+
+        burst(region, firstFrameLine, 5, amplitude, q);
+        bool hasBurst;
+        if (amplitude >= reference * 0.8) hasBurst = true;
+        else if (amplitude < reference * 0.2) hasBurst = false;
+        else return -1;
+
+        qint32 m4;
+        if (isLdFirst) m4 = hasBurst ? 3 : 1;
+        else m4 = hasBurst ? 2 : 4;
+
+        qint32 rising = 0;
+        qint32 total = 0;
+        for (qint32 line: {6, 10, 14, 18}) {
+            burst(region, firstFrameLine, line, amplitude, q);
+            if (amplitude >= MIN_BURST_AMPLITUDE) {
+                if (q > 0.0) rising++;
+                total++;
+            }
+        }
+        if (total == 0 || rising * 2 == total) return -1;
+
+        bool isFirstFour = rising * 2 > total;
+        if (m4 == 2) isFirstFour = !isFirstFour;
+        return m4 + (isFirstFour ? 0 : 4);
+    }
+};
+
+} // namespace
+
+bool measureFieldPhaseIDs(const QString &dataFileName, VideoSystem system, SampleEncoding encoding, bool isChroma,
+                          qint32 numberOfFrames, const std::function<void(qint32, qint32)> &setPhaseID)
+{
+    QFile file(dataFileName);
+    if (!file.open(QIODevice::ReadOnly)) {
+        qWarning().noquote() << "Cannot read the colour burst from" << dataFileName;
+        return false;
+    }
+
+    const Geometry frame = geometry(system);
+    const SampleConverter converter(encoding, system);
+    const double zero = isChroma ? 512.0 : standardLevels(system).blanking;
+    const PhaseMeter meter(system, zero);
+    const qint64 frameBytes = frame.frameSamples * 2;
+    const qint32 regionSamples = PHASE_LINES * frame.lineWidth;
+
+    QVector<qint16> raw(regionSamples);
+    QVector<double> region(regionSamples);
+
+    for (qint32 frameNumber = 0; frameNumber < numberOfFrames; frameNumber++) {
+        for (qint32 field = 0; field < 2; field++) {
+            const qint32 firstFrameLine = field == 0 ? 0 : frame.field1Lines;
+            const qint64 position = frameBytes * frameNumber + frame.lineOffset(firstFrameLine) * 2;
+            if (!file.seek(position)
+                || file.read(reinterpret_cast<char *>(raw.data()), regionSamples * 2) != regionSamples * 2) {
+                return false;
+            }
+
+            // The 10-bit domain of the encoding, as decode-orc measures in
+            for (qint32 i = 0; i < regionSamples; i++) region[i] = converter.toTbc(raw[i]) / 64.0;
+
+            setPhaseID(frameNumber * 2 + field, meter.phaseID(region.constData(), firstFrameLine, field == 0));
+        }
+    }
+    return true;
 }
 
 // Dropout extension --------------------------------------------------------------------------------------------------

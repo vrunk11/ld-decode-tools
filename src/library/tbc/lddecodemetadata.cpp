@@ -898,6 +898,21 @@ bool LdDecodeMetaData::readCvbsCore(QString fileName)
                            fields[fieldIndex].dropOuts = dropOuts;
                        });
 
+    // Field phase IDs are not in the metadata: measure them from the colour
+    // burst, as decode-orc does (on the chroma file of a Y/C pair)
+    const bool isYc = Cvbs::channel(dataFileName) != Cvbs::Channel::Composite;
+    const QString burstFileName = isYc ? Cvbs::dataFileName(Cvbs::baseName(dataFileName), Cvbs::Channel::Chroma)
+                                       : dataFileName;
+    if (QFileInfo::exists(burstFileName)) {
+        for (Field &field: fields) field.fieldPhaseID = -1;
+        if (!Cvbs::measureFieldPhaseIDs(burstFileName, fileMetadata.system, fileMetadata.sampleEncoding, isYc,
+                                        numberOfFrames, [this](qint32 fieldIndex, qint32 phaseID) {
+                                            fields[fieldIndex].fieldPhaseID = phaseID;
+                                        })) {
+            qWarning().noquote() << "Could not measure the field phases of" << burstFileName;
+        }
+    }
+
     initialiseVideoSystemParameters();
     videoParameters.sampleRate = 4.0 * videoParameters.fSC;
     generatePcmAudioMap();

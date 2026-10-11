@@ -172,6 +172,18 @@ void frameToFields(const qint16 *frame, const Geometry &geometry, const SampleCo
 void fieldsToFrame(const quint16 *field1, const quint16 *field2, const Geometry &geometry,
                    const SampleConverter &converter, qint16 *frame);
 
+// Field phase IDs -----------------------------------------------------------------------------------------------------
+
+// CVBS captures carry no per-field metadata, so the phase ID of each field (1-4
+// for NTSC, 1-8 for PAL and PAL-M: its position in the colour field sequence)
+// is measured from the colour burst in the samples, as decode-orc does. The
+// burst is read from the first lines of each field, which is a small part of
+// the file. setPhaseID is called for each 0-based field index with the phase
+// ID, or -1 where the burst cannot be measured. isChroma selects a .cvbsc
+// file, whose zero level is 512. Returns false if the file cannot be read.
+bool measureFieldPhaseIDs(const QString &dataFileName, VideoSystem system, SampleEncoding encoding, bool isChroma,
+                          qint32 numberOfFrames, const std::function<void(qint32, qint32)> &setPhaseID);
+
 // Dropout extension (<base>.dropouts.meta) ---------------------------------------------------------------------------
 
 // Read the per-frame dropout runs as per-field TBC dropouts (1-based field
