@@ -24,6 +24,7 @@
 
 #include "discmap.h"
 #include "tbc/logging.h"
+#include "cvbsaudio.h"
 
 DiscMap::DiscMap(const QFileInfo &metadataFileInfo, const bool reverseFieldOrder,
                  const bool noStrict)
@@ -111,6 +112,17 @@ DiscMap::DiscMap(const QFileInfo &metadataFileInfo, const bool reverseFieldOrder
         // L/R channels = 1472 * 2 =
         m_audioFieldByteLength = 2944;
         m_audioFieldSampleLength = 736;
+    }
+
+    // A CVBS capture's audio has the rate of its WAV file, not 44.1 kHz: a field's
+    // worth of it is the rate over the field rate (50 Hz, or 60000/1001 Hz)
+    if (ldDecodeMetaData->isCvbs()) {
+        CvbsAudio::WavInfo wavInfo;
+        const QString wavFileName = CvbsAudio::wavFileName(Cvbs::baseName(Cvbs::dataFileForMetadata(m_metadataFileInfo.filePath())), 0);
+        if (QFileInfo::exists(wavFileName) && CvbsAudio::readWavInfo(wavFileName, wavInfo)) {
+            m_audioFieldSampleLength = m_isDiscPal ? qRound(wavInfo.sampleRate / 50.0)
+                                                   : qRound(wavInfo.sampleRate * 1001.0 / 60000.0);
+        }
     }
 
     // Get the disc type (CAV/CLV)

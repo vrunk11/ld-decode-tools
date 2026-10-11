@@ -13,6 +13,7 @@
 #include "lddecodemetadata.h"
 
 #include "cvbs.h"
+#include "cvbsaudio.h"
 #include "jsonio.h"
 #include "sqliteio.h"
 
@@ -910,6 +911,19 @@ bool LdDecodeMetaData::readCvbsCore(QString fileName)
                                             fields[fieldIndex].fieldPhaseID = phaseID;
                                         })) {
             qWarning().noquote() << "Could not measure the field phases of" << burstFileName;
+        }
+    }
+
+    // The audio of the capture (one channel pair): give each field its share of it,
+    // as the field metadata of a TBC capture does, so tools can find the audio of a field
+    CvbsAudio::WavInfo wavInfo;
+    const QString wavFileName = CvbsAudio::wavFileName(Cvbs::baseName(dataFileName), 0);
+    if (QFileInfo::exists(wavFileName) && CvbsAudio::readWavInfo(wavFileName, wavInfo)) {
+        const qint64 numberOfFields = fields.size();
+        for (qint64 i = 0; i < numberOfFields; i++) {
+            fields[static_cast<qint32>(i)].audioSamples = static_cast<qint32>(
+                (wavInfo.numberOfSamples * (i + 1) + numberOfFields / 2) / numberOfFields
+                - (wavInfo.numberOfSamples * i + numberOfFields / 2) / numberOfFields);
         }
     }
 

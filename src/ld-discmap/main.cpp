@@ -30,6 +30,7 @@
 
 #include "tbc/logging.h"
 #include "tbc/metadataoptions.h"
+#include "cvbsaudio.h"
 #include "discmapper.h"
 
 int main(int argc, char *argv[])
@@ -142,9 +143,11 @@ int main(int argc, char *argv[])
         }
     }
 
-    // CVBS captures carry their audio as WAV channel pairs, which are not mapped yet
-    if (!noAudio && Cvbs::isDataFileName(inputFilename)) {
-        qInfo() << "The input is CVBS: its audio (WAV channel pairs) is not mapped, as with --no-audio";
+    // A CVBS capture carries its audio as <name>_audio_0.wav, not <name>.pcm
+    if (!noAudio && Cvbs::isDataFileName(inputFilename)
+        && !QFileInfo::exists(CvbsAudio::wavFileName(Cvbs::baseName(inputFilename), 0))) {
+        qInfo() << "The input is CVBS without audio:" << CvbsAudio::wavFileName(Cvbs::baseName(inputFilename), 0)
+                << "does not exist, as with --no-audio";
         noAudio = true;
     }
 

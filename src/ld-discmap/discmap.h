@@ -78,6 +78,8 @@ public:
     VideoSystem getVideoSystem();
     Cvbs::SampleEncoding getSampleEncoding() const;
     qint32 getApproximateAudioFieldLength();
+    // The audio samples (stereo pairs) in a field, for the audio of padded frames
+    qint32 getAudioFieldSampleLength() const { return m_audioFieldSampleLength; }
 
     qint32 getFirstFieldNumber(qint32 frameNumber) const;
     qint32 getSecondFieldNumber(qint32 frameNumber) const;

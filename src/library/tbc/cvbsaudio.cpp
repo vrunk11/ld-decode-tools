@@ -225,4 +225,74 @@ qint64 wavToPcm(const QString &wavFileName, const QString &pcmFileName)
     return info.numberOfSamples;
 }
 
+bool WavReader::open(const QString &wavFileName)
+{
+    file.setFileName(wavFileName);
+    if (!file.open(QIODevice::ReadOnly)) {
+        qCritical().noquote() << "Cannot open the audio file" << wavFileName;
+        return false;
+    }
+    return parseWav(file, wavInfo, dataOffset);
+}
+
+QByteArray WavReader::read(qint64 start, qint64 count)
+{
+    const qint32 bytesPerSample = wavInfo.bits / 8 * 2;
+    const qint64 available = std::clamp<qint64>(wavInfo.numberOfSamples - start, 0, count);
+
+    QByteArray raw;
+    if (available > 0 && file.seek(dataOffset + start * bytesPerSample)) raw = file.read(available * bytesPerSample);
+    const qint64 got = raw.size() / bytesPerSample;
+
+    // 24-bit samples are used as they are, 16-bit ones widened; the rest is silence
+    QByteArray samples(static_cast<qint32>(count * 6), '\0');
+    if (wavInfo.bits == 24) {
+        std::copy(raw.constBegin(), raw.constBegin() + got * 6, samples.begin());
+    } else {
+        for (qint64 i = 0; i < got * 2; i++) {
+            samples[static_cast<qint32>(i * 3 + 1)] = raw[static_cast<qint32>(i * 2)];
+            samples[static_cast<qint32>(i * 3 + 2)] = raw[static_cast<qint32>(i * 2 + 1)];
+        }
+    }
+    return samples;
+}
+
+WavWriter::~WavWriter()
+{
+    if (file.isOpen()) close();
+}
+
+bool WavWriter::open(const QString &wavFileName, quint32 _sampleRate)
+{
+    sampleRate = _sampleRate;
+    samplesWritten = 0;
+    file.setFileName(wavFileName);
+    if (!file.open(QIODevice::WriteOnly)) {
+        qCritical().noquote() << "Cannot create the audio file" << wavFileName;
+        return false;
+    }
+    // The sizes are filled in by close()
+    return file.write(wavHeader(sampleRate, 0)) == 44;
+}
+
+bool WavWriter::write(const QByteArray &samples)
+{
+    if (file.write(samples) != samples.size()) return false;
+    samplesWritten += samples.size() / 6;
+    return true;
+}
+
+bool WavWriter::close()
+{
+    if (!file.isOpen()) return true;
+    if (samplesWritten * 6 > 0xffffffffLL - 36) {
+        qCritical().noquote() << "The audio is too long for a WAV file";
+        file.close();
+        return false;
+    }
+    const bool ok = file.seek(0) && file.write(wavHeader(sampleRate, static_cast<quint32>(samplesWritten * 6))) == 44;
+    file.close();
+    return ok;
+}
+
 } // namespace CvbsAudio

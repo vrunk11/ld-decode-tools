@@ -32,7 +32,7 @@ ld-discmap [options] <input.tbc> <output.tbc>
 - `-m, --maponly`: Only perform mapping - No output TBC file required
 - `-s, --nostrict`: No strict checking on pulldown frames
 - `-u, --delete-unmappable-frames`: Delete unmappable frames
-- `-n, --no-audio`: Do not process analogue audio
+- `-n, --no-audio`: Do not process analogue audio (for a CVBS capture this is the `capture_audio_0.wav` file, which is mapped like the `.pcm` of a TBC capture, and skipped if it does not exist)
 
 #### Verbosity
 - `-q, --quiet`: Suppress info and warning messages

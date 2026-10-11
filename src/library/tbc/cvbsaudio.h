@@ -11,6 +11,8 @@
 #ifndef CVBSAUDIO_H
 #define CVBSAUDIO_H
 
+#include <QFile>
+#include <QByteArray>
 #include <QString>
 
 // Audio of a TBC capture (<base>.pcm: 16-bit signed little-endian stereo, 44.1 kHz
@@ -47,6 +49,45 @@ bool readWavInfo(const QString &wavFileName, WavInfo &info);
 // Copy a WAV to 16-bit PCM, returning the number of stereo samples written, or
 // -1, having logged why, on failure.
 qint64 wavToPcm(const QString &wavFileName, const QString &pcmFileName);
+
+// Reads ranges of stereo samples from a WAV as 24-bit samples (6 bytes each), for
+// copying audio around without losing any of its 24 bits. A 16-bit WAV is widened.
+class WavReader
+{
+public:
+    // Returns false, having logged why, if the file cannot be read
+    bool open(const QString &wavFileName);
+    const WavInfo &info() const { return wavInfo; }
+
+    // count samples from sample start; any beyond the end of the file are silence
+    QByteArray read(qint64 start, qint64 count);
+
+private:
+    QFile file;
+    WavInfo wavInfo;
+    qint64 dataOffset = 0;
+};
+
+// Writes a 24-bit stereo WAV a piece at a time, filling in the sizes at the end
+class WavWriter
+{
+public:
+    ~WavWriter();
+
+    // Returns false, having logged why, if the file cannot be created
+    bool open(const QString &wavFileName, quint32 sampleRate);
+    // Samples as 24-bit stereo, 6 bytes each
+    bool write(const QByteArray &samples);
+    // Fill in the sizes and close; returns false if that failed
+    bool close();
+
+    qint64 numberOfSamples() const { return samplesWritten; }
+
+private:
+    QFile file;
+    quint32 sampleRate = 0;
+    qint64 samplesWritten = 0;
+};
 
 } // namespace CvbsAudio
 

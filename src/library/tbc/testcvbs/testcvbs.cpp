@@ -170,6 +170,15 @@ static void testDropouts(const QString &directory)
     }
 }
 
+// count bytes of a WAV file starting at offset within its sample data
+static QByteArray wavFileHeadOf(const QString &fileName, qint64 offset, qint32 count)
+{
+    QFile file(fileName);
+    CHECK(file.open(QIODevice::ReadOnly));
+    CHECK(file.seek(44 + offset));
+    return file.read(count);
+}
+
 static void testAudio(const QString &directory)
 {
     std::cerr << "Testing the audio copy\n";
@@ -203,6 +212,30 @@ static void testAudio(const QString &directory)
     CHECK(back.open(QIODevice::ReadOnly) && back.size() == 2400);
     const QByteArray data = back.readAll();
     CHECK(memcmp(data.constData(), samples.constData() + 200, 2400) == 0);
+
+    // The reader gives 24-bit samples from any position, and silence past the end
+    CvbsAudio::WavReader reader;
+    CHECK(reader.open(wavFileName));
+    CHECK(reader.info().numberOfSamples == 600);
+    const QByteArray piece = reader.read(590, 20);
+    CHECK(piece.size() == 120);
+    CHECK(piece.left(60) == QByteArray(wavFileHeadOf(wavFileName, 590 * 6, 60)));
+    CHECK(piece.mid(60) == QByteArray(60, '\0'));
+
+    // The writer fills in the sizes when it closes
+    CvbsAudio::WavWriter writer;
+    const QString copyFileName = directory + "/copy.wav";
+    CHECK(writer.open(copyFileName, 48000));
+    CHECK(writer.write(reader.read(0, 300)));
+    CHECK(writer.write(reader.read(300, 300)));
+    CHECK(writer.close() && writer.numberOfSamples() == 600);
+    CvbsAudio::WavInfo copyInfo;
+    CHECK(CvbsAudio::readWavInfo(copyFileName, copyInfo));
+    CHECK(copyInfo.sampleRate == 48000 && copyInfo.numberOfSamples == 600);
+    QFile original(wavFileName);
+    QFile copy(copyFileName);
+    CHECK(original.open(QIODevice::ReadOnly) && copy.open(QIODevice::ReadOnly));
+    CHECK(original.readAll().mid(44) == copy.readAll().mid(44));
 }
 
 static void testFileMetadata(const QString &directory)
