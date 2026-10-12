@@ -114,19 +114,26 @@ VitsRawMeasurements measureVitsRaw(const SourceVideo::Data &fieldLines, qint32 f
     return raw;
 }
 
-void applyVitsLevels(const VitsRawMeasurements &raw, const LdDecodeMetaData::VideoParameters &videoParameters,
-                     LdDecodeMetaData::Field &fieldMetadata)
+double vitsIreSpan(VideoSystem system)
 {
-    // The measurements are in sample values; the SNR is of the signal between the levels (100 IRE)
-    // over the noise, as in IRE
-    const double ireScale = (static_cast<double>(videoParameters.white16bIre) - static_cast<double>(videoParameters.black16bIre)) / 100.0;
-    const double black = static_cast<double>(videoParameters.black16bIre);
+    return system == PAL ? 100.0 : 92.5;
+}
 
-    // Only pick the white slice if it has a mean value between 90 and 110 IRE
+void applyVitsLevels(const VitsRawMeasurements &raw, const LdDecodeMetaData::VideoParameters &videoParameters,
+                     LdDecodeMetaData::Field &fieldMetadata, double blackToWhiteIre)
+{
+    // The measurements are in sample values. The white slice is picked for its mean being 90 to 110 on
+    // a scale of 100 from the black level to the white level
+    const double span = static_cast<double>(videoParameters.white16bIre) - static_cast<double>(videoParameters.black16bIre);
+    const double black = static_cast<double>(videoParameters.black16bIre);
+    const double pickScale = span / 100.0;
+    // and the SNR is of 100 IRE over the noise in IRE
+    const double ireScale = span / blackToWhiteIre;
+
     double wSNR = 0;
     for (const VitsRawMeasurements::WhiteSlice &slice: raw.white) {
         if (std::isnan(slice.mean)) continue;
-        const double meanIre = (slice.mean - black) / ireScale;
+        const double meanIre = (slice.mean - black) / pickScale;
         if (meanIre >= 90 && meanIre <= 110) {
             wSNR = 20.0 * log10(100.0 / (slice.std / ireScale));
             break;

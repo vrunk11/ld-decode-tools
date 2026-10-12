@@ -1780,7 +1780,7 @@ void TbcSource::analyseLiveFrame(qint32 frameNumber)
 
         LdDecodeMetaData::Field field = ldDecodeMetaData.getField(fieldNumber);
         decodeFieldVbi(lines, 1, videoParameters, field);
-        computeVitsMetrics(lines, 1, videoParameters, field);
+        applyVitsLevels(measureVitsRaw(lines, 1, videoParameters), videoParameters, field, vitsIreSpan(videoParameters.system));
         field.vitsMetrics.inUse = true;
 
         ldDecodeMetaData.updateFieldVbi(field.vbi, fieldNumber);

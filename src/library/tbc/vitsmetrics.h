@@ -41,9 +41,18 @@ VitsRawMeasurements measureVitsRaw(const SourceVideo::Data &fieldLines, qint32 f
                                    const LdDecodeMetaData::VideoParameters &videoParameters);
 
 // Work out the white SNR and black PSNR from the measurements, for the levels in videoParameters,
-// and put them in fieldMetadata.vitsMetrics (0 for one that could not be measured)
+// and put them in fieldMetadata.vitsMetrics (0 for one that could not be measured).
+//
+// blackToWhiteIre is how many IRE there are from the black level to the white level. ld-process-vits
+// takes it to be 100, which is so for PAL; for NTSC the black level is at 7.5 IRE (the setup) and
+// there are 92.5, which is what ld-decode measures with and gives SNRs 0.68 dB higher (see
+// vitsIreSpan).
 void applyVitsLevels(const VitsRawMeasurements &raw, const LdDecodeMetaData::VideoParameters &videoParameters,
-                     LdDecodeMetaData::Field &fieldMetadata);
+                     LdDecodeMetaData::Field &fieldMetadata, double blackToWhiteIre = 100.0);
+
+// The IRE from the black level to the white level of a video system: 100 for PAL, 92.5 for the
+// systems with a 7.5 IRE setup
+double vitsIreSpan(VideoSystem system);
 
 // Measure the white SNR and black PSNR of a field from its test signal lines, as ld-process-vits
 // does, and put them in fieldMetadata.vitsMetrics

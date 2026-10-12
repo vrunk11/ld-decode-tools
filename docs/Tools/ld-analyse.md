@@ -172,7 +172,7 @@ The settings are remembered between sessions, except that the Filters button alw
 
 The filters only change the picture shown: the line scope, vectorscope and the other analysis tools still read the TBC data. They are available when ld-analyse was built with libavfilter (build.bat does, unless `USE_FFMPEG=0`); otherwise the menu entry is greyed out.
 
-The SNR graphs of a file use the SNR in its metadata. Above each graph a line says so, with a Measure from the video check box: ticked, the SNR of every frame is measured from the video itself on a thread of its own (the line shows how far it has got), which is for a capture whose metadata has none or is not to be trusted. Adjusting the black and white levels in Window > Video parameters works the SNR out again. Unticked, the graph goes back to the metadata.
+The SNR graphs of a file use the SNR in its metadata. Above each graph a line says so, with a Measure from the video check box: ticked, the SNR of every frame is measured from the video itself on a thread of its own (the line shows how far it has got), which is for a capture whose metadata has none or is not to be trusted. Adjusting the black and white levels in Window > Video parameters works the SNR out again. Unticked, the graph goes back to the metadata. For NTSC (and PAL-M) the black level is at 7.5 IRE, so the signal from black to white is 92.5 IRE, not 100: ld-analyse measures with that, as ld-decode does, so what it measures agrees with the metadata to within about 0.05 dB. ld-process-vits takes it to be 100, and so gives NTSC SNRs about 0.7 dB lower.
 
 # Live input from a pipe
 
