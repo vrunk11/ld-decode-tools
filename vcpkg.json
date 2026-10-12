@@ -14,7 +14,7 @@
   ],
   "features": {
     "ffmpeg": {
-      "description": "Video filters in ld-analyse (libavfilter): deinterlacing, scaling... Optional; build.bat enables it with USE_FFMPEG=1",
+      "description": "Video filters in ld-analyse (libavfilter): deinterlacing, scaling... Optional; build.bat builds it unless USE_FFMPEG=0",
       "dependencies": [
         {
           "name": "ffmpeg",

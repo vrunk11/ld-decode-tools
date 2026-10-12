@@ -22,6 +22,9 @@ rem   VCPKG_TARGET_TRIPLET  vcpkg triplet (default: x64-windows with MSVC,
 rem                         x64-mingw-dynamic with MinGW)
 rem   USE_SYSTEM_QT=1       do not build Qt with vcpkg; point CMake at an
 rem                         installed Qt with -DCMAKE_PREFIX_PATH=...
+rem   USE_FFMPEG=0          do not build ffmpeg (libavfilter): ld-analyse is then
+rem                         built without video filters. Building ffmpeg adds a
+rem                         while to the first run
 rem   NATIVE=0              portable build: no LTO / native CPU tuning
 rem                         (on by default here, never in CI)
 rem
@@ -120,8 +123,8 @@ if not defined USE_MSVC set "HOST_TRIPLET_ARG=-DVCPKG_HOST_TRIPLET=%TRIPLET%"
 
 set "FEATURES_ARG=-DVCPKG_MANIFEST_FEATURES=qt"
 if "%USE_SYSTEM_QT%"=="1" set "FEATURES_ARG="
-rem USE_FFMPEG=1 adds libavfilter (video filters in ld-analyse); building it takes a while
-if "%USE_FFMPEG%"=="1" (
+rem libavfilter (video filters in ld-analyse) is built too; USE_FFMPEG=0 leaves it out
+if not "%USE_FFMPEG%"=="0" (
     if defined FEATURES_ARG (set "FEATURES_ARG=-DVCPKG_MANIFEST_FEATURES=qt;ffmpeg") else (set "FEATURES_ARG=-DVCPKG_MANIFEST_FEATURES=ffmpeg")
 )
 
