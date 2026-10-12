@@ -137,6 +137,8 @@ TbcSource::RenderSettings TbcSource::getRenderSettings()
     settings.stretchFieldOn = stretchFieldOn;
     settings.combine = combine;
     settings.viewMode = viewMode;
+    settings.isLive = isLive;
+    settings.streamInput = streamInput;
     settings.sourceMode = sourceMode;
     return settings;
 }
@@ -144,8 +146,25 @@ TbcSource::RenderSettings TbcSource::getRenderSettings()
 // Open the same files as another TbcSource, to render images beside it. This reads the
 // metadata again, so it is slow, and is meant to be called once, from the thread that
 // will do the rendering.
-bool TbcSource::openForRendering(const RenderSettings &settings)
+bool TbcSource::openForRendering(const RenderSettings &settings, const TbcSource *liveParent)
 {
+    if (settings.isLive) {
+        // A stream: made-up metadata as the source has, and the same stream to read
+        if (!liveParent) return false;
+        streamInput = settings.streamInput;
+        ldDecodeMetaData.initialiseDefault(streamInput.system, streamInput.blackLevel, streamInput.whiteLevel,
+                                           streamInput.isSubcarrierLocked);
+        ldDecodeMetaData.setVideoParameters(settings.videoParameters);
+        if (!sourceVideo.shareStreamWith(liveParent->sourceVideo)) return false;
+        isLive = true;
+        currentSourceFilename = settings.sourceFilename;
+        currentChromaFilename.clear();
+        currentMetadataFilename.clear();
+        sourceReady = true;
+        applyRenderSettings(settings);
+        return true;
+    }
+
     if (!ldDecodeMetaData.read(settings.metadataFilename)) return false;
     ldDecodeMetaData.setVideoParameters(settings.videoParameters);
 
@@ -317,6 +336,9 @@ void TbcSource::load(qint32 frameNumber, qint32 fieldNumber)
 
     // If there's no source, or we've already loaded that frame, nothing to do
     if (!sourceReady || loadedFrameNumber == frameNumber) return;
+
+    // A stream has fields made up for the frames it holds
+    if (isLive) ldDecodeMetaData.ensureFields(2 * frameNumber);
     loadedFrameNumber = frameNumber;
     inputFieldsValid = false;
     invalidateImageCache();
@@ -449,6 +471,7 @@ QImage TbcSource::getImage()
 qint32 TbcSource::getNumberOfFrames()
 {
     if (!sourceReady) return 0;
+    if (isLive) return liveFrames;
     return ldDecodeMetaData.getNumberOfFrames();
 }
 
@@ -456,6 +479,7 @@ qint32 TbcSource::getNumberOfFrames()
 qint32 TbcSource::getNumberOfFields()
 {
     if (!sourceReady) return 0;
+    if (isLive) return 2 * liveFrames;
     return ldDecodeMetaData.getNumberOfFields();
 }
 
@@ -878,6 +902,10 @@ void TbcSource::resetState()
     reverseFoOn = false;
     sourceReady = false;
     sourceMode = ONE_SOURCE;
+    isLive = false;
+    liveFrames = 0;
+    liveFirstFrame = 1;
+    liveEnded = false;
     currentChromaFilename.clear();
     prerenderedPosition = -1;
 
@@ -1489,4 +1517,121 @@ void TbcSource::finishBackgroundSave()
 {
     // Send a finished saving message to the main window
     emit finishedSaving(future.result());
+}
+
+// Video from a stream -----------------------------------------------------------------------------------------------
+
+// Read video from standard input or a named pipe. The stream may never end, so the
+// number of frames is whatever has arrived (see updateLive), and only the last few
+// frames are still there to be shown again.
+void TbcSource::loadStream(const StreamInput &input)
+{
+    resetState();
+    streamInput = input;
+    isLive = true;
+
+    disconnect(&watcher, &QFutureWatcher<bool>::finished, nullptr, nullptr);
+    connect(&watcher, &QFutureWatcher<bool>::finished, this, &TbcSource::finishBackgroundLoad);
+#if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
+    future = QtConcurrent::run(this, &TbcSource::startBackgroundStream);
+#else
+    future = QtConcurrent::run(&TbcSource::startBackgroundStream, this);
+#endif
+    watcher.setFuture(future);
+}
+
+bool TbcSource::startBackgroundStream()
+{
+    emit busy("Opening the input stream...");
+
+    // No metadata: the video system is said, the levels have defaults, and the fields
+    // are made up as the stream turns out to be long enough
+    ldDecodeMetaData.initialiseDefault(streamInput.system, streamInput.blackLevel, streamInput.whiteLevel,
+                                       streamInput.isSubcarrierLocked);
+    const LdDecodeMetaData::VideoParameters videoParameters = ldDecodeMetaData.getVideoParameters();
+
+    StreamReader::Options options;
+    options.cvbs = streamInput.cvbs;
+    options.system = streamInput.system;
+    options.encoding = streamInput.encoding;
+    options.bufferFrames = streamInput.bufferFrames;
+    sourceVideo.setStreamOptions(options);
+    if (!sourceVideo.open("-", videoParameters.fieldWidth * videoParameters.fieldHeight)) {
+        lastIOError = "Could not open the input stream";
+        return false;
+    }
+
+    // The same decoder settings as for a file
+    if (videoParameters.system == PAL || videoParameters.system == PAL_M) {
+        palColour.updateConfiguration(videoParameters, palConfiguration);
+    } else {
+        ntscColour.updateConfiguration(videoParameters, ntscConfiguration);
+    }
+
+    // Wait for the first frame, and what the decoder looks ahead to
+    emit busy("Waiting for video...");
+    if (!sourceVideo.hasField(2 * (1 + getLookAheadFrames())) && sourceVideo.getFieldsReadSoFar() < 2) {
+        sourceVideo.close();
+        lastIOError = "The input ended before it held a frame of video";
+        return false;
+    }
+
+    sourceReady = true;
+    currentSourceFilename = streamInput.cvbs ? "stdin.cvbs" : "stdin.tbc";
+    currentMetadataFilename.clear();
+
+    // There are no dropouts, SNR or chapters to graph
+    dropoutGraphData.clear();
+    visibleDropoutGraphData.clear();
+    blackSnrGraphData.clear();
+    whiteSnrGraphData.clear();
+    chapterMap.clear();
+
+    updateLive();
+    return true;
+}
+
+bool TbcSource::getIsLive()
+{
+    return isLive;
+}
+
+bool TbcSource::getIsLiveEnded()
+{
+    return isLive && liveEnded;
+}
+
+// How many frames ahead the chroma decoder looks (the stream has to have them before a
+// frame can be decoded, or the decoder would wait for them)
+qint32 TbcSource::getLookAheadFrames()
+{
+    if (getSystem() == PAL || getSystem() == PAL_M) return palConfiguration.getLookAhead();
+    return ntscConfiguration.getLookAhead();
+}
+
+// Take count of what the stream has delivered: the frames that can be shown are the ones
+// the decoder's look-ahead has arrived for, and from the first that is still held (the
+// decoder looks behind it too) -- unless the stream has ended, when the rest are blank
+void TbcSource::updateLive()
+{
+    if (!isLive || !sourceVideo.isSourceValid()) return;
+
+    const qint32 frames = sourceVideo.getFieldsReadSoFar() / 2;
+    liveEnded = sourceVideo.getNumberOfAvailableFields() >= 0;
+    liveFrames = liveEnded ? frames : qMax(0, frames - getLookAheadFrames());
+
+    // The first frame with both its fields still in the buffer
+    const qint32 firstHeldField = sourceVideo.getFirstFieldHeld();
+    qint32 firstFrame = (firstHeldField + 2) / 2;
+    if (firstHeldField > 1) {
+        const qint32 lookBehind = (getSystem() == PAL || getSystem() == PAL_M) ? palConfiguration.getLookBehind()
+                                                                               : ntscConfiguration.getLookBehind();
+        firstFrame += lookBehind;
+    }
+    liveFirstFrame = qMin(firstFrame, qMax(1, liveFrames));
+}
+
+qint32 TbcSource::getFirstAvailableFrame()
+{
+    return isLive ? liveFirstFrame : 1;
 }

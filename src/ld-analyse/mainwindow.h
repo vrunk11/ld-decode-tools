@@ -59,7 +59,9 @@ class MainWindow : public QMainWindow
     Q_OBJECT
 
 public:
-    explicit MainWindow(QString inputFilenameParam, QWidget *parent = nullptr);
+    // streamInput: video piped in (inputFilenameParam is then "-") rather than a file
+    explicit MainWindow(QString inputFilenameParam, const TbcSource::StreamInput *streamInput = nullptr,
+                        QWidget *parent = nullptr);
 	TbcSource& getTbcSource();
     ~MainWindow();
 
@@ -203,6 +205,9 @@ private:
     qint32 playbackStartPosition = 0;
     qint32 playbackDue = 0;
     void showRenderedImage();
+    // A stream (live input): count what has arrived, and keep the controls and playback to it
+    QTimer *liveTimer = nullptr;
+    void updateLive();
     QPushButton *playPushButton;
     QAction *actionPlayPause;
     QAction *actionLoop;

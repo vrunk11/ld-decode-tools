@@ -39,7 +39,11 @@ public:
     // Start rendering from a position, for the settings given. Settings may be changed later
     // with setSettings; the files (and so the metadata read for each worker) stay open
     // until close or a start for other files.
-    void start(const TbcSource::RenderSettings &settings, quint32 generation, qint32 firstPosition, qint32 lastPosition);
+    // liveParent: for a stream, the source the stream is read by; the workers share it
+    void start(const TbcSource::RenderSettings &settings, quint32 generation, qint32 firstPosition, qint32 lastPosition,
+               const TbcSource *liveParent = nullptr);
+    // A stream grows: the last position there is video for (workers run to it)
+    void setLastPosition(qint32 position);
     void setSettings(const TbcSource::RenderSettings &settings, quint32 generation);
     void stop();
     void close();
@@ -67,6 +71,7 @@ private:
     std::vector<std::unique_ptr<Worker>> workers;
     std::vector<std::unique_ptr<TbcSource>> sources;   // kept from one play to the next
     QString openedFor;
+    const TbcSource *liveParent = nullptr;
 
     // Shared state, guarded by mutex
     TbcSource::RenderSettings currentSettings;

@@ -54,7 +54,27 @@ public:
         bool isActiveLine;
     };
 
+    // Video read from a stream (standard input, a named pipe) that may never end, with no
+    // metadata: the video system is given, the rest has defaults. See loadStream.
+    struct StreamInput {
+        bool cvbs = false;
+        VideoSystem system = NTSC;
+        Cvbs::SampleEncoding encoding = Cvbs::SampleEncoding::U10_4FSC;
+        qint32 blackLevel = -1, whiteLevel = -1;      // TBC only; -1 for the standard level
+        bool isSubcarrierLocked = false;
+        qint32 bufferFrames = 32;
+    };
+
     void loadSource(QString inputFileName);
+    void loadStream(const StreamInput &input);
+    bool getIsLive();
+    // For a stream: take count of what has arrived. Call from the thread of the window.
+    void updateLive();
+    // The first frame that can be shown (the earlier ones have left the buffer of a stream)
+    qint32 getFirstAvailableFrame();
+    // True once a stream has ended: it has no more frames to come
+    bool getIsLiveEnded();
+    qint32 getLookAheadFrames();
     void unloadSource();
     bool getIsSourceLoaded();
     void saveSourceMetadata();
@@ -104,6 +124,8 @@ public:
         MonoDecoder::MonoConfiguration monoConfiguration;
         OutputWriter::Configuration outputConfiguration;
         LdDecodeMetaData::VideoParameters videoParameters;
+        bool isLive = false;
+        StreamInput streamInput;
         bool chromaOn, dropoutsOn, reverseFoOn, stretchFieldOn, combine;
         ViewMode viewMode;
         SourceMode sourceMode;
@@ -111,7 +133,8 @@ public:
 
     RenderSettings getRenderSettings();
     quint32 getSettingsGeneration() const { return settingsGeneration; }
-    bool openForRendering(const RenderSettings &settings);
+    // liveParent: for a stream, the source that reads it, which this one shares the stream of
+    bool openForRendering(const RenderSettings &settings, const TbcSource *liveParent = nullptr);
     void applyRenderSettings(const RenderSettings &settings);
     // Use this image, rendered elsewhere, for the frame (field in field view) if it is the one loaded
     void setPrerenderedImage(qint32 position, const QImage &image);
@@ -198,6 +221,12 @@ private:
     QString currentMetadataFilename;
     QString lastIOError;
     QString currentChromaFilename;
+    // A stream: what has arrived
+    bool isLive = false;
+    StreamInput streamInput;
+    qint32 liveFrames = 0;
+    qint32 liveFirstFrame = 1;
+    bool liveEnded = false;
     quint32 settingsGeneration = 0;
     QImage prerenderedImage;
     qint32 prerenderedPosition = -1;
@@ -259,6 +288,7 @@ private:
     QImage generateMonoImage();
     void generateData();
     bool startBackgroundLoad(QString sourceFilename);
+    bool startBackgroundStream();
     bool startBackgroundSave(QString metadataFilename);
 };
 

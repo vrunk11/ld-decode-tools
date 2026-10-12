@@ -177,3 +177,9 @@ qint32 StreamReader::fieldsRead()
     QMutexLocker locker(&mutex);
     return unitsRead * fieldsPerUnit;
 }
+
+qint32 StreamReader::firstFieldKept()
+{
+    QMutexLocker locker(&mutex);
+    return window.isEmpty() ? unitsRead * fieldsPerUnit : window.firstKey() * fieldsPerUnit;
+}

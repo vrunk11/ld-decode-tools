@@ -45,7 +45,22 @@ void PlaybackController::setLoop(bool newLoop)
 void PlaybackController::setRange(qint32 first, qint32 last)
 {
     firstPosition = first;
+    const qint32 previousLast = lastPosition;
     lastPosition = qMax(first, last);
+
+    // Caught up with a live stream, and the next frame has just arrived: show it at once,
+    // and go on from there at the pace of the video
+    if (live && atEdge && isPlaying() && lastPosition > previousLast && lastPosition > shownPosition) {
+        atEdge = false;
+        rebase(shownPosition + 1);
+        emit positionDue(shownPosition);
+    }
+}
+
+void PlaybackController::setLive(bool newLive, bool ended)
+{
+    live = newLive;
+    streamEnded = ended;
 }
 
 void PlaybackController::rebase(qint32 fromPosition)
@@ -59,9 +74,10 @@ void PlaybackController::rebase(qint32 fromPosition)
 void PlaybackController::play(qint32 fromPosition)
 {
     if (isPlaying()) return;
+    atEdge = false;
 
     // At the end already: play again from the start
-    if (fromPosition >= lastPosition) fromPosition = firstPosition;
+    if (fromPosition >= lastPosition && !(live && !streamEnded)) fromPosition = firstPosition;
 
     skipped = 0;
     rebase(qBound(firstPosition, fromPosition, lastPosition));
@@ -82,6 +98,17 @@ void PlaybackController::tick()
     qint64 due = static_cast<qint64>(startPosition) + static_cast<qint64>(std::floor(elapsedSeconds * rate * speed));
 
     if (due > lastPosition) {
+        if (live && !streamEnded) {
+            // Caught up with the video that has arrived: show the last of it if it is not
+            // already shown, then wait for more
+            if (shownPosition < lastPosition) {
+                skipped += lastPosition - shownPosition - 1;
+                shownPosition = lastPosition;
+                emit positionDue(shownPosition);
+            }
+            atEdge = true;
+            return;
+        }
         if (loop) {
             // Wrap round, keeping the time that went past the end
             rebase(firstPosition);

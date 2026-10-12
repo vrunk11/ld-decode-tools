@@ -47,7 +47,7 @@ protected:
 
             // The metadata is read here, in the worker, the first time it is needed
             if (!opened) {
-                opened = source.openForRendering(settings);
+                opened = source.openForRendering(settings, owner.liveParent);
                 if (!opened) {
                     QMutexLocker locker(&owner.mutex);
                     owner.failed = true;
@@ -93,15 +93,18 @@ PlaybackRenderer::~PlaybackRenderer()
 }
 
 void PlaybackRenderer::start(const TbcSource::RenderSettings &settings, quint32 generation,
-                             qint32 firstPosition, qint32 _lastPosition)
+                             qint32 firstPosition, qint32 _lastPosition, const TbcSource *_liveParent)
 {
     stop();
 
     // New files need new sources; the same ones can go on as they are
-    if (openedFor != settings.sourceFilename + "|" + settings.metadataFilename) {
+    // (a stream is a new one each time it is loaded)
+    const QString key = settings.sourceFilename + "|" + settings.metadataFilename + "|" + QString::number(reinterpret_cast<quintptr>(_liveParent));
+    if (openedFor != key) {
         sources.clear();
-        openedFor = settings.sourceFilename + "|" + settings.metadataFilename;
+        openedFor = key;
     }
+    liveParent = _liveParent;
 
     // Leave a core for the window, and a few for the rest of the machine
     const qint32 count = std::clamp(QThread::idealThreadCount() - 2, 1, 4);
@@ -186,4 +189,12 @@ bool PlaybackRenderer::take(qint32 due, qint32 &position, QImage &image)
     ready.erase(ready.begin(), std::next(it));
     wake.wakeAll();
     return true;
+}
+
+void PlaybackRenderer::setLastPosition(qint32 position)
+{
+    QMutexLocker locker(&mutex);
+    if (position <= lastPosition) return;
+    lastPosition = position;
+    wake.wakeAll();
 }

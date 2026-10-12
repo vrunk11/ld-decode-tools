@@ -31,6 +31,9 @@ public:
     void setSpeed(double speed);
     void setLoop(bool loop);
     void setRange(qint32 first, qint32 last);
+    // A live stream: the range grows as video arrives, and playback waits at its end for more
+    // instead of stopping, until the stream has ended
+    void setLive(bool live, bool streamEnded = false);
 
     double getSpeed() const { return speed; }
     bool getLoop() const { return loop; }
@@ -60,6 +63,9 @@ private:
     qint32 startPosition = 1;
     qint32 shownPosition = 1;
     qint32 skipped = 0;
+    bool live = false;
+    bool streamEnded = false;
+    bool atEdge = false;     // live and caught up with the video that has arrived
     qint64 baseNs = 0;       // clock time at which startPosition was due
     void rebase(qint32 fromPosition);
 };

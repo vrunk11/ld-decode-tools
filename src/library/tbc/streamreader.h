@@ -71,6 +71,8 @@ public:
     qint32 numberOfFields();
     // Fields read so far
     qint32 fieldsRead();
+    // The first field (0-based) still in the window: earlier ones are gone
+    qint32 firstFieldKept();
 
 protected:
     void run() override;

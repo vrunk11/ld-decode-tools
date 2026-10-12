@@ -29,8 +29,17 @@ Options:
   -q, --quiet         Suppress info and warning messages
   --force-dark-theme  Force dark theme regardless of system settings
 
+Options for video piped in (input is -), which comes without metadata:
+  --input-format <format>       tbc (fields, the default) or cvbs (frames, as decode-orc writes them)
+  --system <system>             The video system: pal, ntsc or pal-m (required)
+  --black-level <number>        TBC: the black16bIre of the capture (default: the standard level)
+  --white-level <number>        TBC: the white16bIre of the capture (default: the standard level)
+  --subcarrier-locked <yes|no>  Whether PAL was sampled locked to the subcarrier (default yes for CVBS, no for TBC)
+  --sample-encoding <encoding>  CVBS: u10 (the default), u16, tpg21 or s16
+  --buffer-frames <number>      Frames read ahead of the one shown, and kept behind it (default 32)
+
 Arguments:
-  input               Specify input TBC file
+  input               Specify input TBC or CVBS file, or - for video piped in
 ```
 
 # Opening a Time-Base Corrected (TBC) video file
@@ -141,6 +150,39 @@ Some sources are mastered with the expected field order reversed.  This causes l
 ![](assets/ld-analyse_Reverse_field_order.png)
 
 Clicking again on the same button will revert back to normal field order.  Note that switching the field order will cause ld-analyse to return to the first frame of the TBC file.
+
+# Playing the video
+
+The play button (between the previous and next frame buttons), the Playback menu and the space bar play the video at its real speed: 25 frames per second for PAL, about 29.97 for NTSC (twice that in field view). The Playback menu also has Loop and the speeds 0.25x to 4x.
+
+Playback follows the wall clock, and the frames are decoded ahead by several threads, so the chroma decoder does not hold the window up. If the machine cannot decode as fast as the video plays, the frames in between are skipped, so that the video keeps its speed, and the status bar says how many were skipped. The line scope, vectorscope and the other tools follow the frame shown. Stepping, seeking, changing the view or opening a file stops playback.
+
+# Video filters
+
+View > Video filter... shows the picture through ffmpeg filters (libavfilter). Each of these has a check box, so it can be switched off without losing its setting, and they run in this order:
+
+* a deinterlacer: yadif, bwdif, w3fdif or estdif
+* a scaling algorithm that gives the picture the size it is shown at: bilinear, bicubic, lanczos, spline, gaussian, area averaging or nearest neighbour
+* other ffmpeg filters, written as in ffmpeg's `-vf` option (`$W` and `$H` stand for the size the picture is shown at)
+
+The view button also has a Deinterlaced mode, after Frame, Split and Field, which shows the frame through the deinterlacer chosen, whether or not its check box is ticked.
+
+The filters only change the picture shown: the line scope, vectorscope and the other analysis tools still read the TBC data. They are available when ld-analyse was built with libavfilter (build.bat does, unless `USE_FFMPEG=0`); otherwise the menu entry is greyed out.
+
+# Live input from a pipe
+
+`ld-analyse -` reads video from standard input as it arrives, so a decoder can be watched live with the tools of ld-analyse:
+
+```
+decoder-or-capture | ld-analyse - --system ntsc
+decode-orc-or-ld-decode-cvbs-output | ld-analyse - --input-format cvbs --system pal
+```
+
+A pipe carries no metadata, so the video system must be given (`--system`), and whether it is TBC fields (the default) or CVBS frames (`--input-format cvbs`). The levels and the rest have defaults, as for ld-chroma-decoder.
+
+The video has no length: the frame count grows as it arrives, and playback starts by itself and stays on, waiting at the end of what has arrived and carrying on as more comes. The slider covers the frames still held in the buffer (`--buffer-frames`, 32 by default), so that is how far back you can go; pausing holds the stream up once the buffer is full, because a pipe cannot be read again. When the stream ends, playback stops at its last frame.
+
+Dropout, SNR and VBI information comes from ld-decode's metadata, and a pipe has none, so those windows stay empty; the picture, line scope, vectorscope and the chroma decoder settings all work.
 
 # The File menu
 

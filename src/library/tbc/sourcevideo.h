@@ -62,6 +62,13 @@ public:
     // size. Call before open().
     void setStreamOptions(const StreamReader::Options &options);
     bool isStream() const;
+    // Read the same stream as another SourceVideo, which stays the one that opened it (and
+    // must outlive this). For several threads each decoding frames of one live stream.
+    bool shareStreamWith(const SourceVideo &other);
+    // Fields read from the stream so far, and the first one (numbered from 1) still held;
+    // 0 for a source that is not a stream
+    qint32 getFieldsReadSoFar();
+    qint32 getFirstFieldHeld();
 
     // Field handling methods
     Data getVideoField(qint32 fieldNumber, qint32 startFieldLine = -1, qint32 endFieldLine = -1);
@@ -91,7 +98,7 @@ private:
 
     // Stream input (standard input or a named pipe)
     StreamReader::Options streamOptions;
-    std::unique_ptr<StreamReader> stream;
+    std::shared_ptr<StreamReader> stream;
 
     // CVBS input (.cvbs, .cvbsy, .cvbsc): whole frames, split into fields
     bool isCvbs;

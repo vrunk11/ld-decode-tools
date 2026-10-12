@@ -16,7 +16,7 @@
 
 #include <QActionGroup>
 
-MainWindow::MainWindow(QString inputFilenameParam, QWidget *parent) :
+MainWindow::MainWindow(QString inputFilenameParam, const TbcSource::StreamInput *streamInput, QWidget *parent) :
     QMainWindow(parent),
     ui(new Ui::MainWindow)
 {
@@ -161,8 +161,11 @@ MainWindow::MainWindow(QString inputFilenameParam, QWidget *parent) :
     // Load configuration settings
     ui->actionToggleChromaDuringSeek->setChecked(configuration.getToggleChromaDuringSeek());
 
-    // Was a filename specified on the command line?
-    if (!inputFilenameParam.isEmpty()) {
+    // Video piped in, or a filename specified on the command line?
+    if (streamInput) {
+        lastFilename.clear();
+        tbcSource.loadStream(*streamInput);
+    } else if (!inputFilenameParam.isEmpty()) {
         lastFilename = inputFilenameParam;
         tbcSource.loadSource(inputFilenameParam);
     } else {
@@ -172,6 +175,9 @@ MainWindow::MainWindow(QString inputFilenameParam, QWidget *parent) :
 
 MainWindow::~MainWindow()
 {
+    // The decoding threads read the same files (or stream) as the source
+    renderer->close();
+
     // Save the window geometry and settings to the configuration
     configuration.setMainWindowGeometry(saveGeometry());
     configuration.setMainWindowScaleFactor(scaleFactor);
@@ -303,6 +309,38 @@ bool MainWindow::filterImage(QImage &image, qint32 displayWidth, qint32 displayH
     return true;
 }
 
+// A stream (live input): count what has arrived, and keep the controls and the playback to
+// it. The frames that can be shown grow, and the first of them moves up as the buffer
+// forgets the oldest.
+void MainWindow::updateLive()
+{
+    if (!tbcSource.getIsLive() || !tbcSource.getIsSourceLoaded()) return;
+    tbcSource.updateLive();
+
+    const bool isFieldView = tbcSource.getFieldViewEnabled();
+    const qint32 firstFrame = tbcSource.getFirstAvailableFrame();
+    const qint32 first = isFieldView ? 2 * firstFrame - 1 : firstFrame;
+    const qint32 last = isFieldView ? tbcSource.getNumberOfFields() : tbcSource.getNumberOfFrames();
+    const bool ended = tbcSource.getIsLiveEnded();
+
+    {
+        // Moving the ends of the controls must not look like the user seeking
+        const QSignalBlocker spinBlocker(ui->posNumberSpinBox);
+        const QSignalBlocker sliderBlocker(ui->posHorizontalSlider);
+        ui->posNumberSpinBox->setRange(first, qMax(first, last));
+        ui->posHorizontalSlider->setRange(first, qMax(first, last));
+        ui->posHorizontalSlider->setPageStep(qMax(1, (last - first) / 100));
+    }
+
+    playback->setLive(true, ended);
+    playback->setRange(first, last);
+    renderer->setLastPosition(last);
+
+    sourceVideoStatus.setText(ended ? tr("Live input ended after %1 frames").arg(tbcSource.getNumberOfFrames())
+                                    : tr("Live input - %1 frames received").arg(tbcSource.getNumberOfFrames()));
+    if (ended) liveTimer->stop();
+}
+
 // Video playback ------------------------------------------------------------------------------------------------------
 
 // Create the play button, the Playback menu and the clock
@@ -310,6 +348,9 @@ void MainWindow::setupPlayback()
 {
     playback = new PlaybackController(this);
     renderer = new PlaybackRenderer(this);
+    liveTimer = new QTimer(this);
+    liveTimer->setInterval(33);
+    connect(liveTimer, &QTimer::timeout, this, &MainWindow::updateLive);
     connect(renderer, &PlaybackRenderer::imageReady, this, &MainWindow::showRenderedImage);
     connect(playback, &PlaybackController::positionDue, this, &MainWindow::playbackPositionDue);
     connect(playback, &PlaybackController::stateChanged, this, &MainWindow::updatePlaybackState);
@@ -402,15 +443,22 @@ void MainWindow::togglePlayback()
     const bool isFieldView = tbcSource.getFieldViewEnabled();
     const double frameRate = tbcSource.getSystem() == PAL ? 25.0 : 30000.0 / 1001.0;
     playback->setRate(isFieldView ? 2.0 * frameRate : frameRate);
+    const bool isLive = tbcSource.getIsLive();
+    if (isLive) updateLive();
     const qint32 lastPosition = isFieldView ? tbcSource.getNumberOfFields() : tbcSource.getNumberOfFrames();
-    playback->setRange(1, lastPosition);
+    const qint32 firstPosition = isLive ? (isFieldView ? 2 * tbcSource.getFirstAvailableFrame() - 1 : tbcSource.getFirstAvailableFrame()) : 1;
+    playback->setLive(isLive, isLive && tbcSource.getIsLiveEnded());
+    playback->setRange(firstPosition, lastPosition);
 
     // Start decoding ahead; the clock starts once the first image is ready
     playbackStartPosition = isFieldView ? currentFieldNumber : currentFrameNumber;
-    if (playbackStartPosition >= lastPosition) playbackStartPosition = 1;
+    // (a live stream plays on at its end: there is more to come)
+    if (playbackStartPosition >= lastPosition && !isLive) playbackStartPosition = 1;
+    playbackStartPosition = qMax(playbackStartPosition, firstPosition);
     playbackDue = playbackStartPosition;
     renderGeneration = tbcSource.getSettingsGeneration();
-    renderer->start(tbcSource.getRenderSettings(), renderGeneration, playbackStartPosition, lastPosition);
+    renderer->start(tbcSource.getRenderSettings(), renderGeneration, playbackStartPosition, lastPosition,
+                    isLive ? &tbcSource : nullptr);
     playbackStarting = true;
     updatePlaybackState(true);
     statusBar()->showMessage(tr("Decoding ahead..."));
@@ -598,7 +646,9 @@ void MainWindow::updateGuiLoaded()
     statusText += tbcSource.getSystemDescription();
     statusText += tr(" source loaded with ");
 
-    if (tbcSource.getFieldViewEnabled()) {
+    if (tbcSource.getIsLive()) {
+        statusText = tr("Live input (%1)").arg(tbcSource.getSystemDescription());
+    } else if (tbcSource.getFieldViewEnabled()) {
         statusText += QString::number(tbcSource.getNumberOfFields());
         statusText += tr(" fields available");
     } else {
@@ -607,7 +657,7 @@ void MainWindow::updateGuiLoaded()
     }
 
     // Which metadata was loaded: SQLite (.tbc.db) or JSON (.tbc.json)
-    statusText += tr(" - Metadata: ") + tbcSource.getMetadataFormatName();
+    if (!tbcSource.getIsLive()) statusText += tr(" - Metadata: ") + tbcSource.getMetadataFormatName();
 
     sourceVideoStatus.setText(statusText);
     sourceVideoStatus.setToolTip(tbcSource.getCurrentMetadataFilename());
@@ -647,6 +697,7 @@ void MainWindow::updateGuiLoaded()
 // Method to update the GUI when a file is unloaded
 void MainWindow::updateGuiUnloaded()
 {
+    liveTimer->stop();
     // Disable the GUI controls
     setGuiEnabled(false);
 
@@ -926,6 +977,9 @@ void MainWindow::hideImage()
 // Load a TBC file based on the passed file name
 void MainWindow::loadTbcFile(QString inputFileName)
 {
+    pausePlayback();
+    liveTimer->stop();
+    renderer->close();
     // Update the GUI
     updateGuiUnloaded();
 
@@ -1041,6 +1095,12 @@ void MainWindow::setCurrentField(qint32 number)
 
 void MainWindow::sanitizeCurrentPosition()
 {
+    // A stream forgets its oldest frames
+    if (tbcSource.getIsLive() && currentFrameNumber < tbcSource.getFirstAvailableFrame()) {
+        currentFrameNumber = tbcSource.getFirstAvailableFrame();
+        currentFieldNumber = 2 * currentFrameNumber - 1;
+    }
+
     if (currentFrameNumber > tbcSource.getNumberOfFrames() || currentFieldNumber > tbcSource.getNumberOfFields()) {
         currentFrameNumber = tbcSource.getNumberOfFrames();
         currentFieldNumber = tbcSource.getNumberOfFields();
@@ -2048,7 +2108,7 @@ void MainWindow::updateGraphs()
     QVector<double> blackSnrGraphData = tbcSource.getBlackSnrGraphData();
     QVector<double> whiteSnrGraphData = tbcSource.getWhiteSnrGraphData();
 
-    for (qint32 frameNumber = 0; frameNumber < tbcSource.getNumberOfFrames(); frameNumber++) {
+    for (qint32 frameNumber = 0; frameNumber < qMin(tbcSource.getNumberOfFrames(), tbcSource.getGraphDataSize()); frameNumber++) {
         dropoutAnalysisDialog->addDataPoint(frameNumber + 1, doGraphData[frameNumber]);
         visibleDropoutAnalysisDialog->addDataPoint(frameNumber + 1, visibleDoGraphData[frameNumber]);
         blackSnrAnalysisDialog->addDataPoint(frameNumber + 1, blackSnrGraphData[frameNumber]);
@@ -2216,13 +2276,24 @@ void MainWindow::on_finishedLoading(bool success)
         updateGuiLoaded();
 
         // Set the main window title
-        this->setWindowTitle(tr("ld-analyse - ") + tbcSource.getCurrentSourceFilename());
+        this->setWindowTitle(tbcSource.getIsLive() ? tr("ld-analyse - Live input")
+                                                   : tr("ld-analyse - ") + tbcSource.getCurrentSourceFilename());
 
         // Update the configuration for the source directory
-        QFileInfo inFileInfo(tbcSource.getCurrentSourceFilename());
+        if (!tbcSource.getIsLive()) {
+            QFileInfo inFileInfo(tbcSource.getCurrentSourceFilename());
         configuration.setSourceDirectory(inFileInfo.absolutePath());
         tbcDebugStream() << "MainWindow::loadTbcFile(): Setting source directory to:" << inFileInfo.absolutePath();
         configuration.writeConfiguration();
+            }
+
+        if (tbcSource.getIsLive()) {
+            // There is nothing to reload or save; the video plays as it arrives, and stays on
+            ui->actionReload_TBC->setEnabled(false);
+            liveTimer->start();
+            updateLive();
+            togglePlayback();
+        }
     } else {
         // Load failed
         updateGuiUnloaded();

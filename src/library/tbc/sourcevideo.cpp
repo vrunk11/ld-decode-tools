@@ -47,7 +47,8 @@ SourceVideo::SourceVideo()
 
 SourceVideo::~SourceVideo()
 {
-    // The reader of a stream must stop before the file it reads is closed
+    // The reader of a stream must stop before the file it reads is closed (when the last
+    // SourceVideo that shares it lets go of it)
     stream.reset();
     if (isSourceVideoOpen) inputFile.close();
 }
@@ -60,6 +61,30 @@ void SourceVideo::setStreamOptions(const StreamReader::Options &options)
 bool SourceVideo::isStream() const
 {
     return stream != nullptr;
+}
+
+bool SourceVideo::shareStreamWith(const SourceVideo &other)
+{
+    if (isSourceVideoOpen || !other.stream) return false;
+
+    stream = other.stream;
+    fieldLength = other.fieldLength;
+    fieldByteLength = other.fieldByteLength;
+    fieldLineLength = other.fieldLineLength;
+    availableFields = -1;
+    isCvbs = false;
+    isSourceVideoOpen = true;
+    return true;
+}
+
+qint32 SourceVideo::getFieldsReadSoFar()
+{
+    return stream ? stream->fieldsRead() : 0;
+}
+
+qint32 SourceVideo::getFirstFieldHeld()
+{
+    return stream ? stream->firstFieldKept() + 1 : 0;
 }
 
 bool SourceVideo::hasField(qint32 fieldNumber)
