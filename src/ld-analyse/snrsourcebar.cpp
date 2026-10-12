@@ -32,6 +32,11 @@ SnrSourceBar::SnrSourceBar(QWidget *parent)
     followCheck->setChecked(true);
     layout->addWidget(followCheck);
 
+    clearButton = new QPushButton(tr("Clear"), this);
+    clearButton->setToolTip(tr("Forget the history so far: it starts again from now"));
+    layout->addWidget(clearButton);
+    connect(clearButton, &QPushButton::clicked, this, &SnrSourceBar::clearRequested);
+
     connect(measureCheck, &QCheckBox::toggled, this, &SnrSourceBar::measuringToggled);
     setMetadataSource();
 }
@@ -41,6 +46,7 @@ void SnrSourceBar::setMetadataSource()
     sourceLabel->setText(tr("Source: the metadata of the capture (ld-decode)"));
     measureCheck->setVisible(false);
     followCheck->setVisible(false);
+    clearButton->setVisible(false);
 }
 
 void SnrSourceBar::setLiveSource(bool measuring, bool wholeHistory)
@@ -54,6 +60,7 @@ void SnrSourceBar::setLiveSource(bool measuring, bool wholeHistory)
     // Without the thread that measures every frame there is nothing to switch off
     measureCheck->setVisible(wholeHistory);
     followCheck->setVisible(true);
+    clearButton->setVisible(true);
 }
 
 void SnrSourceBar::setFollowing(bool follow)

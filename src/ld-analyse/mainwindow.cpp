@@ -154,6 +154,10 @@ MainWindow::MainWindow(QString inputFilenameParam, const TbcSource::StreamInput 
 
     setupPlayback();
     for (SnrSourceBar *bar: { blackSnrAnalysisDialog->sourceBar(), whiteSnrAnalysisDialog->sourceBar() }) {
+        connect(bar, &SnrSourceBar::clearRequested, this, [this]() {
+            tbcSource.clearLiveSnr();
+            updateLiveGraphs();
+        });
         connect(bar, &SnrSourceBar::measuringToggled, this, [this](bool measuring) {
             tbcSource.setLiveSnrEnabled(measuring);
             for (SnrSourceBar *other: { blackSnrAnalysisDialog->sourceBar(), whiteSnrAnalysisDialog->sourceBar() }) {

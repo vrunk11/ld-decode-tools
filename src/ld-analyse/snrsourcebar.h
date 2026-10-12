@@ -13,6 +13,7 @@
 
 #include <QCheckBox>
 #include <QLabel>
+#include <QPushButton>
 #include <QWidget>
 
 // The line above an SNR graph: where the values come from (the metadata of the capture, or measured
@@ -36,11 +37,14 @@ public:
 signals:
     // The user switched the measuring on or off
     void measuringToggled(bool measuring);
+    // The user asked to forget the history so far
+    void clearRequested();
 
 private:
     QLabel *sourceLabel;
     QCheckBox *measureCheck;
     QCheckBox *followCheck;
+    QPushButton *clearButton;
 };
 
 #endif // SNRSOURCEBAR_H

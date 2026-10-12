@@ -46,18 +46,22 @@ void LiveSnr::stopAnalysis()
 // (the average of the fields that have one)
 void LiveSnr::measureFrame(qint32 frame)
 {
+    const qint32 frameIndex = frame - 1 - baseField / 2;
+    if (frameIndex < 0) return;
+
     double blackTotal = 0, whiteTotal = 0;
     qint32 blackPoints = 0, whitePoints = 0;
     for (qint32 fieldNumber: { 2 * frame - 1, 2 * frame }) {
-        if (fieldNumber > rawFields.size() || !rawValid[fieldNumber - 1]) continue;
+        const qint32 index = fieldNumber - 1 - baseField;
+        if (index < 0 || index >= rawFields.size() || !rawValid[index]) continue;
         LdDecodeMetaData::Field field;
-        applyVitsLevels(rawFields[fieldNumber - 1], videoParameters, field);
+        applyVitsLevels(rawFields[index], videoParameters, field);
         if (field.vitsMetrics.bPSNR > 0) { blackTotal += field.vitsMetrics.bPSNR; blackPoints++; }
         if (field.vitsMetrics.wSNR > 0) { whiteTotal += field.vitsMetrics.wSNR; whitePoints++; }
     }
-    while (frameBlack.size() < frame) { frameBlack.append(std::nan("")); frameWhite.append(std::nan("")); }
-    frameBlack[frame - 1] = blackPoints ? blackTotal / blackPoints : std::nan("");
-    frameWhite[frame - 1] = whitePoints ? whiteTotal / whitePoints : std::nan("");
+    while (frameBlack.size() <= frameIndex) { frameBlack.append(std::nan("")); frameWhite.append(std::nan("")); }
+    frameBlack[frameIndex] = blackPoints ? blackTotal / blackPoints : std::nan("");
+    frameWhite[frameIndex] = whitePoints ? whiteTotal / whitePoints : std::nan("");
 }
 
 void LiveSnr::run()
@@ -69,7 +73,7 @@ void LiveSnr::run()
             parameters = videoParameters;
             if (levelsChanged) {
                 // Work the whole history out again for the new levels
-                for (qint32 frame = 1; frame <= rawFields.size() / 2; frame++) measureFrame(frame);
+                for (qint32 frame = baseField / 2 + 1; frame <= (baseField + rawFields.size()) / 2; frame++) measureFrame(frame);
                 levelsChanged = false;
             }
         }
@@ -104,10 +108,20 @@ void LiveSnr::run()
 
             QMutexLocker locker(&mutex);
             // A field that was skipped (measuring was off) leaves a gap, kept as not measured
-            while (rawFields.size() < field - 1) { rawFields.append(VitsRawMeasurements()); rawValid.append(false); }
+            while (baseField + rawFields.size() < field - 1) { rawFields.append(VitsRawMeasurements()); rawValid.append(false); }
             rawFields.append(raw);
             rawValid.append(valid);
             if (field % 2 == 0) measureFrame(field / 2);
+
+            // Beyond the longest history, let go of the oldest tenth
+            if (frameBlack.size() > MAX_FRAMES) {
+                const qint32 drop = MAX_FRAMES / 10;
+                rawFields.remove(0, qMin(rawFields.size(), 2 * drop));
+                rawValid.remove(0, qMin(rawValid.size(), 2 * drop));
+                frameBlack.remove(0, drop);
+                frameWhite.remove(0, drop);
+                baseField += 2 * drop;
+            }
             nextField = field + 1;
             didSomething = true;
         }
@@ -122,12 +136,26 @@ qint32 LiveSnr::measuredFrames()
     return frameBlack.size();
 }
 
+void LiveSnr::clear()
+{
+    QMutexLocker locker(&mutex);
+    // Start again from the next whole frame; what is between is not kept
+    baseField = (nextField - 1) / 2 * 2;
+    rawFields.clear();
+    rawValid.clear();
+    frameBlack.clear();
+    frameWhite.clear();
+    while (baseField + rawFields.size() < nextField - 1) { rawFields.append(VitsRawMeasurements()); rawValid.append(false); }
+}
+
 QVector<QPointF> LiveSnr::history(bool black, qint32 maxPoints)
 {
     QVector<double> values;
+    qint32 base;
     {
         QMutexLocker locker(&mutex);
         values = black ? frameBlack : frameWhite;
+        base = baseField / 2;
     }
 
     QVector<QPointF> points;
@@ -139,7 +167,7 @@ QVector<QPointF> LiveSnr::history(bool black, qint32 maxPoints)
         for (qint32 i = start; i < qMin(count, start + stride); i++) {
             if (!std::isnan(values[i])) { total += values[i]; valid++; }
         }
-        if (valid) points.append(QPointF(start + 1 + (stride - 1) / 2.0, total / valid));
+        if (valid) points.append(QPointF(base + start + 1 + (stride - 1) / 2.0, total / valid));
     }
     return points;
 }

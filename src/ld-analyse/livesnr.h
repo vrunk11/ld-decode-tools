@@ -41,6 +41,11 @@ public:
     void setEnabled(bool enabled);
     bool isEnabled() const { return enabled.loadRelaxed() != 0; }
     void stopAnalysis();
+    // Forget the history so far: it starts again from the newest field
+    void clear();
+
+    // The longest history kept, in frames (two hours of NTSC video); the oldest is let go beyond it
+    static constexpr qint32 MAX_FRAMES = 216000;
 
     // The SNR of the frames so far (x is the frame number, from 1). With more than maxPoints
     // frames they are averaged in blocks, so the history of a long input stays light.
@@ -58,10 +63,11 @@ private:
     QAtomicInt stopRequested;
     bool levelsChanged = false;
 
-    QVector<VitsRawMeasurements> rawFields;     // by field, from field 1
+    QVector<VitsRawMeasurements> rawFields;     // by field, from field baseField + 1
     QVector<bool> rawValid;
-    QVector<double> frameBlack, frameWhite;     // by frame, NaN where not measured
+    QVector<double> frameBlack, frameWhite;     // by frame from baseField / 2 + 1, NaN where not measured
     qint32 nextField = 1;
+    qint32 baseField = 0;                       // fields before the first one kept (even)
 
     void measureFrame(qint32 frame);            // from rawFields; mutex held
 };

@@ -1829,3 +1829,13 @@ void TbcSource::setLiveSnrEnabled(bool enabled)
 {
     if (liveSnr) liveSnr->setEnabled(enabled);
 }
+
+void TbcSource::clearLiveSnr()
+{
+    if (liveSnr) {
+        liveSnr->clear();
+    } else {
+        liveBlackSnr.clear();
+        liveWhiteSnr.clear();
+    }
+}

@@ -229,7 +229,9 @@ void BlackSnrAnalysisDialog::setLiveHistory(const QVector<QPointF> &points, qint
     trendSeries->setData(QVector<QPointF>());
     if (bar->isFollowing()) {
         settingRange = true;
-        plot->setAxisRange(Qt::Horizontal, 0, std::max(frames, 1));
+        // (from the first frame in the history, which is later after Clear or beyond the longest history)
+        const double first = points.isEmpty() ? 0 : std::floor(points.first().x());
+        plot->setAxisRange(Qt::Horizontal, first, std::max(static_cast<double>(frames), first + 1));
         plot->setAxisRange(Qt::Vertical, 20, maxY);
         settingRange = false;
     }

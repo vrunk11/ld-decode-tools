@@ -95,6 +95,8 @@ public:
     bool getLiveSnrIsWholeHistory();
     bool getLiveSnrEnabled();
     void setLiveSnrEnabled(bool enabled);
+    // Forget the SNR history so far
+    void clearLiveSnr();
     // Live input, two buffers: freezing (pausing) keeps the frames around the one shown as they are,
     // while the input goes on filling the ring with newer ones; playing again carries on from the
     // frozen one into them. The number of frames and the first one available are the frozen
