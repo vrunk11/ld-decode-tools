@@ -69,6 +69,8 @@ public:
     // 0 for a source that is not a stream
     qint32 getFieldsReadSoFar();
     qint32 getFirstFieldHeld();
+    // A CVBS stream whose first frame has samples beyond 10 bits
+    bool streamLooksWiderThan10Bit();
     // A stream read as a ring (see StreamReader): hold on to the fields first to last (numbered from 1,
     // and those between) against being overwritten, and let them go again
     void protectFields(qint32 firstField, qint32 lastField);

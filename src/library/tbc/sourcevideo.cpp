@@ -109,6 +109,11 @@ qint32 SourceVideo::firstFieldHeldAtOrAfter(qint32 fieldNumber)
     return found < 0 ? -1 : found + 1;
 }
 
+bool SourceVideo::streamLooksWiderThan10Bit()
+{
+    return stream && stream->looksWiderThan10Bit();
+}
+
 bool SourceVideo::hasField(qint32 fieldNumber)
 {
     if (stream) return stream->hasField(fieldNumber - 1);

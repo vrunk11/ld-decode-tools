@@ -2377,6 +2377,7 @@ void MainWindow::on_finishedLoading(bool success)
         if (tbcSource.getIsLive()) {
             // There is nothing to reload or save; the video plays as it arrives, and stays on
             ui->actionReload_TBC->setEnabled(false);
+            if (!tbcSource.getStreamHint().isEmpty()) statusBar()->showMessage(tbcSource.getStreamHint(), 30000);
             liveTimer->start();
             updateLive();
             // At the live edge, not at the first frame, which would be as late as loading took

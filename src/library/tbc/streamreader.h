@@ -75,6 +75,9 @@ public:
     qint32 numberOfFields();
     // Fields read so far
     qint32 fieldsRead();
+    // CVBS only: whether the first frame holds samples beyond 10 bits, which says the encoding is
+    // not the default (u10) that was asked for; with no metadata on a pipe that is easy to get wrong
+    bool looksWiderThan10Bit();
     // The first field (0-based) still in the window: earlier ones are gone
     qint32 firstFieldKept();
 
@@ -120,6 +123,7 @@ private:
     qint32 furthestRequested = -1;     // in units
     bool ended = false;
     bool stopRequested = false;
+    bool wideSamples = false;
 
     // Note that unit has been asked for, and wait until it is read or the stream ends.
     // mutex must be held. Returns true if the unit was read.

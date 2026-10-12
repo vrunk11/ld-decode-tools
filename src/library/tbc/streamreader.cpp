@@ -91,7 +91,18 @@ void StreamReader::run()
                        << "- the last" << got << "bytes are ignored";
         }
 
+        bool firstFrameWide = false;
+        if (options.cvbs && got == unitBytes && unitsRead == 0) {
+            // Count the samples of the first frame beyond what 10 bits can hold (u10 is 0 to 1023)
+            const qint16 *samples = reinterpret_cast<const qint16 *>(unit.raw.constData());
+            const qint64 count = unitBytes / 2;
+            qint64 wide = 0;
+            for (qint64 i = 0; i < count; i += 7) wide += (samples[i] > 1100 || samples[i] < -50) ? 1 : 0;
+            firstFrameWide = wide * 100 > (count / 7);
+        }
+
         QMutexLocker locker(&mutex);
+        if (firstFrameWide) wideSamples = true;
         if (got != unitBytes) {
             ended = true;
             unitsAdded.wakeAll();
@@ -230,4 +241,10 @@ qint32 StreamReader::firstFieldHeldAtOrAfter(qint32 index)
     const auto it = window.lowerBound(unit);
     if (it == window.end()) return -1;
     return it.key() == unit ? index : it.key() * fieldsPerUnit;
+}
+
+bool StreamReader::looksWiderThan10Bit()
+{
+    QMutexLocker locker(&mutex);
+    return wideSamples;
 }

@@ -79,6 +79,8 @@ public:
     // True once a stream has ended: it has no more frames to come
     bool getIsLiveEnded();
     qint32 getLookAheadFrames();
+    // A hint for the user about the input (empty if none), such as an encoding that looks wrong
+    QString getStreamHint();
     // Live input, two buffers: freezing (pausing) keeps the frames around the one shown as they are,
     // while the input goes on filling the ring with newer ones; playing again carries on from the
     // frozen one into them. The number of frames and the first one available are the frozen
@@ -239,6 +241,7 @@ private:
     QString currentSourceFilename;
     QString currentMetadataFilename;
     QString lastIOError;
+    QString streamHint;
     QString currentChromaFilename;
     // A stream: what has arrived
     bool isLive = false;

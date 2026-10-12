@@ -1579,6 +1579,14 @@ bool TbcSource::startBackgroundStream()
         return false;
     }
 
+    // A CVBS stream with more than 10 bits to a sample, read as if it had 10: the picture would be
+    // washed out, and a pipe has no metadata to say so
+    streamHint.clear();
+    if (streamInput.cvbs && streamInput.encoding == Cvbs::SampleEncoding::U10_4FSC && sourceVideo.streamLooksWiderThan10Bit()) {
+        streamHint = "The input has samples beyond 10 bits, so it is not u10 (the default): try --sample-encoding u16, s16 or tpg21";
+        qWarning().noquote() << streamHint;
+    }
+
     sourceReady = true;
     currentSourceFilename = streamInput.cvbs ? "stdin.cvbs" : "stdin.tbc";
     currentMetadataFilename.clear();
@@ -1638,6 +1646,11 @@ qint32 TbcSource::getLookBehindFrames()
 {
     if (getSystem() == PAL || getSystem() == PAL_M) return palConfiguration.getLookBehind();
     return ntscConfiguration.getLookBehind();
+}
+
+QString TbcSource::getStreamHint()
+{
+    return streamHint;
 }
 
 qint32 TbcSource::getFramesReceived()
