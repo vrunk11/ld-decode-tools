@@ -62,7 +62,11 @@ public:
         Cvbs::SampleEncoding encoding = Cvbs::SampleEncoding::U10_4FSC;
         qint32 blackLevel = -1, whiteLevel = -1;      // TBC only; -1 for the standard level
         bool isSubcarrierLocked = false;
+        // The size of each of the two buffers (the frozen one and the live one), in frames
         qint32 bufferFrames = 32;
+        // Hold the producer back to the pace of the viewer instead of overwriting old video: for
+        // video that comes faster than it plays (a file), not for a live input
+        bool throttle = false;
     };
 
     void loadSource(QString inputFileName);
@@ -75,6 +79,21 @@ public:
     // True once a stream has ended: it has no more frames to come
     bool getIsLiveEnded();
     qint32 getLookAheadFrames();
+    // Live input, two buffers: freezing (pausing) keeps the frames around the one shown as they are,
+    // while the input goes on filling the ring with newer ones; playing again carries on from the
+    // frozen one into them. The number of frames and the first one available are the frozen
+    // buffer's while frozen.
+    void freezeLive(qint32 aroundFrame);
+    void unfreezeLive();
+    bool getIsLiveFrozen();
+    // Once the viewer is past what was frozen, let it go back to being part of the ring
+    void releaseLiveProtection(qint32 currentFrame);
+    // Frames the input has delivered (whatever is frozen), and whether a frame is still held
+    qint32 getFramesReceived();
+    bool isFrameHeld(qint32 frame);
+    // The first held frame at or after this one (-1 if none), with what the decoder looks behind to
+    qint32 nextHeldFrame(qint32 frame);
+    qint32 getLookBehindFrames();
     void unloadSource();
     bool getIsSourceLoaded();
     void saveSourceMetadata();
@@ -224,6 +243,9 @@ private:
     // A stream: what has arrived
     bool isLive = false;
     StreamInput streamInput;
+    bool liveFrozen = false;
+    bool liveProtected = false;
+    qint32 frozenFirstFrame = 1, frozenLastFrame = 0;
     qint32 liveFrames = 0;
     qint32 liveFirstFrame = 1;
     bool liveEnded = false;

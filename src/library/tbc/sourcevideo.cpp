@@ -87,6 +87,28 @@ qint32 SourceVideo::getFirstFieldHeld()
     return stream ? stream->firstFieldKept() + 1 : 0;
 }
 
+void SourceVideo::protectFields(qint32 firstField, qint32 lastField)
+{
+    if (stream) stream->protectFields(firstField - 1, lastField - 1);
+}
+
+void SourceVideo::clearProtection()
+{
+    if (stream) stream->clearProtection();
+}
+
+bool SourceVideo::isFieldHeld(qint32 fieldNumber)
+{
+    return stream ? stream->isFieldHeld(fieldNumber - 1) : true;
+}
+
+qint32 SourceVideo::firstFieldHeldAtOrAfter(qint32 fieldNumber)
+{
+    if (!stream) return fieldNumber;
+    const qint32 found = stream->firstFieldHeldAtOrAfter(fieldNumber - 1);
+    return found < 0 ? -1 : found + 1;
+}
+
 bool SourceVideo::hasField(qint32 fieldNumber)
 {
     if (stream) return stream->hasField(fieldNumber - 1);

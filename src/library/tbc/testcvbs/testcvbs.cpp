@@ -436,6 +436,74 @@ static void testStreamReader(const QString &directory)
         CHECK(reader.getField(500, data));
     }
 
+    // A ring: the producer is never held up, the newest 2 * bufferFrames frames are kept, and the
+    // rest is overwritten -- apart from a protected range, which is a frozen buffer
+    {
+        const qint32 fieldLength = 100;
+        const qint32 numberOfFields = 400;
+        QVector<quint16> samples(fieldLength * numberOfFields);
+        for (qint32 i = 0; i < samples.size(); i++) samples[i] = static_cast<quint16>(1 + i / fieldLength);
+        const QByteArray bytes(reinterpret_cast<const char *>(samples.constData()), samples.size() * 2);
+
+        StreamReader::Options options;
+        options.bufferFrames = 10;      // two buffers of 20 fields: 40 fields in the ring
+        options.ring = true;
+        StreamReader reader(streamOf(bytes), true, fieldLength, options);
+        reader.start();
+
+        // Nothing is asked for, and the whole stream is read all the same
+        for (qint32 attempt = 0; attempt < 200 && reader.numberOfFields() < 0; attempt++) QThread::msleep(10);
+        CHECK(reader.numberOfFields() == numberOfFields);
+
+        // Only the newest 40 fields are held
+        CHECK(reader.isFieldHeld(numberOfFields - 1));
+        CHECK(reader.isFieldHeld(numberOfFields - 40));
+        CHECK(!reader.isFieldHeld(numberOfFields - 41));
+        CHECK(!reader.isFieldHeld(0));
+        CHECK(reader.firstFieldHeldAtOrAfter(0) == numberOfFields - 40);
+        CHECK(reader.firstFieldHeldAtOrAfter(numberOfFields - 5) == numberOfFields - 5);
+        CHECK(reader.firstFieldHeldAtOrAfter(numberOfFields) == -1);
+
+        // A field that has gone is not worth stopping for: it is blank
+        QVector<quint16> data;
+        CHECK(reader.getField(3, data));
+        CHECK(data == QVector<quint16>(fieldLength, 0));
+        CHECK(reader.getField(numberOfFields - 1, data));
+        CHECK(data == QVector<quint16>(fieldLength, static_cast<quint16>(numberOfFields)));
+    }
+
+    // Protecting a range keeps it while the ring goes on overwriting the rest
+    {
+        const qint32 fieldLength = 100;
+        const qint32 numberOfFields = 100;
+        QVector<quint16> samples(fieldLength * numberOfFields);
+        for (qint32 i = 0; i < samples.size(); i++) samples[i] = static_cast<quint16>(1 + i / fieldLength);
+        QByteArray bytes(reinterpret_cast<const char *>(samples.constData()), samples.size() * 2);
+
+        StreamReader::Options options;
+        options.bufferFrames = 5;       // two buffers of 10 fields: 20 fields in the ring
+        options.ring = true;
+        StreamReader reader(streamOf(bytes), true, fieldLength, options);
+        reader.protectFields(30, 39);       // 10 fields that are frozen
+        reader.start();
+        for (qint32 attempt = 0; attempt < 300 && reader.numberOfFields() < 0; attempt++) QThread::msleep(10);
+        CHECK(reader.numberOfFields() == numberOfFields);
+
+        // The frozen ones and the newest 20 are held, and what is between is gone
+        for (qint32 field = 30; field < 40; field++) CHECK(reader.isFieldHeld(field));
+        for (qint32 field = 80; field < 100; field++) CHECK(reader.isFieldHeld(field));
+        CHECK(!reader.isFieldHeld(29));
+        CHECK(!reader.isFieldHeld(40));
+        CHECK(!reader.isFieldHeld(79));
+        // After the frozen buffer the next that is there is the live one
+        CHECK(reader.firstFieldHeldAtOrAfter(40) == 80);
+        QVector<quint16> data;
+        CHECK(reader.getField(35, data));
+        CHECK(data == QVector<quint16>(fieldLength, 36));
+
+        reader.clearProtection();
+    }
+
     // CVBS frames: each is two fields, as frameToFields makes them
     {
         const Cvbs::Geometry geometry = Cvbs::geometry(NTSC);

@@ -50,6 +50,10 @@ public:
         Cvbs::SampleEncoding encoding = Cvbs::SampleEncoding::U10_4FSC;
         // Frames read ahead of the furthest one asked for, and kept behind it
         qint32 bufferFrames = 32;
+        // A live ring instead: the producer is never held up. The last 2 * bufferFrames frames are
+        // kept, the older ones overwritten, apart from a range that is protected (see protectFields).
+        // For video that arrives as it is made, not for a file that is read as fast as it can be.
+        bool ring = false;
     };
 
     // The stream is read from (blocking) until it ends or the reader is stopped, and must
@@ -74,6 +78,15 @@ public:
     // The first field (0-based) still in the window: earlier ones are gone
     qint32 firstFieldKept();
 
+    // Ring mode. Hold on to the fields first to last (0-based, and those between) against being
+    // overwritten, as a frozen picture to go through while the input goes on filling the ring (two
+    // buffers: the frozen one and the live one). One range at a time; clear it to let it go.
+    void protectFields(qint32 firstField, qint32 lastField);
+    void clearProtection();
+    // Whether the field is still held, and the first held one at or after it (-1 if none)
+    bool isFieldHeld(qint32 index);
+    qint32 firstFieldHeldAtOrAfter(qint32 index);
+
 protected:
     void run() override;
 
@@ -92,6 +105,8 @@ private:
     qint32 fieldsPerUnit;      // 1 for TBC, 2 for CVBS
     qint64 unitBytes;
     qint32 windowUnits;
+    qint32 ringUnits = 0;
+    qint32 protectedFirst = -1, protectedLast = -1;     // in units
 
     Cvbs::Geometry geometry;
     std::unique_ptr<Cvbs::SampleConverter> converter;

@@ -101,9 +101,13 @@ int main(int argc, char *argv[])
     parser.addOption(sampleEncodingOption);
 
     QCommandLineOption bufferFramesOption(QStringList() << "buffer-frames",
-                                          QCoreApplication::translate("main", "Piped input: frames read ahead of the one shown, and kept behind it to go back to when paused (default: 5 seconds of video)"),
+                                          QCoreApplication::translate("main", "Piped input: the size of each of the two buffers, in frames (default: 5 seconds of video). A paused input can be gone through in the frozen one while the other goes on filling"),
                                           QCoreApplication::translate("main", "number"));
     parser.addOption(bufferFramesOption);
+
+    QCommandLineOption throttleOption(QStringList() << "throttle",
+                                      QCoreApplication::translate("main", "Piped input: hold the producer back to the pace of the viewer, instead of overwriting old video. For video that arrives faster than it plays (a file, or a decoder that is not live); pausing then holds the input up"));
+    parser.addOption(throttleOption);
 
     // Positional argument to specify input video file
     parser.addPositionalArgument("input", QCoreApplication::translate("main", "Specify input TBC or CVBS file, or - for video piped in"));
@@ -187,8 +191,9 @@ int main(int argc, char *argv[])
             }
             streamInput.isSubcarrierLocked = value == "yes";
         }
-        // The buffer holds about 5 seconds of video: how far back a paused input can be gone through
+        // Each of the two buffers holds about 5 seconds of video: how far back a paused input can be gone through
         streamInput.bufferFrames = streamInput.system == PAL ? 125 : 150;
+        streamInput.throttle = parser.isSet(throttleOption);
         if (parser.isSet(bufferFramesOption)) {
             streamInput.bufferFrames = parser.value(bufferFramesOption).toInt();
             if (streamInput.bufferFrames < 1) {
@@ -196,7 +201,7 @@ int main(int argc, char *argv[])
                 return -1;
             }
         }
-    } else if (parser.isSet(inputFormatOption) || parser.isSet(systemOption) || parser.isSet(bufferFramesOption)) {
+    } else if (parser.isSet(inputFormatOption) || parser.isSet(systemOption) || parser.isSet(bufferFramesOption) || parser.isSet(throttleOption)) {
         qWarning() << "--input-format, --system and the other piped input options only apply to piped input (ld-analyse -)";
     }
 

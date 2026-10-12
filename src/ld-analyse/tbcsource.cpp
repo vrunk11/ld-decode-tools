@@ -471,7 +471,7 @@ QImage TbcSource::getImage()
 qint32 TbcSource::getNumberOfFrames()
 {
     if (!sourceReady) return 0;
-    if (isLive) return liveFrames;
+    if (isLive) return liveFrozen ? frozenLastFrame : liveFrames;
     return ldDecodeMetaData.getNumberOfFrames();
 }
 
@@ -479,7 +479,7 @@ qint32 TbcSource::getNumberOfFrames()
 qint32 TbcSource::getNumberOfFields()
 {
     if (!sourceReady) return 0;
-    if (isLive) return 2 * liveFrames;
+    if (isLive) return 2 * (liveFrozen ? frozenLastFrame : liveFrames);
     return ldDecodeMetaData.getNumberOfFields();
 }
 
@@ -902,6 +902,8 @@ void TbcSource::resetState()
     reverseFoOn = false;
     sourceReady = false;
     sourceMode = ONE_SOURCE;
+    liveFrozen = false;
+    liveProtected = false;
     isLive = false;
     liveFrames = 0;
     liveFirstFrame = 1;
@@ -1555,6 +1557,7 @@ bool TbcSource::startBackgroundStream()
     options.system = streamInput.system;
     options.encoding = streamInput.encoding;
     options.bufferFrames = streamInput.bufferFrames;
+    options.ring = !streamInput.throttle;
     sourceVideo.setStreamOptions(options);
     if (!sourceVideo.open("-", videoParameters.fieldWidth * videoParameters.fieldHeight)) {
         lastIOError = "Could not open the input stream";
@@ -1631,7 +1634,76 @@ void TbcSource::updateLive()
     liveFirstFrame = qMin(firstFrame, qMax(1, liveFrames));
 }
 
+qint32 TbcSource::getLookBehindFrames()
+{
+    if (getSystem() == PAL || getSystem() == PAL_M) return palConfiguration.getLookBehind();
+    return ntscConfiguration.getLookBehind();
+}
+
+qint32 TbcSource::getFramesReceived()
+{
+    return liveFrames;
+}
+
+bool TbcSource::getIsLiveFrozen()
+{
+    return isLive && liveFrozen;
+}
+
+// Pausing a live input: keep the frames around the one shown, and everything that has arrived
+// since, safe from being overwritten, so that they can be gone through and then played on from.
+// The input is not held up: it carries on into the ring, which overwrites what is not kept.
+void TbcSource::freezeLive(qint32 aroundFrame)
+{
+    if (!isLive || streamInput.throttle) return;
+    updateLive();
+
+    const qint32 lookBehind = getLookBehindFrames();
+    frozenLastFrame = liveFrames;
+    frozenFirstFrame = qBound(1, aroundFrame - streamInput.bufferFrames, qMax(1, frozenLastFrame));
+    frozenFirstFrame = qMax(frozenFirstFrame, liveFirstFrame);
+    frozenFirstFrame = qMin(frozenFirstFrame, qMax(1, frozenLastFrame));
+
+    // The frames the first one looks behind to, up to the newest field there is
+    const qint32 protectFrom = qMax(1, frozenFirstFrame - lookBehind);
+    sourceVideo.protectFields(2 * (protectFrom - 1) + 1, qMax(sourceVideo.getFieldsReadSoFar(), 2 * frozenLastFrame));
+    liveProtected = true;
+    liveFrozen = true;
+}
+
+void TbcSource::unfreezeLive()
+{
+    liveFrozen = false;
+}
+
+void TbcSource::releaseLiveProtection(qint32 currentFrame)
+{
+    if (!liveProtected || liveFrozen) return;
+    if (currentFrame > frozenLastFrame) {
+        sourceVideo.clearProtection();
+        liveProtected = false;
+    }
+}
+
+bool TbcSource::isFrameHeld(qint32 frame)
+{
+    // (a throttled stream keeps what is behind the viewer, and nothing is overwritten)
+    if (!isLive || streamInput.throttle) return true;
+    return sourceVideo.isFieldHeld(2 * frame - 1) && sourceVideo.isFieldHeld(2 * frame);
+}
+
+qint32 TbcSource::nextHeldFrame(qint32 frame)
+{
+    if (!isLive) return frame;
+    const qint32 field = sourceVideo.firstFieldHeldAtOrAfter(2 * frame - 1);
+    if (field < 0) return -1;
+    qint32 found = (field + 1) / 2;
+    if (field % 2 == 0) found++;       // only the second field of that frame is held
+    return found;
+}
+
 qint32 TbcSource::getFirstAvailableFrame()
 {
-    return isLive ? liveFirstFrame : 1;
+    if (!isLive) return 1;
+    return liveFrozen ? frozenFirstFrame : liveFirstFrame;
 }

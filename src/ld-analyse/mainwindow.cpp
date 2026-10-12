@@ -325,6 +325,30 @@ void MainWindow::updateLive()
 
     updateLiveControls();
 
+    if (playback->isPlaying()) {
+        // Playing on from a frozen buffer: once past it, it is part of the ring again
+        tbcSource.releaseLiveProtection(currentFrameNumber);
+
+        // The ring overwrites what is not kept, and what was frozen is not contiguous with the
+        // newer buffer if the input went on for longer than the ring holds: play on from the
+        // first frame that is still there, rather than showing what has gone
+        const qint32 probe = qMin(currentFrameNumber + 3, tbcSource.getNumberOfFrames());
+        const bool currentHeld = tbcSource.isFrameHeld(currentFrameNumber);
+        if (!currentHeld || !tbcSource.isFrameHeld(probe)) {
+            const qint32 next = tbcSource.nextHeldFrame(currentHeld ? probe : currentFrameNumber);
+            if (next > 0) {
+                // (the decoder looks behind a frame, so a few before it must be there too)
+                const qint32 target = qMin(next + tbcSource.getLookBehindFrames(), tbcSource.getNumberOfFrames());
+                if (target > currentFrameNumber) {
+                    pausePlayback();
+                    setCurrentFrame(target);
+                    QTimer::singleShot(0, this, [this]() { togglePlayback(); });
+                    return;
+                }
+            }
+        }
+    }
+
     playback->setLive(true, ended);
     playback->setRange(first, last);
     renderer->setLastPosition(last);
@@ -334,10 +358,13 @@ void MainWindow::updateLive()
     const double frameRate = tbcSource.getSystem() == PAL ? 25.0 : 30000.0 / 1001.0;
     const qint32 behind = qMax(0, frames - currentFrameNumber);
     QString status = ended ? tr("Live input ended after %1 frames").arg(frames)
-                           : tr("Live input - %1 frames received").arg(frames);
+                           : tr("Live input - %1 frames received").arg(tbcSource.getFramesReceived());
     if (!ended && behind > 2) status += tr(" - %1 s behind").arg(behind / frameRate, 0, 'f', 1);
     if (!ended && !playback->isPlaying()) status += tr(" - paused: the last %1 s can be gone through")
                                                        .arg(qRound((frames - tbcSource.getFirstAvailableFrame()) / frameRate));
+    if (!ended && tbcSource.getIsLiveFrozen() && tbcSource.getFramesReceived() > frames) {
+        status += tr(" - the input goes on: %1 s since").arg((tbcSource.getFramesReceived() - frames) / frameRate, 0, 'f', 1);
+    }
     sourceVideoStatus.setText(status);
     if (ended) liveTimer->stop();
 }
@@ -459,6 +486,13 @@ void MainWindow::updatePlaybackState(bool playing)
 
     // Say if the machine could not keep up, so a jerky video is not mistaken for a bad capture
     if (!playing) renderer->stop();
+    // A live input: pausing freezes the frames around the one shown (the input goes on filling the
+    // other buffer), playing lets them go once they have been played through
+    if (tbcSource.getIsLive()) {
+        if (playing) tbcSource.unfreezeLive();
+        else tbcSource.freezeLive(currentFrameNumber);
+        updateLiveControls();
+    }
     if (!playing && playback->getSkippedPositions() > 0) {
         statusBar()->showMessage(tr("Playback skipped %1 %2 that could not be shown in time")
                                  .arg(playback->getSkippedPositions())
@@ -479,6 +513,7 @@ void MainWindow::togglePlayback()
     const double frameRate = tbcSource.getSystem() == PAL ? 25.0 : 30000.0 / 1001.0;
     playback->setRate(isFieldView ? 2.0 * frameRate : frameRate);
     const bool isLive = tbcSource.getIsLive();
+    if (isLive) tbcSource.unfreezeLive();
     if (isLive) updateLive();
     const qint32 lastPosition = isFieldView ? tbcSource.getNumberOfFields() : tbcSource.getNumberOfFrames();
     const qint32 firstPosition = isLive ? (isFieldView ? 2 * tbcSource.getFirstAvailableFrame() - 1 : tbcSource.getFirstAvailableFrame()) : 1;
@@ -1492,12 +1527,14 @@ void MainWindow::on_nextPushButton_released()
 // Skip to the next chapter (note: this button was repurposed from 'end frame')
 void MainWindow::on_endPushButton_clicked()
 {
-    const bool wasPlaying = playback->isPlaying();
     pausePlayback();
-    // Live input: the end is the live edge, and playing goes on from there
-    if (tbcSource.getIsLive()) updateLive();
+    // Live input: the end is the live edge (not the end of a frozen buffer), and it plays from there
+    if (tbcSource.getIsLive()) {
+        tbcSource.unfreezeLive();
+        updateLive();
+    }
     setCurrentFrame(tbcSource.startOfNextChapter(currentFrameNumber));
-    if (tbcSource.getIsLive() && wasPlaying) QTimer::singleShot(0, this, [this]() { togglePlayback(); });
+    if (tbcSource.getIsLive()) QTimer::singleShot(0, this, [this]() { togglePlayback(); });
     auto uiNumber = currentFrameNumber;
 
     if (tbcSource.getFieldViewEnabled()) {

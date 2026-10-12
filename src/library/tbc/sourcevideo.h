@@ -69,6 +69,13 @@ public:
     // 0 for a source that is not a stream
     qint32 getFieldsReadSoFar();
     qint32 getFirstFieldHeld();
+    // A stream read as a ring (see StreamReader): hold on to the fields first to last (numbered from 1,
+    // and those between) against being overwritten, and let them go again
+    void protectFields(qint32 firstField, qint32 lastField);
+    void clearProtection();
+    // Whether the field is still held, and the first held one at or after it (-1 if none)
+    bool isFieldHeld(qint32 fieldNumber);
+    qint32 firstFieldHeldAtOrAfter(qint32 fieldNumber);
 
     // Field handling methods
     Data getVideoField(qint32 fieldNumber, qint32 startFieldLine = -1, qint32 endFieldLine = -1);

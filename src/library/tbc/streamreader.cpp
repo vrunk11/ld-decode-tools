@@ -31,6 +31,7 @@ StreamReader::StreamReader(FILE *_stream, bool _ownsStream, qint32 _fieldLength,
     }
     // bufferFrames frames, in units
     windowUnits = std::max(options.bufferFrames, 1) * 2 / fieldsPerUnit;
+    ringUnits = 2 * windowUnits;
 }
 
 StreamReader::~StreamReader()
@@ -62,7 +63,7 @@ void StreamReader::run()
         {
             // Wait until the users have got near enough to the end of what is read
             QMutexLocker locker(&mutex);
-            while (!stopRequested && unitsRead - furthestRequested > windowUnits) spaceFreed.wait(&mutex);
+            while (!options.ring && !stopRequested && unitsRead - furthestRequested > windowUnits) spaceFreed.wait(&mutex);
             if (stopRequested) break;
         }
 
@@ -98,9 +99,22 @@ void StreamReader::run()
         }
         window.insert(unitsRead++, std::move(unit));
 
-        // Units too far behind the furthest one asked for are let go
-        const qint32 oldest = furthestRequested - windowUnits;
-        while (!window.isEmpty() && window.firstKey() < oldest) window.erase(window.begin());
+        if (options.ring) {
+            // The ring holds the newest ringUnits units, and what is protected
+            const qint32 oldest = unitsRead - ringUnits;
+            auto it = window.begin();
+            while (it != window.end() && it.key() < oldest) {
+                if (it.key() >= protectedFirst && it.key() <= protectedLast) {
+                    it = window.lowerBound(protectedLast + 1);
+                } else {
+                    it = window.erase(it);
+                }
+            }
+        } else {
+            // Units too far behind the furthest one asked for are let go
+            const qint32 oldest = furthestRequested - windowUnits;
+            while (!window.isEmpty() && window.firstKey() < oldest) window.erase(window.begin());
+        }
         unitsAdded.wakeAll();
     }
 
@@ -136,6 +150,12 @@ bool StreamReader::getField(qint32 index, Data &data)
         if (!waitFor(unitIndex)) return false;
 
         const auto found = window.constFind(unitIndex);
+        if (found == window.constEnd() && options.ring) {
+            // Overwritten in the ring: not worth stopping for. The viewer is meant to ask what is
+            // held (isFieldHeld), so this is only a field asked for just as it went
+            data = Data(fieldLength, 0);
+            return true;
+        }
         if (found == window.constEnd()) {
             qFatal("Field %d of the input stream was asked for after the reader had moved on to field %d: "
                    "it is gone, as a stream cannot be read again (the buffer holds %d frames - "
@@ -182,4 +202,32 @@ qint32 StreamReader::firstFieldKept()
 {
     QMutexLocker locker(&mutex);
     return window.isEmpty() ? unitsRead * fieldsPerUnit : window.firstKey() * fieldsPerUnit;
+}
+
+void StreamReader::protectFields(qint32 firstField, qint32 lastField)
+{
+    QMutexLocker locker(&mutex);
+    protectedFirst = std::max(0, firstField) / fieldsPerUnit;
+    protectedLast = std::max(0, lastField) / fieldsPerUnit;
+}
+
+void StreamReader::clearProtection()
+{
+    QMutexLocker locker(&mutex);
+    protectedFirst = protectedLast = -1;
+}
+
+bool StreamReader::isFieldHeld(qint32 index)
+{
+    QMutexLocker locker(&mutex);
+    return window.contains(index / fieldsPerUnit);
+}
+
+qint32 StreamReader::firstFieldHeldAtOrAfter(qint32 index)
+{
+    QMutexLocker locker(&mutex);
+    const qint32 unit = index / fieldsPerUnit;
+    const auto it = window.lowerBound(unit);
+    if (it == window.end()) return -1;
+    return it.key() == unit ? index : it.key() * fieldsPerUnit;
 }
