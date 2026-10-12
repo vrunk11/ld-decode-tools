@@ -45,6 +45,8 @@
 #include "tbcsource.h"
 #include "playbackcontroller.h"
 #include "playbackrenderer.h"
+#include "videofilter.h"
+#include "videofilterdialog.h"
 #include "theme.h"
 #include "themeeditordialog.h"
 
@@ -187,6 +189,13 @@ private:
     // Video playback: the controller is the clock, MainWindow shows what falls due
     PlaybackController *playback;
     PlaybackRenderer *renderer;
+    VideoFilter videoFilter;
+    VideoFilterSettings videoFilterSettings;
+    VideoFilterDialog *videoFilterDialog = nullptr;
+    qint32 lastFilteredPosition = -1;
+    void setupVideoFilter();
+    void applyVideoFilter(const VideoFilterSettings &settings);
+    bool filterImage(QImage &image, qint32 displayWidth, qint32 displayHeight);
     quint32 renderGeneration = 0;
     bool playbackStarting = false;
     qint32 playbackStartPosition = 0;

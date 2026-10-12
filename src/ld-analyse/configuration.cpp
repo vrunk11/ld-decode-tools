@@ -77,6 +77,9 @@ void Configuration::writeConfiguration(void)
     configuration->setValue("styleName", settings.viewOptions.styleName);
     configuration->remove("styleMode"); // replaced by styleName
     configuration->setValue("customPalette", settings.viewOptions.customPalette);
+    for (auto it = settings.viewOptions.videoFilter.constBegin(); it != settings.viewOptions.videoFilter.constEnd(); ++it) {
+        configuration->setValue("videoFilter/" + it.key(), it.value());
+    }
     configuration->endGroup();
 
     // Sync the settings with disk
@@ -120,6 +123,10 @@ void Configuration::readConfiguration(void)
     settings.viewOptions.themeMode = configuration->value("themeMode", 0).toInt();
     settings.viewOptions.styleName = configuration->value("styleName", QString()).toString();
     settings.viewOptions.customPalette = configuration->value("customPalette", QString()).toString();
+    settings.viewOptions.videoFilter.clear();
+    configuration->beginGroup("videoFilter");
+    for (const QString &key: configuration->childKeys()) settings.viewOptions.videoFilter[key] = configuration->value(key);
+    configuration->endGroup();
     configuration->endGroup();
 }
 
@@ -152,6 +159,7 @@ void Configuration::setDefault(void)
     settings.viewOptions.themeMode = 0;
     settings.viewOptions.styleName.clear();
     settings.viewOptions.customPalette.clear();
+    settings.viewOptions.videoFilter.clear();
 
     // Write the configuration
     writeConfiguration();
@@ -350,4 +358,14 @@ void Configuration::setCustomPalette(QString customPalette)
 QString Configuration::getCustomPalette(void)
 {
     return settings.viewOptions.customPalette;
+}
+
+void Configuration::setVideoFilter(const QVariantMap &videoFilter)
+{
+    settings.viewOptions.videoFilter = videoFilter;
+}
+
+QVariantMap Configuration::getVideoFilter(void)
+{
+    return settings.viewOptions.videoFilter;
 }

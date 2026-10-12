@@ -18,6 +18,7 @@
 #include <QApplication>
 #include <QDir>
 #include <QDebug>
+#include <QVariantMap>
 
 class Configuration : public QObject
 {
@@ -75,6 +76,9 @@ public:
     // Custom theme colours as "Key=#rrggbb;..." (see theme.h), empty if none
     void setCustomPalette(QString customPalette);
     QString getCustomPalette(void);
+    // The video filters (see VideoFilterSettings), as name -> value; empty if none were saved
+    void setVideoFilter(const QVariantMap &videoFilter);
+    QVariantMap getVideoFilter(void);
 
 signals:
 
@@ -112,6 +116,7 @@ private:
         qint32 themeMode;
         QString styleName;
         QString customPalette;
+        QVariantMap videoFilter;
     };
 
     // Overall settings structure

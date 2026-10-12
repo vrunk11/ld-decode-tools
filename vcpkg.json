@@ -13,6 +13,20 @@
     }
   ],
   "features": {
+    "ffmpeg": {
+      "description": "Video filters in ld-analyse (libavfilter): deinterlacing, scaling... Optional; build.bat enables it with USE_FFMPEG=1",
+      "dependencies": [
+        {
+          "name": "ffmpeg",
+          "default-features": false,
+          "features": [
+            "avcodec",
+            "avfilter",
+            "swscale"
+          ]
+        }
+      ]
+    },
     "qt": {
       "description": "Build Qt 6 with vcpkg instead of using an installed Qt (used by build.bat; CI installs an official Qt)",
       "dependencies": [

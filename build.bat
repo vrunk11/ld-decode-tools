@@ -120,6 +120,10 @@ if not defined USE_MSVC set "HOST_TRIPLET_ARG=-DVCPKG_HOST_TRIPLET=%TRIPLET%"
 
 set "FEATURES_ARG=-DVCPKG_MANIFEST_FEATURES=qt"
 if "%USE_SYSTEM_QT%"=="1" set "FEATURES_ARG="
+rem USE_FFMPEG=1 adds libavfilter (video filters in ld-analyse); building it takes a while
+if "%USE_FFMPEG%"=="1" (
+    if defined FEATURES_ARG (set "FEATURES_ARG=-DVCPKG_MANIFEST_FEATURES=qt;ffmpeg") else (set "FEATURES_ARG=-DVCPKG_MANIFEST_FEATURES=ffmpeg")
+)
 
 rem --- generator ---------------------------------------------------------------
 rem Ninja when available (single-config, honours CMAKE_BUILD_TYPE); otherwise

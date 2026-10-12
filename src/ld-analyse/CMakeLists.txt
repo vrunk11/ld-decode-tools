@@ -23,6 +23,8 @@ set(ld-analyse_SOURCES
     plotwidget.cpp
     theme.cpp
     themeeditordialog.cpp
+    videofilter.cpp
+    videofilterdialog.cpp
 )
 
 qt_add_resources(ld-analyse_SOURCES ld-analyse-resources.qrc)
@@ -47,6 +49,11 @@ target_link_libraries(ld-analyse PRIVATE
     Qt::Core Qt::Gui Qt::Widgets Qt::Svg
     lddecode-library lddecode-chroma
 )
+
+if(FFMPEG_FOUND)
+    target_link_libraries(ld-analyse PRIVATE PkgConfig::FFMPEG)
+    target_compile_definitions(ld-analyse PRIVATE LDDECODE_HAVE_FFMPEG)
+endif()
 
 if(WIN32)
     target_compile_definitions(ld-analyse PRIVATE

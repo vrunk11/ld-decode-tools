@@ -153,6 +153,7 @@ MainWindow::MainWindow(QString inputFilenameParam, QWidget *parent) :
     pendingSliderValue = -1;
 
     setupPlayback();
+    setupVideoFilter();
 
     // Set the GUI to unloaded
     updateGuiUnloaded();
@@ -192,6 +193,99 @@ MainWindow::~MainWindow()
     }
 
     delete ui;
+}
+
+// The ffmpeg video filters: View > Video filter...
+void MainWindow::setupVideoFilter()
+{
+    videoFilterDialog = new VideoFilterDialog(this);
+
+    QAction *action = new QAction(tr("Video filter..."), this);
+    ui->menuView->addSeparator();
+    ui->menuView->addAction(action);
+    if (!VideoFilter::isAvailable()) {
+        action->setEnabled(false);
+        action->setToolTip(tr("This build of ld-analyse has no video filters (libavfilter was not found)"));
+        return;
+    }
+    connect(action, &QAction::triggered, this, [this]() {
+        videoFilterDialog->setSettings(videoFilterSettings);
+        videoFilterDialog->show();
+        videoFilterDialog->raise();
+    });
+    connect(videoFilterDialog, &VideoFilterDialog::settingsChosen, this, &MainWindow::applyVideoFilter);
+
+    // The filters of the last session
+    const QVariantMap saved = configuration.getVideoFilter();
+    VideoFilterSettings settings;
+    settings.deinterlacerOn = saved.value("deinterlacerOn", false).toBool();
+    settings.deinterlacer = saved.value("deinterlacer", settings.deinterlacer).toString();
+    settings.scalerOn = saved.value("scalerOn", false).toBool();
+    settings.scaler = saved.value("scaler", settings.scaler).toString();
+    settings.customOn = saved.value("customOn", false).toBool();
+    settings.custom = saved.value("custom").toString();
+    videoFilterSettings = settings;
+    if (!videoFilter.setGraph(settings.toGraph()).isEmpty()) {
+        // They no longer work (an ffmpeg without a filter): start without
+        videoFilterSettings = VideoFilterSettings();
+    }
+}
+
+// Show the picture through these filters
+void MainWindow::applyVideoFilter(const VideoFilterSettings &settings)
+{
+    const QString problem = videoFilter.setGraph(settings.toGraph());
+    videoFilterDialog->showResult(problem);
+    if (!problem.isEmpty()) return;
+
+    videoFilterSettings = settings;
+    configuration.setVideoFilter({
+        { "deinterlacerOn", settings.deinterlacerOn }, { "deinterlacer", settings.deinterlacer },
+        { "scalerOn", settings.scalerOn }, { "scaler", settings.scaler },
+        { "customOn", settings.customOn }, { "custom", settings.custom },
+    });
+    lastFilteredPosition = -1;
+    if (tbcSource.getIsSourceLoaded() && !playback->isPlaying()) updateImageViewer();
+}
+
+// Show the image through the video filter, if there is one. Returns false if the picture
+// on show should be left as it is (a filter that is still filling up gave nothing yet).
+bool MainWindow::filterImage(QImage &image, qint32 displayWidth, qint32 displayHeight)
+{
+    if (!videoFilter.isActive() || image.isNull()) return true;
+
+    const bool isFieldView = tbcSource.getFieldViewEnabled();
+    const qint32 position = isFieldView ? currentFieldNumber : currentFrameNumber;
+
+    VideoFilter::Format format;
+    format.width = image.width();
+    format.height = image.height();
+    format.displayWidth = displayWidth;
+    format.displayHeight = displayHeight;
+    const bool isPal = tbcSource.getSystem() == PAL;
+    format.frameRateNumerator = (isPal ? 25 : 30000) * (isFieldView ? 2 : 1);
+    format.frameRateDenominator = isPal ? 1 : 1001;
+    format.topFieldFirst = !tbcSource.getFieldOrder();
+    format.interlaced = tbcSource.getFrameViewEnabled();
+
+    // While playing, the images come in order and the filter can keep its history
+    const bool continuous = (playback->isPlaying() || playbackStarting) && lastFilteredPosition >= 0
+                            && position > lastFilteredPosition;
+    lastFilteredPosition = position;
+
+    QImage filtered = videoFilter.filter(image, format, continuous);
+    if (!videoFilter.lastError().isEmpty()) {
+        // Do not go on failing for every image: drop the filter, and say why
+        const QString problem = videoFilter.lastError();
+        videoFilter.setGraph(QString());
+        videoFilterSettings = VideoFilterSettings();
+        configuration.setVideoFilter(QVariantMap());
+        statusBar()->showMessage(tr("The video filter failed and was switched off: %1").arg(problem), 10000);
+        return true;
+    }
+    if (filtered.isNull()) return !continuous;
+    image = filtered;
+    return true;
 }
 
 // Video playback ------------------------------------------------------------------------------------------------------
@@ -776,15 +870,18 @@ void MainWindow::updateImageViewer()
         imagePainter.end();
     }
 
-    QPixmap pixmap = QPixmap::fromImage(image);
-
     // Get the aspect ratio adjustment if required
     qint32 adjustment = getAspectAdjustment();
+    const int width = static_cast<int>(scaleFactor * (image.width() + adjustment));
+    const int height = static_cast<int>(scaleFactor * image.height());
+
+    // Through the video filters, which can size the picture to what is shown
+    const bool showPicture = filterImage(image, width, height);
+
+    QPixmap pixmap = QPixmap::fromImage(image);
 
     // Scale and apply the pixmap (only if it's valid)
-    if (!pixmap.isNull()) {
-        const int width = static_cast<int>(scaleFactor * (pixmap.size().width() + adjustment));
-        const int height = static_cast<int>(scaleFactor * pixmap.size().height());
+    if (showPicture && !pixmap.isNull()) {
         ui->imageViewerLabel->setPixmap(pixmap.scaled(width, height,
                                                       Qt::IgnoreAspectRatio, Qt::SmoothTransformation));
     }
