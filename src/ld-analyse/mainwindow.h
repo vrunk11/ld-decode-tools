@@ -213,6 +213,9 @@ private:
     QAction *actionPlayPause;
     QAction *actionLoop;
     QActionGroup *speedActions;
+    QAction *speedNormalAction = nullptr;
+    QAction *speedSeparator = nullptr;
+    void setPlaybackOptionsVisible(bool visible);
     void setupPlayback();
     void togglePlayback();
     void pausePlayback();

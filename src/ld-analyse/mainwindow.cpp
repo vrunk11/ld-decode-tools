@@ -201,7 +201,7 @@ MainWindow::~MainWindow()
     delete ui;
 }
 
-// The ffmpeg video filters: View > Video filter...
+// The ffmpeg video filters: Window > Video filter...
 // Give the filter the graph of the filters on. The Deinterlaced view uses the deinterlacer
 // chosen whether or not its check box is ticked. Returns ffmpeg's complaint, if any.
 QString MainWindow::updateVideoFilterGraph()
@@ -217,8 +217,8 @@ void MainWindow::setupVideoFilter()
     videoFilterDialog = new VideoFilterDialog(this);
 
     QAction *action = new QAction(tr("Video filter..."), this);
-    ui->menuView->addSeparator();
-    ui->menuView->addAction(action);
+    // With the other windows and configuration dialogues
+    ui->menuWindow->addAction(action);
     if (!VideoFilter::isAvailable()) {
         action->setEnabled(false);
         action->setToolTip(tr("This build of ld-analyse has no video filters (libavfilter was not found)"));
@@ -369,6 +369,20 @@ void MainWindow::updateLive()
     if (ended) liveTimer->stop();
 }
 
+// Loop and the speeds mean nothing for a live input, which plays as it arrives: hide them (and
+// go back to normal speed, no loop)
+void MainWindow::setPlaybackOptionsVisible(bool visible)
+{
+    if (!visible) {
+        actionLoop->setChecked(false);
+        speedNormalAction->setChecked(true);
+        playback->setSpeed(1.0);
+    }
+    actionLoop->setVisible(visible);
+    speedSeparator->setVisible(visible);
+    for (QAction *action: speedActions->actions()) action->setVisible(visible);
+}
+
 // A live input can not be sought while it plays: the navigation controls are off then. Paused,
 // they go through the buffer, which holds the last few seconds.
 void MainWindow::updateLiveControls()
@@ -439,12 +453,13 @@ void MainWindow::setupPlayback()
     connect(actionLoop, &QAction::toggled, playback, &PlaybackController::setLoop);
 
     // Speed relative to the real speed of the video
-    menu->addSeparator();
+    speedSeparator = menu->addSeparator();
     speedActions = new QActionGroup(this);
     for (const double speed: {0.25, 0.5, 1.0, 2.0, 4.0}) {
         QAction *action = menu->addAction(tr("%1x speed").arg(speed));
         action->setCheckable(true);
         action->setChecked(speed == 1.0);
+        if (speed == 1.0) speedNormalAction = action;
         speedActions->addAction(action);
         connect(action, &QAction::triggered, this, [this, speed]() { playback->setSpeed(speed); });
     }
@@ -769,6 +784,7 @@ void MainWindow::updateGuiLoaded()
 void MainWindow::updateGuiUnloaded()
 {
     liveTimer->stop();
+    setPlaybackOptionsVisible(true);
     // Disable the GUI controls
     setGuiEnabled(false);
 
@@ -2377,6 +2393,7 @@ void MainWindow::on_finishedLoading(bool success)
         if (tbcSource.getIsLive()) {
             // There is nothing to reload or save; the video plays as it arrives, and stays on
             ui->actionReload_TBC->setEnabled(false);
+            setPlaybackOptionsVisible(false);
             if (!tbcSource.getStreamHint().isEmpty()) statusBar()->showMessage(tbcSource.getStreamHint(), 30000);
             liveTimer->start();
             updateLive();

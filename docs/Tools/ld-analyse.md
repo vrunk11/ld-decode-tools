@@ -154,13 +154,13 @@ Clicking again on the same button will revert back to normal field order.  Note 
 
 # Playing the video
 
-The play button (between the previous and next frame buttons), the Playback menu and the space bar play the video at its real speed: 25 frames per second for PAL, about 29.97 for NTSC (twice that in field view). The Playback menu also has Loop and the speeds 0.25x to 4x.
+The play button (between the previous and next frame buttons), the Playback menu and the space bar play the video at its real speed: 25 frames per second for PAL, about 29.97 for NTSC (twice that in field view). The Playback menu also has Loop and the speeds 0.25x to 4x (not for live input, which plays as it arrives).
 
 Playback follows the wall clock, and the frames are decoded ahead by several threads, so the chroma decoder does not hold the window up. If the machine cannot decode as fast as the video plays, the frames in between are skipped, so that the video keeps its speed, and the status bar says how many were skipped. The line scope, vectorscope and the other tools follow the frame shown. Stepping, seeking, changing the view or opening a file stops playback.
 
 # Video filters
 
-View > Video filter... shows the picture through ffmpeg filters (libavfilter). Each of these has a check box, so it can be switched off without losing its setting, and they run in this order:
+Window > Video filter... shows the picture through ffmpeg filters (libavfilter). Each of these has a check box, so it can be switched off without losing its setting, and they run in this order:
 
 * a deinterlacer: yadif, bwdif, w3fdif or estdif
 * a scaling algorithm that gives the picture the size it is shown at: bilinear, bicubic, lanczos, spline, gaussian, area averaging or nearest neighbour
