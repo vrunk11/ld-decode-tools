@@ -14,6 +14,7 @@ set(ld-analyse_SOURCES
     chromadecoderconfigdialog.cpp chromadecoderconfigdialog.ui
     tbcsource.cpp
     playbackcontroller.cpp
+    playbackrenderer.cpp
     vbidialog.cpp vbidialog.ui
     configuration.cpp
     dropoutanalysisdialog.cpp dropoutanalysisdialog.ui

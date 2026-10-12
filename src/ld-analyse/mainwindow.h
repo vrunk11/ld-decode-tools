@@ -42,6 +42,7 @@
 #include "configuration.h"
 #include "tbcsource.h"
 #include "playbackcontroller.h"
+#include "playbackrenderer.h"
 #include "theme.h"
 #include "themeeditordialog.h"
 
@@ -183,6 +184,12 @@ private:
 
     // Video playback: the controller is the clock, MainWindow shows what falls due
     PlaybackController *playback;
+    PlaybackRenderer *renderer;
+    quint32 renderGeneration = 0;
+    bool playbackStarting = false;
+    qint32 playbackStartPosition = 0;
+    qint32 playbackDue = 0;
+    void showRenderedImage();
     QPushButton *playPushButton;
     QAction *actionPlayPause;
     QAction *actionLoop;

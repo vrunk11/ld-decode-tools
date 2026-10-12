@@ -200,6 +200,8 @@ MainWindow::~MainWindow()
 void MainWindow::setupPlayback()
 {
     playback = new PlaybackController(this);
+    renderer = new PlaybackRenderer(this);
+    connect(renderer, &PlaybackRenderer::imageReady, this, &MainWindow::showRenderedImage);
     connect(playback, &PlaybackController::positionDue, this, &MainWindow::playbackPositionDue);
     connect(playback, &PlaybackController::stateChanged, this, &MainWindow::updatePlaybackState);
 
@@ -245,6 +247,7 @@ void MainWindow::updatePlaybackState(bool playing)
     actionPlayPause->setText(playing ? tr("&Pause") : tr("&Play"));
 
     // Say if the machine could not keep up, so a jerky video is not mistaken for a bad capture
+    if (!playing) renderer->stop();
     if (!playing && playback->getSkippedPositions() > 0) {
         statusBar()->showMessage(tr("Playback skipped %1 %2 that could not be shown in time")
                                  .arg(playback->getSkippedPositions())
@@ -254,8 +257,8 @@ void MainWindow::updatePlaybackState(bool playing)
 
 void MainWindow::togglePlayback()
 {
-    if (playback->isPlaying()) {
-        playback->pause();
+    if (playback->isPlaying() || playbackStarting) {
+        pausePlayback();
         return;
     }
     if (!tbcSource.getIsSourceLoaded()) return;
@@ -264,24 +267,71 @@ void MainWindow::togglePlayback()
     const bool isFieldView = tbcSource.getFieldViewEnabled();
     const double frameRate = tbcSource.getSystem() == PAL ? 25.0 : 30000.0 / 1001.0;
     playback->setRate(isFieldView ? 2.0 * frameRate : frameRate);
-    playback->setRange(1, isFieldView ? tbcSource.getNumberOfFields() : tbcSource.getNumberOfFrames());
-    playback->play(isFieldView ? currentFieldNumber : currentFrameNumber);
+    const qint32 lastPosition = isFieldView ? tbcSource.getNumberOfFields() : tbcSource.getNumberOfFrames();
+    playback->setRange(1, lastPosition);
+
+    // Start decoding ahead; the clock starts once the first image is ready
+    playbackStartPosition = isFieldView ? currentFieldNumber : currentFrameNumber;
+    if (playbackStartPosition >= lastPosition) playbackStartPosition = 1;
+    playbackDue = playbackStartPosition;
+    renderGeneration = tbcSource.getSettingsGeneration();
+    renderer->start(tbcSource.getRenderSettings(), renderGeneration, playbackStartPosition, lastPosition);
+    playbackStarting = true;
+    updatePlaybackState(true);
+    statusBar()->showMessage(tr("Decoding ahead..."));
 }
 
 // Stop playing, as when the user takes over (does nothing if not playing)
 void MainWindow::pausePlayback()
 {
+    const bool wasActive = playback->isPlaying() || playbackStarting;
+    playbackStarting = false;
     playback->pause();
+    renderer->stop();
+    if (wasActive) updatePlaybackState(false);
 }
 
-// Show the frame (or field) that has fallen due
+// The clock says a position is due: let the decoders know, and show what is ready
 void MainWindow::playbackPositionDue(qint32 position)
 {
-    if (tbcSource.getFieldViewEnabled()) {
-        setCurrentField(position);
-    } else {
-        setCurrentFrame(position);
+    playbackDue = position;
+    renderer->setDue(position);
+    showRenderedImage();
+}
+
+// Show the newest image that is ready for a position that has fallen due
+void MainWindow::showRenderedImage()
+{
+    if (!playback->isPlaying() && !playbackStarting) return;
+
+    if (renderer->hasFailed()) {
+        pausePlayback();
+        QMessageBox::warning(this, tr("Playback"), tr("The video could not be opened for playback."));
+        return;
     }
+
+    // The settings were changed while playing: decode again from the present
+    if (tbcSource.getSettingsGeneration() != renderGeneration) {
+        renderGeneration = tbcSource.getSettingsGeneration();
+        renderer->setSettings(tbcSource.getRenderSettings(), renderGeneration);
+        return;
+    }
+
+    qint32 position;
+    QImage image;
+    if (!renderer->take(playbackDue, position, image)) return;
+
+    if (playbackStarting) {
+        // The first image is the one already on show: the clock starts from here
+        playbackStarting = false;
+        statusBar()->clearMessage();
+        playback->play(playbackStartPosition);
+        return;
+    }
+
+    tbcSource.setPrerenderedImage(position, image);
+    const bool isFieldView = tbcSource.getFieldViewEnabled();
+    if (isFieldView) setCurrentField(position); else setCurrentFrame(position);
 
     // Move the controls along without making them seek
     const QSignalBlocker spinBlocker(ui->posNumberSpinBox);

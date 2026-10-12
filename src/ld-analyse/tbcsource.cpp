@@ -119,9 +119,87 @@ QString TbcSource::getLastIOError()
     return lastIOError;
 }
 
+// Copy the settings that decide what an image looks like
+TbcSource::RenderSettings TbcSource::getRenderSettings()
+{
+    RenderSettings settings;
+    settings.sourceFilename = currentSourceFilename;
+    settings.chromaFilename = currentChromaFilename;
+    settings.metadataFilename = currentMetadataFilename;
+    settings.palConfiguration = palConfiguration;
+    settings.ntscConfiguration = ntscConfiguration;
+    settings.monoConfiguration = monoConfiguration;
+    settings.outputConfiguration = outputConfiguration;
+    settings.videoParameters = ldDecodeMetaData.getVideoParameters();
+    settings.chromaOn = chromaOn;
+    settings.dropoutsOn = dropoutsOn;
+    settings.reverseFoOn = reverseFoOn;
+    settings.stretchFieldOn = stretchFieldOn;
+    settings.combine = combine;
+    settings.viewMode = viewMode;
+    settings.sourceMode = sourceMode;
+    return settings;
+}
+
+// Open the same files as another TbcSource, to render images beside it. This reads the
+// metadata again, so it is slow, and is meant to be called once, from the thread that
+// will do the rendering.
+bool TbcSource::openForRendering(const RenderSettings &settings)
+{
+    if (!ldDecodeMetaData.read(settings.metadataFilename)) return false;
+    ldDecodeMetaData.setVideoParameters(settings.videoParameters);
+
+    const LdDecodeMetaData::VideoParameters &videoParameters = ldDecodeMetaData.getVideoParameters();
+    const qint32 fieldLength = videoParameters.fieldWidth * videoParameters.fieldHeight;
+    if (!sourceVideo.open(settings.sourceFilename, fieldLength)) return false;
+    if (!settings.chromaFilename.isEmpty() && !chromaSourceVideo.open(settings.chromaFilename, fieldLength)) {
+        sourceVideo.close();
+        return false;
+    }
+
+    currentSourceFilename = settings.sourceFilename;
+    currentChromaFilename = settings.chromaFilename;
+    currentMetadataFilename = settings.metadataFilename;
+    sourceReady = true;
+    applyRenderSettings(settings);
+    return true;
+}
+
+// Make this TbcSource render images as another one does
+void TbcSource::applyRenderSettings(const RenderSettings &settings)
+{
+    palConfiguration = settings.palConfiguration;
+    ntscConfiguration = settings.ntscConfiguration;
+    monoConfiguration = settings.monoConfiguration;
+    outputConfiguration = settings.outputConfiguration;
+    chromaOn = settings.chromaOn;
+    dropoutsOn = settings.dropoutsOn;
+    reverseFoOn = settings.reverseFoOn;
+    stretchFieldOn = settings.stretchFieldOn;
+    combine = settings.combine;
+    viewMode = settings.viewMode;
+    sourceMode = settings.sourceMode;
+
+    ldDecodeMetaData.setVideoParameters(settings.videoParameters);
+    ldDecodeMetaData.setIsFirstFieldFirst(!reverseFoOn);
+    configureChromaDecoder();
+
+    // Whatever was loaded was loaded with other settings
+    loadedFrameNumber = -1;
+    invalidateImageCache();
+}
+
+void TbcSource::setPrerenderedImage(qint32 position, const QImage &image)
+{
+    prerenderedImage = image;
+    prerenderedPosition = position;
+    prerenderedGeneration = settingsGeneration;
+}
+
 // Method to set the highlight dropouts mode (true = dropouts highlighted)
 void TbcSource::setHighlightDropouts(bool _state)
 {
+    settingsGeneration++;
     invalidateImageCache();
     dropoutsOn = _state;
 }
@@ -129,6 +207,7 @@ void TbcSource::setHighlightDropouts(bool _state)
 // Method to set the chroma decoder mode (true = on)
 void TbcSource::setChromaDecoder(bool _state)
 {
+    settingsGeneration++;
     invalidateImageCache();
     chromaOn = _state;
 }
@@ -136,6 +215,7 @@ void TbcSource::setChromaDecoder(bool _state)
 // Method to set the view mode
 void TbcSource::setViewMode(ViewMode _viewMode)
 {
+    settingsGeneration++;
     invalidateImageCache();
     viewMode = _viewMode;
 }
@@ -143,6 +223,7 @@ void TbcSource::setViewMode(ViewMode _viewMode)
 // Method to set stretch field mode (true = on)
 void TbcSource::setStretchField(bool _stretch)
 {
+    settingsGeneration++;
     invalidateImageCache();
     stretchFieldOn = _stretch;
 }
@@ -150,6 +231,7 @@ void TbcSource::setStretchField(bool _stretch)
 // Method to set the field order (true = reversed, false = normal)
 void TbcSource::setFieldOrder(bool _state)
 {
+    settingsGeneration++;
     invalidateImageCache();
     reverseFoOn = _state;
 
@@ -160,6 +242,7 @@ void TbcSource::setFieldOrder(bool _state)
 // Method to set if we combine source
 void TbcSource::setCombine(bool _state)
 {
+    settingsGeneration++;
 	combine = _state;
 }
 
@@ -220,6 +303,7 @@ TbcSource::SourceMode TbcSource::getSourceMode()
 // Set the source mode
 void TbcSource::setSourceMode(TbcSource::SourceMode _sourceMode)
 {
+    settingsGeneration++;
     if (sourceMode == ONE_SOURCE) return;
 
     invalidateImageCache();
@@ -264,6 +348,16 @@ void TbcSource::load(qint32 frameNumber, qint32 fieldNumber)
 QImage TbcSource::getImage()
 {
     if ((getFieldViewEnabled() ? loadedFieldNumber : loadedFrameNumber) == -1) return QImage();
+    // Rendered ahead by playback, in another thread, with the settings now in force
+    if (prerenderedPosition == (getFieldViewEnabled() ? loadedFieldNumber : loadedFrameNumber)
+        && prerenderedGeneration == settingsGeneration && !prerenderedImage.isNull()) {
+        if (!getFieldViewEnabled()) {
+            cache = prerenderedImage;
+            cacheValid = true;
+        }
+        return prerenderedImage;
+    }
+
 
     // Check cached QImage
     if (!getFieldViewEnabled() && cacheValid) {
@@ -470,6 +564,7 @@ const LdDecodeMetaData::VideoParameters &TbcSource::getVideoParameters()
 // Update the VideoParameters for the current source
 void TbcSource::setVideoParameters(const LdDecodeMetaData::VideoParameters &videoParameters)
 {
+    settingsGeneration++;
     invalidateImageCache();
 
     // Update the metadata
@@ -696,6 +791,7 @@ void TbcSource::setChromaConfiguration(const PalColour::Configuration &_palConfi
                                        const Comb::Configuration &_ntscConfiguration,
                                        const OutputWriter::Configuration &_outputConfiguration)
 {
+    settingsGeneration++;
     invalidateImageCache();
 
     palConfiguration = _palConfiguration;
@@ -782,6 +878,8 @@ void TbcSource::resetState()
     reverseFoOn = false;
     sourceReady = false;
     sourceMode = ONE_SOURCE;
+    currentChromaFilename.clear();
+    prerenderedPosition = -1;
 
     // Cache state
     loadedFrameNumber = -1;
@@ -1287,6 +1385,7 @@ bool TbcSource::startBackgroundLoad(QString sourceFilename)
             return false;
         }
 
+        currentChromaFilename = chromaSourceFilename;
         sourceMode = isChromaTbc ? CHROMA_SOURCE : BOTH_SOURCES;
     }
 

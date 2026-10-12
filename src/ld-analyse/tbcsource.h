@@ -63,6 +63,13 @@ public:
     QString getMetadataFormatName();
     QString getLastIOError();
 
+    RenderSettings getRenderSettings();
+    quint32 getSettingsGeneration() const { return settingsGeneration; }
+    bool openForRendering(const RenderSettings &settings);
+    void applyRenderSettings(const RenderSettings &settings);
+    // Use this image, rendered elsewhere, for the frame (field in field view) if it is the one loaded
+    void setPrerenderedImage(qint32 position, const QImage &image);
+
     void setHighlightDropouts(bool _state);
     void setChromaDecoder(bool _state);
     void setFieldView(bool _state);
@@ -94,6 +101,20 @@ public:
     };
     SourceMode getSourceMode();
     void setSourceMode(SourceMode sourceMode);
+
+    // Everything a second TbcSource needs to show the same images as this one. Playback decodes
+    // frames ahead in other threads, each with a TbcSource of its own opened this way.
+    struct RenderSettings {
+        QString sourceFilename, chromaFilename, metadataFilename;
+        PalColour::Configuration palConfiguration;
+        Comb::Configuration ntscConfiguration;
+        MonoDecoder::MonoConfiguration monoConfiguration;
+        OutputWriter::Configuration outputConfiguration;
+        LdDecodeMetaData::VideoParameters videoParameters;
+        bool chromaOn, dropoutsOn, reverseFoOn, stretchFieldOn, combine;
+        ViewMode viewMode;
+        SourceMode sourceMode;
+    };
 
     void load(qint32 frameNumber, qint32 fieldNumber);
 
@@ -176,6 +197,11 @@ private:
     QString currentSourceFilename;
     QString currentMetadataFilename;
     QString lastIOError;
+    QString currentChromaFilename;
+    quint32 settingsGeneration = 0;
+    QImage prerenderedImage;
+    qint32 prerenderedPosition = -1;
+    quint32 prerenderedGeneration = 0;
 
     // Chroma decoder objects
     PalColour palColour;
