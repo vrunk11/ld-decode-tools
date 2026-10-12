@@ -199,7 +199,7 @@ private:
     QString updateVideoFilterGraph();
     QPushButton *filtersPushButton = nullptr;     // the master switch of the filters
     QAction *actionFilters = nullptr;
-    bool filtersEnabled = true;
+    bool filtersEnabled = false;
     void setFiltersEnabled(bool enabled);
     void updateFiltersButton();
     void updateFieldOrderVisibility();

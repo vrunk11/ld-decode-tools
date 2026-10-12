@@ -225,7 +225,6 @@ QString MainWindow::updateVideoFilterGraph()
 void MainWindow::saveVideoFilterConfig()
 {
     configuration.setVideoFilter({
-        { "enabled", filtersEnabled },
         { "deinterlacer", videoFilterSettings.deinterlacer },
         { "scalerOn", videoFilterSettings.scalerOn }, { "scaler", videoFilterSettings.scaler },
         { "custom", videoFilterSettings.custom },
@@ -322,7 +321,9 @@ void MainWindow::setupVideoFilter()
     settings.scaler = saved.value("scaler", settings.scaler).toString();
     settings.custom = saved.value("custom").toString();
     videoFilterSettings = settings;
-    filtersEnabled = saved.value("enabled", true).toBool();
+    // The command line is remembered, but the Filters button starts off: a filter left on from
+    // another session must not alter the picture without it being asked for
+    filtersEnabled = false;
     if (!updateVideoFilterGraph().isEmpty()) {
         // They no longer work (an ffmpeg without a filter): start without
         videoFilterSettings = VideoFilterSettings();

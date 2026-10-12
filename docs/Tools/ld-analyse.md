@@ -168,7 +168,7 @@ Window > Video filter... shows the picture through ffmpeg filters (libavfilter).
 * **Scaling**: gives the picture the size it is shown at, with the algorithm chosen (bilinear, bicubic, lanczos, spline, gaussian, area averaging or nearest neighbour). It has its own check box in the dialogue.
 * **Other filters**: a text field for any ffmpeg filters, written as in ffmpeg's `-vf` option (`$W` and `$H` stand for the size the picture is shown at). The field can always be edited. What is in it is applied when the Filters button, beside the other options, is on (Window > Other filters on does the same), so the picture can be compared with and without it. Typing a new command line in the dialogue and applying it switches the button on.
 
-The settings are remembered between sessions.
+The settings are remembered between sessions, except that the Filters button always starts off, so that nothing alters the picture until it is asked for.
 
 The filters only change the picture shown: the line scope, vectorscope and the other analysis tools still read the TBC data. They are available when ld-analyse was built with libavfilter (build.bat does, unless `USE_FFMPEG=0`); otherwise the menu entry is greyed out.
 
