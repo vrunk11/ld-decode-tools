@@ -166,6 +166,8 @@ Window > Video filter... shows the picture through ffmpeg filters (libavfilter).
 * a scaling algorithm that gives the picture the size it is shown at: bilinear, bicubic, lanczos, spline, gaussian, area averaging or nearest neighbour
 * other ffmpeg filters, written as in ffmpeg's `-vf` option (`$W` and `$H` stand for the size the picture is shown at)
 
+The Filters button, beside the other options, switches all of them on or off at once (Window > Video filters on does the same), keeping their settings, so the picture can be compared with and without; applying filters in the dialogue switches them on. The setting is remembered between sessions.
+
 The view button also has a Deinterlaced mode, after Frame, Split and Field, which shows the frame through the deinterlacer chosen, whether or not its check box is ticked.
 
 The filters only change the picture shown: the line scope, vectorscope and the other analysis tools still read the TBC data. They are available when ld-analyse was built with libavfilter (build.bat does, unless `USE_FFMPEG=0`); otherwise the menu entry is greyed out.

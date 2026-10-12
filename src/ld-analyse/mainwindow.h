@@ -197,6 +197,12 @@ private:
     qint32 lastFilteredPosition = -1;
     bool deinterlacedView = false;     // the view button's Deinterlaced mode: a frame through the chosen deinterlacer
     QString updateVideoFilterGraph();
+    QPushButton *filtersPushButton = nullptr;     // the master switch of the filters
+    QAction *actionFilters = nullptr;
+    bool filtersEnabled = true;
+    void setFiltersEnabled(bool enabled);
+    void updateFiltersButton();
+    void saveVideoFilterConfig();
     void setupVideoFilter();
     void applyVideoFilter(const VideoFilterSettings &settings);
     bool filterImage(QImage &image, qint32 displayWidth, qint32 displayHeight);
