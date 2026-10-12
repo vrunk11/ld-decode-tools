@@ -119,7 +119,7 @@ private slots:
     void on_finishedSaving(bool success);
 	
 	// UI handler
-	void resize_on_aspect();
+	void resize_on_aspect(int passesLeft = 3);
 
 private:
     Ui::MainWindow *ui;

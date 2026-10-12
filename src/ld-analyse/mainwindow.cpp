@@ -1252,7 +1252,7 @@ void MainWindow::on_aspectPushButton_clicked()
 	resize_on_aspect();
 }
 
-void MainWindow::resize_on_aspect()
+void MainWindow::resize_on_aspect(int passesLeft)
 {
 	if(!this->isFullScreen() && !this->isMaximized() && autoResize)
 	{
@@ -1265,9 +1265,22 @@ void MainWindow::resize_on_aspect()
 		// Fixed margins (+20, +140) left the window slightly too small.
 		QScrollArea *scrollArea = ui->scrollArea;
 		const int frame = 2 * scrollArea->frameWidth();
+
+		// The layout may not be settled yet (a changed status bar, for one, can
+		// change the room around the image by a pixel after it was measured)
+		if (this->layout()) this->layout()->activate();
+
 		const QSize contentSize = scrollArea->widget()->sizeHint();
 		const QSize wantedSize(contentSize.width() + frame, contentSize.height() + frame);
-		this->resize(this->size() + (wantedSize - scrollArea->size()));
+		const QSize difference = wantedSize - scrollArea->size();
+		if (difference.isNull()) return;
+		this->resize(this->size() + difference);
+
+		// The resize takes effect, and the layout is redone, in the event loop: look
+		// again then, to correct what the first measurement missed
+		if (passesLeft > 0) {
+			QTimer::singleShot(0, this, [this, passesLeft]() { resize_on_aspect(passesLeft - 1); });
+		}
 	}
 }
 
