@@ -31,7 +31,6 @@ StreamReader::StreamReader(FILE *_stream, bool _ownsStream, qint32 _fieldLength,
     }
     // bufferFrames frames, in units
     windowUnits = std::max(options.bufferFrames, 1) * 2 / fieldsPerUnit;
-    aheadUnits = (options.aheadFrames > 0 ? options.aheadFrames : std::max(options.bufferFrames, 1)) * 2 / fieldsPerUnit;
 }
 
 StreamReader::~StreamReader()
@@ -63,7 +62,7 @@ void StreamReader::run()
         {
             // Wait until the users have got near enough to the end of what is read
             QMutexLocker locker(&mutex);
-            while (!stopRequested && unitsRead - furthestRequested > aheadUnits) spaceFreed.wait(&mutex);
+            while (!stopRequested && unitsRead - furthestRequested > windowUnits) spaceFreed.wait(&mutex);
             if (stopRequested) break;
         }
 
@@ -183,10 +182,4 @@ qint32 StreamReader::firstFieldKept()
 {
     QMutexLocker locker(&mutex);
     return window.isEmpty() ? unitsRead * fieldsPerUnit : window.firstKey() * fieldsPerUnit;
-}
-
-qint32 StreamReader::framesAhead()
-{
-    QMutexLocker locker(&mutex);
-    return std::max(0, unitsRead - furthestRequested - 1) * fieldsPerUnit / 2;
 }

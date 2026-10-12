@@ -87,16 +87,6 @@ qint32 SourceVideo::getFirstFieldHeld()
     return stream ? stream->firstFieldKept() + 1 : 0;
 }
 
-qint32 SourceVideo::getFramesReadAhead()
-{
-    return stream ? stream->framesAhead() : 0;
-}
-
-qint32 SourceVideo::getMaxFramesReadAhead()
-{
-    return stream ? stream->maxFramesAhead() : 0;
-}
-
 bool SourceVideo::hasField(qint32 fieldNumber)
 {
     if (stream) return stream->hasField(fieldNumber - 1);

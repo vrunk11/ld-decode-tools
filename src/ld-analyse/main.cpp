@@ -105,11 +105,6 @@ int main(int argc, char *argv[])
                                           QCoreApplication::translate("main", "number"));
     parser.addOption(bufferFramesOption);
 
-    QCommandLineOption readAheadFramesOption(QStringList() << "read-ahead-frames",
-                                             QCoreApplication::translate("main", "Piped input: frames of the input kept in reserve ahead of the one shown, so that pausing does not hold the input up (default: 20 seconds of video; about 30 MB of memory for each second)"),
-                                             QCoreApplication::translate("main", "number"));
-    parser.addOption(readAheadFramesOption);
-
     // Positional argument to specify input video file
     parser.addPositionalArgument("input", QCoreApplication::translate("main", "Specify input TBC or CVBS file, or - for video piped in"));
 
@@ -201,16 +196,7 @@ int main(int argc, char *argv[])
                 return -1;
             }
         }
-        // A paused input goes on being read into memory, up to this, rather than being held up
-        streamInput.aheadFrames = streamInput.system == PAL ? 500 : 600;
-        if (parser.isSet(readAheadFramesOption)) {
-            streamInput.aheadFrames = parser.value(readAheadFramesOption).toInt();
-            if (streamInput.aheadFrames < 1) {
-                qCritical("The read-ahead must be at least 1 frame");
-                return -1;
-            }
-        }
-    } else if (parser.isSet(inputFormatOption) || parser.isSet(systemOption) || parser.isSet(bufferFramesOption) || parser.isSet(readAheadFramesOption)) {
+    } else if (parser.isSet(inputFormatOption) || parser.isSet(systemOption) || parser.isSet(bufferFramesOption)) {
         qWarning() << "--input-format, --system and the other piped input options only apply to piped input (ld-analyse -)";
     }
 

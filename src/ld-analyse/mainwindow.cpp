@@ -338,18 +338,6 @@ void MainWindow::updateLive()
     if (!ended && behind > 2) status += tr(" - %1 s behind").arg(behind / frameRate, 0, 'f', 1);
     if (!ended && !playback->isPlaying()) status += tr(" - paused: the last %1 s can be gone through")
                                                        .arg(qRound((frames - tbcSource.getFirstAvailableFrame()) / frameRate));
-
-    // The input goes on being read while paused (or behind), into a reserve: say how much of it is
-    // used, and when it is full, as the input is then held up
-    const qint32 reserve = tbcSource.getMaxFramesReadAhead();
-    if (!ended && reserve > 0 && (!playback->isPlaying() || behind > 2)) {
-        const qint32 used = tbcSource.getFramesReadAhead();
-        if (used >= reserve - 2) {
-            status += tr(" - reserve full (%1 s): the input is held up").arg(qRound(reserve / frameRate));
-        } else if (used > 0) {
-            status += tr(" - reserve %1 of %2 s").arg(used / frameRate, 0, 'f', 0).arg(qRound(reserve / frameRate));
-        }
-    }
     sourceVideoStatus.setText(status);
     if (ended) liveTimer->stop();
 }

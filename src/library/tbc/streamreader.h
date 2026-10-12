@@ -48,11 +48,8 @@ public:
         bool cvbs = false;
         VideoSystem system = NTSC;
         Cvbs::SampleEncoding encoding = Cvbs::SampleEncoding::U10_4FSC;
-        // Frames kept behind the furthest one asked for
+        // Frames read ahead of the furthest one asked for, and kept behind it
         qint32 bufferFrames = 32;
-        // Frames read ahead of it (0: as many as bufferFrames). A reader that stops at this is a
-        // producer held up: a viewer that pauses a live input wants it large
-        qint32 aheadFrames = 0;
     };
 
     // The stream is read from (blocking) until it ends or the reader is stopped, and must
@@ -74,10 +71,6 @@ public:
     qint32 numberOfFields();
     // Fields read so far
     qint32 fieldsRead();
-    // Frames read beyond the furthest one asked for, and the most that are read: when the first
-    // reaches the second the reader waits, which holds the producer up
-    qint32 framesAhead();
-    qint32 maxFramesAhead() const { return aheadUnits * fieldsPerUnitCount() / 2; }
     // The first field (0-based) still in the window: earlier ones are gone
     qint32 firstFieldKept();
 
@@ -99,8 +92,6 @@ private:
     qint32 fieldsPerUnit;      // 1 for TBC, 2 for CVBS
     qint64 unitBytes;
     qint32 windowUnits;
-    qint32 aheadUnits;
-    qint32 fieldsPerUnitCount() const { return fieldsPerUnit; }
 
     Cvbs::Geometry geometry;
     std::unique_ptr<Cvbs::SampleConverter> converter;
