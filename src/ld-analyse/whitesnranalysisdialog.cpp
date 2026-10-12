@@ -21,6 +21,9 @@ WhiteSnrAnalysisDialog::WhiteSnrAnalysisDialog(QWidget *parent) :
     ui->setupUi(this);
     setWindowFlags(Qt::Window);
 
+    bar = new SnrSourceBar(this);
+    ui->verticalLayout->insertWidget(0, bar);
+
     // Set up the plot widget
     plot = new PlotWidget(this);
     plot->updateTheme();
@@ -64,6 +67,7 @@ WhiteSnrAnalysisDialog::~WhiteSnrAnalysisDialog()
 // Get ready for an update
 void WhiteSnrAnalysisDialog::startUpdate(qint32 _numberOfFrames)
 {
+    liveMode = false;
     removeChartContents();
     numberOfFrames = _numberOfFrames;
     tlPoint.resize(numberOfFrames + 1);
@@ -165,6 +169,8 @@ void WhiteSnrAnalysisDialog::showEvent(QShowEvent *event)
 
 void WhiteSnrAnalysisDialog::onPlotAreaChanged()
 {
+    // The graph was zoomed or panned by the user, not by an update: stop following the video
+    if (liveMode && !settingRange) bar->setFollowing(false);
     // Handle plot area changes if needed
     // The PlotWidget handles zoom/pan internally
 }
@@ -203,3 +209,28 @@ void WhiteSnrAnalysisDialog::generateTrendLine()
     }
 }
 
+
+// A live input: the history of the SNR of what has been received. The graph is left as the user
+// has put it unless it is following the video.
+void WhiteSnrAnalysisDialog::setLiveHistory(const QVector<QPointF> &points, qint32 frames)
+{
+    liveMode = true;
+    numberOfFrames = frames;
+    maxY = 42;
+    whitePoints.clear();
+    for (const QPointF &point: points) {
+        // Clamp SNR values to minimum threshold (14 dB)
+        const double clamped = std::max(point.y(), 14.0);
+        whitePoints.append(QPointF(point.x(), clamped));
+        if (clamped > maxY) maxY = ceil(clamped);
+    }
+    whiteSeries->setData(whitePoints);
+    trendSeries->setData(QVector<QPointF>());
+    if (bar->isFollowing()) {
+        settingRange = true;
+        plot->setAxisRange(Qt::Horizontal, 0, std::max(frames, 1));
+        plot->setAxisRange(Qt::Vertical, 14, maxY);
+        settingRange = false;
+    }
+    plot->replot();
+}

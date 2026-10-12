@@ -17,6 +17,7 @@
 #include <QTimer>
 #include <QShowEvent>
 #include "plotwidget.h"
+#include "snrsourcebar.h"
 #include "lddecodemetadata.h"
 
 namespace Ui {
@@ -36,6 +37,11 @@ public:
     void finishUpdate(qint32 _currentFrameNumber);
     void updateFrameMarker(qint32 _currentFrameNumber);
 
+    // Above the graph: where the values come from, and for a live input the switches
+    SnrSourceBar *sourceBar() { return bar; }
+    // A live input: show this history (frame number, SNR) of what has been received
+    void setLiveHistory(const QVector<QPointF> &points, qint32 frames);
+
 protected:
     void showEvent(QShowEvent *event) override;
 
@@ -48,6 +54,9 @@ private:
     void generateTrendLine();
 
     Ui::BlackSnrAnalysisDialog *ui;
+    SnrSourceBar *bar;
+    bool liveMode = false;
+    bool settingRange = false;
     PlotWidget *plot;
     PlotSeries *blackSeries;
     PlotSeries *trendSeries;

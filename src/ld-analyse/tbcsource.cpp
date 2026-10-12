@@ -57,6 +57,7 @@ void TbcSource::loadSource(QString sourceFilename)
 // Method to unload a TBC source file
 void TbcSource::unloadSource()
 {
+    liveSnr.reset();
     sourceVideo.close();
     if (sourceMode != ONE_SOURCE) chromaSourceVideo.close();
     resetState();
@@ -599,9 +600,13 @@ void TbcSource::setVideoParameters(const LdDecodeMetaData::VideoParameters &vide
 
     // The SNR of a live input depends on the black and white levels: measure it again
     if (liveAnalyse) {
+        if (liveSnr) {
+            liveSnr->setVideoParameters(videoParameters);
+        } else {
+            liveBlackSnr.clear();
+            liveWhiteSnr.clear();
+        }
         liveAnalysedFrames.clear();
-        liveBlackSnr.clear();
-        liveWhiteSnr.clear();
         loadedFrameNumber = -1;
     }
 
@@ -906,6 +911,7 @@ qint32 TbcSource::startOfChapter(qint32 currentFrameNumber)
 // Re-initialise state for a new source video
 void TbcSource::resetState()
 {
+    liveSnr.reset();
     // Default frame image options
     chromaOn = false;
     dropoutsOn = false;
@@ -1603,6 +1609,13 @@ bool TbcSource::startBackgroundStream()
     liveAnalysedFrames.clear();
     liveBlackSnr.clear();
     liveWhiteSnr.clear();
+    // The SNR of every frame received, on a thread of its own (a throttled input is read at the pace
+    // of the viewer, and this would read ahead of it: only the frames shown are measured then)
+    if (!streamInput.throttle) {
+        liveSnr = std::make_unique<LiveSnr>(sourceVideo);
+        liveSnr->setVideoParameters(ldDecodeMetaData.getVideoParameters());
+        liveSnr->start(QThread::LowPriority);
+    }
     sourceReady = true;
     currentSourceFilename = streamInput.cvbs ? "stdin.cvbs" : "stdin.tbc";
     currentMetadataFilename.clear();
@@ -1784,17 +1797,35 @@ void TbcSource::analyseLiveFrame(qint32 frameNumber)
         }
     }
 
-    if (blackPoints > 0) liveBlackSnr.insert(frameNumber, blackTotal / blackPoints);
-    if (whitePoints > 0) liveWhiteSnr.insert(frameNumber, whiteTotal / whitePoints);
+    if (!liveSnr) {
+        if (blackPoints > 0) liveBlackSnr.insert(frameNumber, blackTotal / blackPoints);
+        if (whitePoints > 0) liveWhiteSnr.insert(frameNumber, whiteTotal / whitePoints);
+    }
     liveAnalysedFrames.insert(frameNumber);
 }
 
-QMap<qint32, double> TbcSource::getLiveBlackSnr()
+QVector<QPointF> TbcSource::getLiveSnrHistory(bool black, qint32 maxPoints)
 {
-    return liveBlackSnr;
+    if (liveSnr) return liveSnr->history(black, maxPoints);
+
+    // The frames that were shown
+    QVector<QPointF> points;
+    const QMap<qint32, double> &map = black ? liveBlackSnr : liveWhiteSnr;
+    for (auto it = map.constBegin(); it != map.constEnd(); ++it) points.append(QPointF(it.key(), it.value()));
+    return points;
 }
 
-QMap<qint32, double> TbcSource::getLiveWhiteSnr()
+bool TbcSource::getLiveSnrIsWholeHistory()
 {
-    return liveWhiteSnr;
+    return liveSnr != nullptr;
+}
+
+bool TbcSource::getLiveSnrEnabled()
+{
+    return liveSnr ? liveSnr->isEnabled() : true;
+}
+
+void TbcSource::setLiveSnrEnabled(bool enabled)
+{
+    if (liveSnr) liveSnr->setEnabled(enabled);
 }

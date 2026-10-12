@@ -153,6 +153,14 @@ MainWindow::MainWindow(QString inputFilenameParam, const TbcSource::StreamInput 
     pendingSliderValue = -1;
 
     setupPlayback();
+    for (SnrSourceBar *bar: { blackSnrAnalysisDialog->sourceBar(), whiteSnrAnalysisDialog->sourceBar() }) {
+        connect(bar, &SnrSourceBar::measuringToggled, this, [this](bool measuring) {
+            tbcSource.setLiveSnrEnabled(measuring);
+            for (SnrSourceBar *other: { blackSnrAnalysisDialog->sourceBar(), whiteSnrAnalysisDialog->sourceBar() }) {
+                other->setLiveSource(measuring, tbcSource.getLiveSnrIsWholeHistory());
+            }
+        });
+    }
     setupVideoFilter();
 
     // Field order: the button is left out when the window is narrow, so the menu has it too
@@ -483,23 +491,18 @@ void MainWindow::setPlaybackOptionsVisible(bool visible)
     for (QAction *action: speedActions->actions()) action->setVisible(visible);
 }
 
-// The SNR graphs of a live input are made of the frames analysed so far (the ones that were shown)
+// The SNR graphs of a live input are the history of what has been received
 void MainWindow::updateLiveGraphs()
 {
     if (!tbcSource.getIsLive()) return;
     const qint32 frames = tbcSource.getFramesReceived();
+    static constexpr qint32 MAX_POINTS = 4000;
 
     if (blackSnrAnalysisDialog->isVisible()) {
-        const QMap<qint32, double> data = tbcSource.getLiveBlackSnr();
-        blackSnrAnalysisDialog->startUpdate(frames);
-        for (auto it = data.constBegin(); it != data.constEnd(); ++it) blackSnrAnalysisDialog->addDataPoint(it.key(), it.value());
-        blackSnrAnalysisDialog->finishUpdate(currentFrameNumber);
+        blackSnrAnalysisDialog->setLiveHistory(tbcSource.getLiveSnrHistory(true, MAX_POINTS), frames);
     }
     if (whiteSnrAnalysisDialog->isVisible()) {
-        const QMap<qint32, double> data = tbcSource.getLiveWhiteSnr();
-        whiteSnrAnalysisDialog->startUpdate(frames);
-        for (auto it = data.constBegin(); it != data.constEnd(); ++it) whiteSnrAnalysisDialog->addDataPoint(it.key(), it.value());
-        whiteSnrAnalysisDialog->finishUpdate(currentFrameNumber);
+        whiteSnrAnalysisDialog->setLiveHistory(tbcSource.getLiveSnrHistory(false, MAX_POINTS), frames);
     }
 }
 
@@ -857,6 +860,12 @@ void MainWindow::updateGuiLoaded()
 {
     // Enable the GUI controls
     setGuiEnabled(true);
+
+    // Where the SNR in the graphs comes from
+    for (SnrSourceBar *bar: { blackSnrAnalysisDialog->sourceBar(), whiteSnrAnalysisDialog->sourceBar() }) {
+        if (tbcSource.getIsLive()) bar->setLiveSource(tbcSource.getLiveSnrEnabled(), tbcSource.getLiveSnrIsWholeHistory());
+        else bar->setMetadataSource();
+    }
     {
         const QSignalBlocker blocker(actionFieldOrder);
         actionFieldOrder->setChecked(tbcSource.getFieldOrder());

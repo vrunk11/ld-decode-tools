@@ -13,6 +13,8 @@ set(ld-analyse_SOURCES
     videoparametersdialog.cpp videoparametersdialog.ui
     chromadecoderconfigdialog.cpp chromadecoderconfigdialog.ui
     tbcsource.cpp
+    livesnr.cpp
+    snrsourcebar.cpp
     playbackcontroller.cpp
     playbackrenderer.cpp
     vbidialog.cpp vbidialog.ui

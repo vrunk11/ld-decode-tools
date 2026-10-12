@@ -25,6 +25,7 @@
 #include "lddecodemetadata.h"
 #include "linenumber.h"
 #include "fieldvbi.h"
+#include "livesnr.h"
 #include "vitsmetrics.h"
 #include "vbidecoder.h"
 #include "videoiddecoder.h"
@@ -87,8 +88,13 @@ public:
     QString getStreamHint();
     // Live input: the VBI and the SNR are worked out from the fields as they are shown (a pipe has no
     // metadata). The SNR of each frame analysed so far, by frame number, for the graphs
-    QMap<qint32, double> getLiveBlackSnr();
-    QMap<qint32, double> getLiveWhiteSnr();
+    // The history of the SNR of what has been received (every frame, if it is measured on a thread of
+    // its own, as it is unless the input is throttled; else the frames that were shown). Averaged to
+    // at most maxPoints points.
+    QVector<QPointF> getLiveSnrHistory(bool black, qint32 maxPoints);
+    bool getLiveSnrIsWholeHistory();
+    bool getLiveSnrEnabled();
+    void setLiveSnrEnabled(bool enabled);
     // Live input, two buffers: freezing (pausing) keeps the frames around the one shown as they are,
     // while the input goes on filling the ring with newer ones; playing again carries on from the
     // frozen one into them. The number of frames and the first one available are the frozen
@@ -257,6 +263,7 @@ private:
     bool liveAnalyse = false;
     QSet<qint32> liveAnalysedFrames;
     QMap<qint32, double> liveBlackSnr, liveWhiteSnr;
+    std::unique_ptr<LiveSnr> liveSnr;       // after sourceVideo: stopped before it is closed
     void analyseLiveFrame(qint32 frameNumber);
     bool liveFrozen = false;
     bool liveProtected = false;
