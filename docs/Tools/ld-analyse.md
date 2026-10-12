@@ -189,7 +189,7 @@ Pause it (the play button or the space bar) to freeze the last few seconds and g
 
 A video that arrives faster than it plays, such as a file, would be overwritten before it was seen: use `--throttle` for those, which holds the producer back to the pace of the viewer instead (pausing then holds the input up too). When the stream ends, playback stops at its last frame.
 
-Dropout, SNR and VBI information comes from ld-decode's metadata, and a pipe has none, so those windows stay empty; the picture, line scope, vectorscope and the chroma decoder settings all work.
+A pipe has no ld-decode metadata, so ld-analyse works out what it can from the video itself, for the frames that are shown: the VBI (CLV time code or CAV picture number, chapter, VITC, the NTSC video ID and closed captions) and the black and white SNR, with the same code as ld-process-vbi and ld-process-vits, and the SNR graphs of the Window menu grow as the video comes in. Dropouts are not detected, so the dropout windows stay empty. The SNR depends on the black and white levels, which are the standard ones unless `--black-level` and `--white-level` say otherwise; they can also be adjusted while the video plays in Window > Video parameters, and the SNR is measured again.
 
 # The File menu
 

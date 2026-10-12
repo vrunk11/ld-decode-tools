@@ -217,6 +217,8 @@ private:
     QTimer *liveTimer = nullptr;
     void updateLive();
     void updateLiveControls();
+    void updateLiveGraphs();
+    qint32 liveGraphTick = 0;
     QPushButton *playPushButton;
     QAction *actionPlayPause;
     QAction *actionLoop;

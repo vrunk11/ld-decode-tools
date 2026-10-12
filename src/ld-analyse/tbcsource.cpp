@@ -361,6 +361,9 @@ void TbcSource::load(qint32 frameNumber, qint32 fieldNumber)
         tbcDebugStream() << "TbcSource::load(): Jumping back one frame due to error";
     }
 
+    // A live input has no VBI or VITS metadata: work it out from the fields
+    if (liveAnalyse) analyseLiveFrame(frameNumber);
+
     // Get the field metadata
     firstField = ldDecodeMetaData.getField(firstFieldNumber);
     secondField = ldDecodeMetaData.getField(secondFieldNumber);
@@ -593,6 +596,14 @@ void TbcSource::setVideoParameters(const LdDecodeMetaData::VideoParameters &vide
 
     // Update the metadata
     ldDecodeMetaData.setVideoParameters(videoParameters);
+
+    // The SNR of a live input depends on the black and white levels: measure it again
+    if (liveAnalyse) {
+        liveAnalysedFrames.clear();
+        liveBlackSnr.clear();
+        liveWhiteSnr.clear();
+        loadedFrameNumber = -1;
+    }
 
     // Reconfigure the chroma decoder
     configureChromaDecoder();
@@ -904,6 +915,7 @@ void TbcSource::resetState()
     sourceMode = ONE_SOURCE;
     liveFrozen = false;
     liveProtected = false;
+    liveAnalyse = false;
     isLive = false;
     liveFrames = 0;
     liveFirstFrame = 1;
@@ -1559,7 +1571,7 @@ bool TbcSource::startBackgroundStream()
     options.bufferFrames = streamInput.bufferFrames;
     options.ring = !streamInput.throttle;
     sourceVideo.setStreamOptions(options);
-    if (!sourceVideo.open("-", videoParameters.fieldWidth * videoParameters.fieldHeight)) {
+    if (!sourceVideo.open("-", videoParameters.fieldWidth * videoParameters.fieldHeight, videoParameters.fieldWidth)) {
         lastIOError = "Could not open the input stream";
         return false;
     }
@@ -1587,6 +1599,10 @@ bool TbcSource::startBackgroundStream()
         qWarning().noquote() << streamHint;
     }
 
+    liveAnalyse = true;
+    liveAnalysedFrames.clear();
+    liveBlackSnr.clear();
+    liveWhiteSnr.clear();
     sourceReady = true;
     currentSourceFilename = streamInput.cvbs ? "stdin.cvbs" : "stdin.tbc";
     currentMetadataFilename.clear();
@@ -1719,4 +1735,66 @@ qint32 TbcSource::getFirstAvailableFrame()
 {
     if (!isLive) return 1;
     return liveFrozen ? frozenFirstFrame : liveFirstFrame;
+}
+
+// Live input: decode the VBI and measure the SNR of the two fields of a frame from the video, which
+// is what ld-process-vbi and ld-process-vits do for a file, and keep the results as the field
+// metadata, where the rest of ld-analyse looks for them. The frame's SNR is kept for the graphs.
+void TbcSource::analyseLiveFrame(qint32 frameNumber)
+{
+    if (liveAnalysedFrames.contains(frameNumber)) return;
+
+    const qint32 fieldNumbers[2] = { ldDecodeMetaData.getFirstFieldNumber(frameNumber),
+                                     ldDecodeMetaData.getSecondFieldNumber(frameNumber) };
+    if (fieldNumbers[0] < 1 || fieldNumbers[1] < 1) return;
+
+    // A field that the ring has overwritten has nothing to measure
+    for (qint32 fieldNumber: fieldNumbers) {
+        if (!sourceVideo.isFieldHeld(fieldNumber)) return;
+    }
+
+    const LdDecodeMetaData::VideoParameters videoParameters = ldDecodeMetaData.getVideoParameters();
+    double blackTotal = 0, whiteTotal = 0;
+    qint32 blackPoints = 0, whitePoints = 0;
+
+    for (qint32 fieldNumber: fieldNumbers) {
+        // Only the lines at the top of the field are needed
+        const qint32 lastLine = qMax(VBI_END_FIELD_LINE, VITS_END_FIELD_LINE);
+        const SourceVideo::Data lines = sourceVideo.getVideoField(fieldNumber, 1, lastLine);
+
+        LdDecodeMetaData::Field field = ldDecodeMetaData.getField(fieldNumber);
+        decodeFieldVbi(lines, 1, videoParameters, field);
+        computeVitsMetrics(lines, 1, videoParameters, field);
+        field.vitsMetrics.inUse = true;
+
+        ldDecodeMetaData.updateFieldVbi(field.vbi, fieldNumber);
+        ldDecodeMetaData.updateFieldNtsc(field.ntsc, fieldNumber);
+        ldDecodeMetaData.updateFieldVitc(field.vitc, fieldNumber);
+        ldDecodeMetaData.updateFieldClosedCaption(field.closedCaption, fieldNumber);
+        ldDecodeMetaData.updateFieldVitsMetrics(field.vitsMetrics, fieldNumber);
+
+        // The average for the frame, as for a file
+        if (field.vitsMetrics.bPSNR > 0) {
+            blackTotal += field.vitsMetrics.bPSNR;
+            blackPoints++;
+        }
+        if (field.vitsMetrics.wSNR > 0) {
+            whiteTotal += field.vitsMetrics.wSNR;
+            whitePoints++;
+        }
+    }
+
+    if (blackPoints > 0) liveBlackSnr.insert(frameNumber, blackTotal / blackPoints);
+    if (whitePoints > 0) liveWhiteSnr.insert(frameNumber, whiteTotal / whitePoints);
+    liveAnalysedFrames.insert(frameNumber);
+}
+
+QMap<qint32, double> TbcSource::getLiveBlackSnr()
+{
+    return liveBlackSnr;
+}
+
+QMap<qint32, double> TbcSource::getLiveWhiteSnr()
+{
+    return liveWhiteSnr;
 }

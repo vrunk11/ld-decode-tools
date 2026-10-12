@@ -12,6 +12,8 @@
 #ifndef TBCSOURCE_H
 #define TBCSOURCE_H
 
+#include <QMap>
+#include <QSet>
 #include <QObject>
 #include <QImage>
 #include <QPainter>
@@ -22,6 +24,8 @@
 #include "sourcevideo.h"
 #include "lddecodemetadata.h"
 #include "linenumber.h"
+#include "fieldvbi.h"
+#include "vitsmetrics.h"
 #include "vbidecoder.h"
 #include "videoiddecoder.h"
 #include "vitcdecoder.h"
@@ -81,6 +85,10 @@ public:
     qint32 getLookAheadFrames();
     // A hint for the user about the input (empty if none), such as an encoding that looks wrong
     QString getStreamHint();
+    // Live input: the VBI and the SNR are worked out from the fields as they are shown (a pipe has no
+    // metadata). The SNR of each frame analysed so far, by frame number, for the graphs
+    QMap<qint32, double> getLiveBlackSnr();
+    QMap<qint32, double> getLiveWhiteSnr();
     // Live input, two buffers: freezing (pausing) keeps the frames around the one shown as they are,
     // while the input goes on filling the ring with newer ones; playing again carries on from the
     // frozen one into them. The number of frames and the first one available are the frozen
@@ -246,6 +254,10 @@ private:
     // A stream: what has arrived
     bool isLive = false;
     StreamInput streamInput;
+    bool liveAnalyse = false;
+    QSet<qint32> liveAnalysedFrames;
+    QMap<qint32, double> liveBlackSnr, liveWhiteSnr;
+    void analyseLiveFrame(qint32 frameNumber);
     bool liveFrozen = false;
     bool liveProtected = false;
     qint32 frozenFirstFrame = 1, frozenLastFrame = 0;

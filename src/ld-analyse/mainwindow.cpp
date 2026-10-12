@@ -422,6 +422,9 @@ void MainWindow::updateLive()
 
     updateLiveControls();
 
+    // The SNR graphs, if they are open, grow with the video (about twice a second)
+    if (++liveGraphTick % 15 == 0) updateLiveGraphs();
+
     if (playback->isPlaying()) {
         // Playing on from a frozen buffer: once past it, it is part of the ring again
         tbcSource.releaseLiveProtection(currentFrameNumber);
@@ -478,6 +481,26 @@ void MainWindow::setPlaybackOptionsVisible(bool visible)
     actionLoop->setVisible(visible);
     speedSeparator->setVisible(visible);
     for (QAction *action: speedActions->actions()) action->setVisible(visible);
+}
+
+// The SNR graphs of a live input are made of the frames analysed so far (the ones that were shown)
+void MainWindow::updateLiveGraphs()
+{
+    if (!tbcSource.getIsLive()) return;
+    const qint32 frames = tbcSource.getFramesReceived();
+
+    if (blackSnrAnalysisDialog->isVisible()) {
+        const QMap<qint32, double> data = tbcSource.getLiveBlackSnr();
+        blackSnrAnalysisDialog->startUpdate(frames);
+        for (auto it = data.constBegin(); it != data.constEnd(); ++it) blackSnrAnalysisDialog->addDataPoint(it.key(), it.value());
+        blackSnrAnalysisDialog->finishUpdate(currentFrameNumber);
+    }
+    if (whiteSnrAnalysisDialog->isVisible()) {
+        const QMap<qint32, double> data = tbcSource.getLiveWhiteSnr();
+        whiteSnrAnalysisDialog->startUpdate(frames);
+        for (auto it = data.constBegin(); it != data.constEnd(); ++it) whiteSnrAnalysisDialog->addDataPoint(it.key(), it.value());
+        whiteSnrAnalysisDialog->finishUpdate(currentFrameNumber);
+    }
 }
 
 // A live input can not be sought while it plays: the navigation controls are off then. Paused,
@@ -2277,8 +2300,9 @@ void MainWindow::videoParametersChangedSignalHandler(const LdDecodeMetaData::Vid
     // Update the VideoParameters in the source
     tbcSource.setVideoParameters(videoParameters);
 
-    // Enable the "Save Metadata" action, since the metadata has been modified
-    ui->actionSave_Metadata->setEnabled(true);
+    // Enable the "Save Metadata" action, since the metadata has been modified (a live input has
+    // no metadata file to save to)
+    ui->actionSave_Metadata->setEnabled(!tbcSource.getIsLive());
 
     // Update the aspect button's label
     updateAspectPushButton();
