@@ -26,6 +26,8 @@
 #include <QActionGroup>
 #include <QPushButton>
 #include <QSignalBlocker>
+#include <QPainter>
+#include <QIcon>
 
 #include "oscilloscopedialog.h"
 #include "vectorscopedialog.h"
@@ -199,6 +201,8 @@ private:
     void pausePlayback();
     void playbackPositionDue(qint32 position);
     void updatePlaybackState(bool playing);
+    void updatePlayButtonIcon();
+    bool playbackShowsPause = false;
 
     // Update GUI methods
     void setGuiEnabled(bool enabled);

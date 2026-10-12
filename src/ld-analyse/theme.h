@@ -56,6 +56,9 @@ QPalette deserializePalette(const QString &text);
 // Whether a palette is dark (its window is darker than its text)
 bool isDarkPalette(const QPalette &palette);
 
+// The colour of the play button icon in the theme applied (set by applyAppearance)
+QColor playButtonColour();
+
 // Widget styles are Qt style names (as listed by QStyleFactory), stored in the
 // configuration file. An empty name means Auto: on Windows the classic style
 // ("windowsvista", the Windows 10 look), except on Windows 11 with a dark theme

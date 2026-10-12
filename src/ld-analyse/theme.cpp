@@ -77,6 +77,7 @@ const QVector<ThemeColourRole> &themeColourRoles()
         { QPalette::All, QPalette::ToolTipText, "ToolTipText", "Tooltip text" },
         { QPalette::All, QPalette::PlaceholderText, "PlaceholderText", "Placeholder text" },
         { QPalette::All, QPalette::Link, "Link", "Link" },
+        { QPalette::All, QPalette::BrightText, "PlayButton", "Play button" },
         { QPalette::Disabled, QPalette::WindowText, "DisabledText", "Disabled text" },
     };
     return roles;
@@ -106,6 +107,10 @@ static QPalette makePalette(std::initializer_list<std::pair<const char *, const 
             if (qstrcmp(entry.key, colour.first) == 0) setThemeColour(palette, entry, QColor(colour.second));
         }
     }
+    // The play button is drawn in the button text colour unless the theme sets one
+    bool hasPlayButton = false;
+    for (const auto &colour : colours) hasPlayButton |= qstrcmp(colour.first, "PlayButton") == 0;
+    if (!hasPlayButton) palette.setColor(QPalette::All, QPalette::BrightText, palette.color(QPalette::Active, QPalette::ButtonText));
     return palette;
 }
 
@@ -195,6 +200,8 @@ QPalette deserializePalette(const QString &text)
             if (key == QLatin1String(entry.key)) setThemeColour(palette, entry, colour);
         }
     }
+    // A palette saved before the play button had a colour: use the button text colour
+    if (!text.contains("PlayButton=")) palette.setColor(QPalette::All, QPalette::BrightText, palette.color(QPalette::Active, QPalette::ButtonText));
     return palette;
 }
 
@@ -442,6 +449,10 @@ bool applyAppearance(const QString &styleName, ThemeMode mode, const QString &cu
 
     if (hasPalette) app->setPalette(palette);
 
+    // The colour of the play button: the theme's own, or the button text of the system's
+    app->setProperty("playButtonColour", hasPalette ? palette.color(QPalette::Active, QPalette::BrightText)
+                                                   : app->palette().color(QPalette::Active, QPalette::ButtonText));
+
     // The classic style's dark look is built from the colours just set, so its
     // style sheet comes last; it is removed again for any other style
     static bool styleSheetSet = false;
@@ -454,4 +465,10 @@ bool applyAppearance(const QString &styleName, ThemeMode mode, const QString &cu
     }
 
     return isDark;
+}
+
+QColor playButtonColour()
+{
+    const QVariant colour = QCoreApplication::instance() ? QCoreApplication::instance()->property("playButtonColour") : QVariant();
+    return colour.isValid() ? colour.value<QColor>() : QApplication::palette().color(QPalette::ButtonText);
 }

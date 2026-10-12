@@ -241,9 +241,35 @@ void MainWindow::setupPlayback()
     updatePlaybackState(false);
 }
 
+// Draw the play or pause symbol in the theme's play button colour (icons from the style are black)
+void MainWindow::updatePlayButtonIcon()
+{
+    const qreal ratio = devicePixelRatioF();
+    const qint32 size = 24;
+    QPixmap pixmap(QSize(size, size) * ratio);
+    pixmap.setDevicePixelRatio(ratio);
+    pixmap.fill(Qt::transparent);
+
+    QPainter painter(&pixmap);
+    painter.setRenderHint(QPainter::Antialiasing);
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(playButtonColour());
+    if (playbackShowsPause) {
+        painter.drawRoundedRect(QRectF(6, 5, 4.5, 14), 1, 1);
+        painter.drawRoundedRect(QRectF(13.5, 5, 4.5, 14), 1, 1);
+    } else {
+        const QPointF triangle[3] = { QPointF(7, 4.5), QPointF(7, 19.5), QPointF(19.5, 12) };
+        painter.drawPolygon(triangle, 3);
+    }
+    painter.end();
+
+    playPushButton->setIcon(QIcon(pixmap));
+}
+
 void MainWindow::updatePlaybackState(bool playing)
 {
-    playPushButton->setIcon(style()->standardIcon(playing ? QStyle::SP_MediaPause : QStyle::SP_MediaPlay));
+    playbackShowsPause = playing;
+    updatePlayButtonIcon();
     actionPlayPause->setText(playing ? tr("&Pause") : tr("&Play"));
 
     // Say if the machine could not keep up, so a jerky video is not mistaken for a bad capture
@@ -1999,6 +2025,7 @@ void MainWindow::updateAppearance()
 void MainWindow::refreshAfterAppearanceChange(bool updateGraphData)
 {
     buttonPalette = QApplication::palette();
+    updatePlayButtonIcon();
 
     if (tbcSource.getIsSourceLoaded()) {
         if (updateGraphData) updateGraphs();
@@ -2012,7 +2039,10 @@ void MainWindow::customizeTheme()
     const ThemeMode previousMode = themeMode;
     const QString previousPalette = customPalette;
 
-    ThemeEditorDialog editor(QApplication::palette(), this);
+    // The play button colour is kept apart from the system palette, which has none
+    QPalette startPalette = QApplication::palette();
+    startPalette.setColor(QPalette::All, QPalette::BrightText, playButtonColour());
+    ThemeEditorDialog editor(startPalette, this);
     connect(&editor, &ThemeEditorDialog::previewChanged, this, [this](const QString &palette) {
         const bool wasDark = isDarkTheme;
         isDarkTheme = applyAppearance(styleName, ThemeMode::Custom, palette);
