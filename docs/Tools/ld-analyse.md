@@ -152,6 +152,8 @@ Some sources are mastered with the expected field order reversed.  This causes l
 
 Clicking again on the same button will revert back to normal field order.  Note that switching the field order will cause ld-analyse to return to the first frame of the TBC file.
 
+The button is left out when the window is too narrow for the row of buttons; View > Reverse field order does the same then (and always).
+
 # Playing the video
 
 The play button (between the previous and next frame buttons), the Playback menu and the space bar play the video at its real speed: 25 frames per second for PAL, about 29.97 for NTSC (twice that in field view). The Playback menu also has Loop and the speeds 0.25x to 4x (not for live input, which plays as it arrives).

@@ -155,6 +155,12 @@ MainWindow::MainWindow(QString inputFilenameParam, const TbcSource::StreamInput 
     setupPlayback();
     setupVideoFilter();
 
+    // Field order: the button is left out when the window is narrow, so the menu has it too
+    actionFieldOrder = new QAction(tr("Reverse field order"), this);
+    actionFieldOrder->setCheckable(true);
+    connect(actionFieldOrder, &QAction::triggered, this, &MainWindow::on_fieldOrderPushButton_clicked);
+    ui->menuView->addAction(actionFieldOrder);
+
     // Set the GUI to unloaded
     updateGuiUnloaded();
     
@@ -694,6 +700,21 @@ void MainWindow::showRenderedImage()
     ui->posHorizontalSlider->setValue(position);
 }
 
+// The row of media controls and options is crowded: when it has not the room for the field order
+// button, which is the least used, that is left out (View > Reverse field order does the same)
+void MainWindow::updateFieldOrderVisibility()
+{
+    QLayout *row = ui->horizontalLayout_3;
+    const QMargins margins = ui->verticalLayout_3->contentsMargins();
+    const int available = ui->mediaControl_frame->width() - margins.left() - margins.right();
+
+    // What the row needs with the button in it: its preferred width, without ever shrinking
+    // the text of the other buttons
+    int needed = row->sizeHint().width();
+    if (!ui->fieldOrderPushButton->isVisible()) needed += ui->fieldOrderPushButton->sizeHint().width() + row->spacing();
+    ui->fieldOrderPushButton->setVisible(needed <= available);
+}
+
 // Update GUI methods for when TBC source files are loaded and unloaded -----------------------------------------------
 
 // Enable or disable all the GUI controls
@@ -732,6 +753,7 @@ void MainWindow::setGuiEnabled(bool enabled)
     ui->actionVideo_parameters->setEnabled(enabled);
     ui->actionChroma_decoder_configuration->setEnabled(enabled);
     ui->actionReload_TBC->setEnabled(enabled);
+    actionFieldOrder->setEnabled(enabled);
 
     // "Save Metadata" should be disabled by default
     ui->actionSave_Metadata->setEnabled(false);
@@ -808,6 +830,10 @@ void MainWindow::updateGuiLoaded()
 {
     // Enable the GUI controls
     setGuiEnabled(true);
+    {
+        const QSignalBlocker blocker(actionFieldOrder);
+        actionFieldOrder->setChecked(tbcSource.getFieldOrder());
+    }
 
     // Update the status bar
     QString statusText;
@@ -2048,6 +2074,10 @@ void MainWindow::on_fieldOrderPushButton_clicked()
 
     // Show the current image
     showImage();
+
+    // (the menu entry follows, however the order was changed)
+    const QSignalBlocker blocker(actionFieldOrder);
+    actionFieldOrder->setChecked(tbcSource.getFieldOrder());
 }
 
 void MainWindow::on_toggleAutoResize_toggled(bool checked)
@@ -2612,6 +2642,9 @@ void MainWindow::resizeEvent(QResizeEvent *event)
 
 	//aspect ratio label
 	updateAspectPushButton();
+
+	// leave out the field order button if the row has not the room
+	updateFieldOrderVisibility();
 
 	// Resize frame with window if resizeFrameWithWindow is enabled
 	if (resizeFrameWithWindow && tbcSource.getIsSourceLoaded()) {

@@ -202,6 +202,8 @@ private:
     bool filtersEnabled = true;
     void setFiltersEnabled(bool enabled);
     void updateFiltersButton();
+    void updateFieldOrderVisibility();
+    QAction *actionFieldOrder = nullptr;
     void saveVideoFilterConfig();
     void setupVideoFilter();
     void applyVideoFilter(const VideoFilterSettings &settings);
