@@ -45,13 +45,15 @@ public:
     void setSettings(const VideoFilterSettings &settings);
     VideoFilterSettings getSettings() const;
 
-    // Say whether the Filters button is on (it applies the other filters, below)
+    // Show whether the Filters button is on (it applies the other filters)
     void setFiltersOn(bool on);
 
     // Show the result of applying the filters (empty for success)
     void showResult(const QString &errorText);
 
 signals:
+    // The user ticked or unticked Apply them: the Filters button is to be switched
+    void filtersToggled(bool on);
     // The user asked for these filters (Apply, or OK)
     void settingsChosen(const VideoFilterSettings &settings);
 
@@ -60,7 +62,7 @@ private:
     QCheckBox *scalerCheck;
     QComboBox *scalerCombo;
     QLineEdit *customEdit;
-    QLabel *buttonStateLabel;
+    QCheckBox *filtersCheck;
     QLabel *graphLabel;
     QLabel *resultLabel;
 

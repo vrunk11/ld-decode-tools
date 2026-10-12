@@ -329,6 +329,7 @@ void MainWindow::setupVideoFilter()
         videoFilterDialog->raise();
     });
     connect(videoFilterDialog, &VideoFilterDialog::settingsChosen, this, &MainWindow::applyVideoFilter);
+    connect(videoFilterDialog, &VideoFilterDialog::filtersToggled, this, &MainWindow::setFiltersEnabled);
     connect(actionFilters, &QAction::toggled, this, &MainWindow::setFiltersEnabled);
     connect(filtersPushButton, &QPushButton::clicked, this, [this]() { setFiltersEnabled(!filtersEnabled); });
 

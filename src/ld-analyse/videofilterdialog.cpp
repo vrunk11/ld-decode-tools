@@ -11,8 +11,10 @@
 #include "videofilterdialog.h"
 
 #include <QDialogButtonBox>
-#include <QGridLayout>
+#include <QGroupBox>
+#include <QHBoxLayout>
 #include <QPushButton>
+#include <QSignalBlocker>
 #include <QVBoxLayout>
 
 namespace {
@@ -66,53 +68,60 @@ VideoFilterDialog::VideoFilterDialog(QWidget *parent)
     : QDialog(parent)
 {
     setWindowTitle(tr("Video filter"));
-    setMinimumWidth(540);
+    setMinimumWidth(480);
+
+    // A line of explanation under a control, in the colour of placeholder text so it follows the theme
+    const auto makeHint = [this](const QString &text) {
+        QLabel *hint = new QLabel(text, this);
+        hint->setWordWrap(true);
+        hint->setForegroundRole(QPalette::PlaceholderText);
+        return hint;
+    };
 
     QVBoxLayout *layout = new QVBoxLayout(this);
-    QLabel *intro = new QLabel(tr("The video is shown through ffmpeg filters. They change only the picture shown: "
-                                  "the line scope, vectorscope and the other analysis tools still read the TBC data. "
-                                  "Deinterlacing, scaling and the other filters are independent, and run in that order."), this);
-    intro->setWordWrap(true);
-    layout->addWidget(intro);
+    layout->addWidget(makeHint(tr("These change only the picture shown, not the data the analysis tools read. "
+                                  "They are applied in this order.")));
 
-    QGridLayout *grid = new QGridLayout;
-    grid->setColumnStretch(2, 1);
-
-    // Deinterlacing is the Deinterlaced mode of the view button: only the algorithm is chosen here
-    grid->addWidget(new QLabel(tr("Deinterlace with:"), this), 0, 0);
-    deinterlacerCombo = new QComboBox(this);
+    // 1. Deinterlacing: only the algorithm is chosen here, the view button switches it on
+    QGroupBox *deinterlaceBox = new QGroupBox(tr("1. Deinterlacing"), this);
+    QVBoxLayout *deinterlaceLayout = new QVBoxLayout(deinterlaceBox);
+    QHBoxLayout *deinterlaceRow = new QHBoxLayout;
+    deinterlaceRow->addWidget(new QLabel(tr("Algorithm:"), deinterlaceBox));
+    deinterlacerCombo = new QComboBox(deinterlaceBox);
     for (const Choice &choice: DEINTERLACERS) deinterlacerCombo->addItem(tr(choice.name), QString::fromLatin1(choice.id));
-    deinterlacerCombo->setToolTip(tr("Used by the Deinterlaced mode of the view button"));
-    grid->addWidget(deinterlacerCombo, 0, 1, 1, 2);
-    QLabel *deinterlaceHelp = new QLabel(tr("(when the view button is on Deinterlaced)"), this);
-    grid->addWidget(deinterlaceHelp, 1, 1, 1, 2);
+    deinterlaceRow->addWidget(deinterlacerCombo, 1);
+    deinterlaceLayout->addLayout(deinterlaceRow);
+    deinterlaceLayout->addWidget(makeHint(tr("Used when the view button is on Deinterlaced.")));
+    layout->addWidget(deinterlaceBox);
 
-    scalerCheck = new QCheckBox(tr("Scale to the display size:"), this);
-    scalerCombo = new QComboBox(this);
+    // 2. Scaling
+    QGroupBox *scaleBox = new QGroupBox(tr("2. Scaling"), this);
+    QVBoxLayout *scaleLayout = new QVBoxLayout(scaleBox);
+    QHBoxLayout *scaleRow = new QHBoxLayout;
+    scalerCheck = new QCheckBox(tr("Scale to the display size:"), scaleBox);
+    scaleRow->addWidget(scalerCheck);
+    scalerCombo = new QComboBox(scaleBox);
     for (const Choice &choice: SCALERS) scalerCombo->addItem(tr(choice.name), QString::fromLatin1(choice.id));
-    grid->addWidget(scalerCheck, 2, 0);
-    grid->addWidget(scalerCombo, 2, 1, 1, 2);
+    scaleRow->addWidget(scalerCombo, 1);
+    scaleLayout->addLayout(scaleRow);
+    scaleLayout->addWidget(makeHint(tr("Gives the picture the size it is shown at, so the algorithm applies to zooming too.")));
+    layout->addWidget(scaleBox);
 
-    // The command line: always there to edit, and applied when the Filters button is on
-    grid->addWidget(new QLabel(tr("Other filters:"), this), 3, 0);
-    customEdit = new QLineEdit(this);
+    // 3. Other filters: a command line, always there to edit; the check box is the Filters button
+    QGroupBox *otherBox = new QGroupBox(tr("3. Other filters (ffmpeg -vf)"), this);
+    QVBoxLayout *otherLayout = new QVBoxLayout(otherBox);
+    customEdit = new QLineEdit(otherBox);
     customEdit->setPlaceholderText(tr("Type ffmpeg filters here (none yet)"));
-    grid->addWidget(customEdit, 3, 1, 1, 2);
-    layout->addLayout(grid);
+    otherLayout->addWidget(customEdit);
+    filtersCheck = new QCheckBox(tr("Apply them (the Filters button)"), otherBox);
+    otherLayout->addWidget(filtersCheck);
+    otherLayout->addWidget(makeHint(tr("For example hqdn3d=2:1,unsharp=5:5:0.8. $W and $H are the size the picture is shown at.")));
+    layout->addWidget(otherBox);
 
-    QLabel *help = new QLabel(tr("The other filters are written as in ffmpeg's -vf option, for example hqdn3d=2:1,unsharp=5:5:0.8. $W and $H stand for "
-                                 "the size the picture is shown at. They are applied when the Filters button is on."), this);
-    help->setWordWrap(true);
-    layout->addWidget(help);
-
-    buttonStateLabel = new QLabel(this);
-    layout->addWidget(buttonStateLabel);
-
-    graphLabel = new QLabel(this);
-    graphLabel->setWordWrap(true);
+    // What comes of it: the graph given to ffmpeg, then whether ffmpeg took it
+    graphLabel = makeHint(QString());
     graphLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
     layout->addWidget(graphLabel);
-
     resultLabel = new QLabel(this);
     resultLabel->setWordWrap(true);
     layout->addWidget(resultLabel);
@@ -139,9 +148,10 @@ VideoFilterDialog::VideoFilterDialog(QWidget *parent)
     connect(scalerCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, update);
     connect(customEdit, &QLineEdit::textChanged, this, update);
     connect(customEdit, &QLineEdit::returnPressed, this, [this]() { emit settingsChosen(getSettings()); });
+    connect(filtersCheck, &QCheckBox::toggled, this, &VideoFilterDialog::filtersToggled);
 
     setSettings(VideoFilterSettings());
-    setFiltersOn(true);
+    setFiltersOn(false);
 }
 
 void VideoFilterDialog::setSettings(const VideoFilterSettings &settings)
@@ -169,21 +179,25 @@ VideoFilterSettings VideoFilterDialog::getSettings() const
     return settings;
 }
 
+// Show whether the Filters button is on, without it being taken for the user doing it
 void VideoFilterDialog::setFiltersOn(bool on)
 {
-    buttonStateLabel->setText(on ? tr("The Filters button is on: the other filters are applied.")
-                                 : tr("The Filters button is off: the other filters are not applied."));
+    const QSignalBlocker blocker(filtersCheck);
+    filtersCheck->setChecked(on);
 }
 
 void VideoFilterDialog::updateGraphLabel()
 {
+    // What ffmpeg is given: the filters of the Deinterlaced view first, then the scaling and the others
     VideoFilterSettings deinterlacing = getSettings();
     deinterlacing.deinterlacerOn = true;
     deinterlacing.scalerOn = false;
     deinterlacing.customOn = false;
-    const QString graph = getSettings().toGraph();
-    graphLabel->setText(tr("Deinterlaced view: %1\nScaling and other filters: %2")
-                        .arg(deinterlacing.toGraph(), graph.isEmpty() ? tr("none") : graph));
+    const QString rest = getSettings().toGraph();
+    QStringList parts;
+    parts << deinterlacing.toGraph();
+    if (!rest.isEmpty()) parts << rest;
+    graphLabel->setText(tr("Graph: %1").arg(parts.join(',')));
     resultLabel->clear();
 }
 
