@@ -53,7 +53,7 @@ Video piped in has no metadata, so the system must be given. See "Live input" be
 - `--input-format <tbc|cvbs>`: Fields of TBC (the default) or frames of CVBS
 - `--black-level`, `--white-level`: TBC levels (default: the standard ones)
 - `--subcarrier-locked <yes|no>`, `--sample-encoding <u10|u16|tpg21|s16>`
-- `--buffer-frames <number>`: Frames read ahead and kept behind (default 32)
+- `--buffer-frames <number>`: Frames read ahead and kept behind (default: 5 seconds of video)
 
 #### Arguments
 - `input`: Input TBC or CVBS file to analyze, or `-` for video piped in
@@ -70,7 +70,7 @@ ld-analyse capture.tbc
 
 - **Playback**: the play button, the Playback menu and the space bar play the video at its real speed (0.25x to 4x, optionally looping). Frames are decoded ahead by several threads and skipped, rather than slowed down, if the machine cannot keep up. The scope and the other tools follow the frame shown.
 - **Video filters**: View > Video filter... runs the picture through ffmpeg filters (libavfilter): a deinterlacer (yadif, bwdif, w3fdif, estdif), a scaling algorithm, and any other filters, each with a check box. The view button also has a Deinterlaced mode. They change only the picture shown, not the data the analysis tools read. Built with libavfilter by default (`USE_FFMPEG=0` in build.bat leaves it out).
-- **Live input**: `producer | ld-analyse - --system ntsc` (add `--input-format cvbs` for CVBS) shows video as it arrives, with no length limit. Playback starts by itself and stays on, waiting for more video at the end of what has arrived. The slider covers the frames still in the buffer. Dropout, SNR and VBI data come from metadata, which a pipe does not have.
+- **Live input**: `producer | ld-analyse - --system ntsc` (add `--input-format cvbs` for CVBS) shows video as it arrives, with no length limit. Playback starts by itself at the newest frame and stays on, waiting for more video at the end of what has arrived; it can not be sought while it plays. Paused, the slider and the buttons go through the buffer (about the last 5 seconds), for analysing a sequence. Dropout, SNR and VBI data come from metadata, which a pipe does not have.
 
 ## Input/Output
 

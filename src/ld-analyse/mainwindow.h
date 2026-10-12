@@ -208,6 +208,7 @@ private:
     // A stream (live input): count what has arrived, and keep the controls and playback to it
     QTimer *liveTimer = nullptr;
     void updateLive();
+    void updateLiveControls();
     QPushButton *playPushButton;
     QAction *actionPlayPause;
     QAction *actionLoop;

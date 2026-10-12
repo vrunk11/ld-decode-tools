@@ -101,7 +101,7 @@ int main(int argc, char *argv[])
     parser.addOption(sampleEncodingOption);
 
     QCommandLineOption bufferFramesOption(QStringList() << "buffer-frames",
-                                          QCoreApplication::translate("main", "Piped input: frames read ahead of the one shown, and kept behind it to go back to (default 32)"),
+                                          QCoreApplication::translate("main", "Piped input: frames read ahead of the one shown, and kept behind it to go back to when paused (default: 5 seconds of video)"),
                                           QCoreApplication::translate("main", "number"));
     parser.addOption(bufferFramesOption);
 
@@ -187,6 +187,8 @@ int main(int argc, char *argv[])
             }
             streamInput.isSubcarrierLocked = value == "yes";
         }
+        // The buffer holds about 5 seconds of video: how far back a paused input can be gone through
+        streamInput.bufferFrames = streamInput.system == PAL ? 125 : 150;
         if (parser.isSet(bufferFramesOption)) {
             streamInput.bufferFrames = parser.value(bufferFramesOption).toInt();
             if (streamInput.bufferFrames < 1) {

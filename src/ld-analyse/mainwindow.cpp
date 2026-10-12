@@ -323,24 +323,56 @@ void MainWindow::updateLive()
     const qint32 last = isFieldView ? tbcSource.getNumberOfFields() : tbcSource.getNumberOfFrames();
     const bool ended = tbcSource.getIsLiveEnded();
 
-    {
-        // Moving the ends of the controls must not look like the user seeking
-        const QSignalBlocker spinBlocker(ui->posNumberSpinBox);
-        const QSignalBlocker sliderBlocker(ui->posHorizontalSlider);
-        // (the whole of what has arrived, as a timeline: the part the buffer no longer holds
-        // can not be gone back to, but a range that moved with it would make the handle jump)
-        ui->posNumberSpinBox->setRange(1, qMax(1, last));
-        ui->posHorizontalSlider->setRange(1, qMax(1, last));
-        ui->posHorizontalSlider->setPageStep(qMax(1, last / 100));
-    }
+    updateLiveControls();
 
     playback->setLive(true, ended);
     playback->setRange(first, last);
     renderer->setLastPosition(last);
 
-    sourceVideoStatus.setText(ended ? tr("Live input ended after %1 frames").arg(tbcSource.getNumberOfFrames())
-                                    : tr("Live input - %1 frames received").arg(tbcSource.getNumberOfFrames()));
+    // How far behind the newest frame the picture is (playing from a frame of the buffer)
+    const qint32 frames = tbcSource.getNumberOfFrames();
+    const double frameRate = tbcSource.getSystem() == PAL ? 25.0 : 30000.0 / 1001.0;
+    const qint32 behind = qMax(0, frames - currentFrameNumber);
+    QString status = ended ? tr("Live input ended after %1 frames").arg(frames)
+                           : tr("Live input - %1 frames received").arg(frames);
+    if (!ended && behind > 2) status += tr(" - %1 s behind").arg(behind / frameRate, 0, 'f', 1);
+    if (!ended && !playback->isPlaying()) status += tr(" - paused: the last %1 s can be gone through")
+                                                       .arg(qRound((frames - tbcSource.getFirstAvailableFrame()) / frameRate));
+    sourceVideoStatus.setText(status);
     if (ended) liveTimer->stop();
+}
+
+// A live input can not be sought while it plays: the navigation controls are off then. Paused,
+// they go through the buffer, which holds the last few seconds.
+void MainWindow::updateLiveControls()
+{
+    if (!tbcSource.getIsLive() || !tbcSource.getIsSourceLoaded()) return;
+
+    const bool isFieldView = tbcSource.getFieldViewEnabled();
+    const qint32 firstFrame = tbcSource.getFirstAvailableFrame();
+    const qint32 first = isFieldView ? 2 * firstFrame - 1 : firstFrame;
+    const qint32 last = isFieldView ? tbcSource.getNumberOfFields() : tbcSource.getNumberOfFrames();
+    const bool navigable = !playback->isPlaying();
+
+    {
+        // Moving the ends of the controls must not look like the user seeking
+        const QSignalBlocker spinBlocker(ui->posNumberSpinBox);
+        const QSignalBlocker sliderBlocker(ui->posHorizontalSlider);
+        // Playing: the whole of what has arrived, as a timeline (a range that moved with the
+        // buffer would make the handle jump about). Paused: the buffer, which is what can be reached.
+        const qint32 low = navigable ? first : 1;
+        ui->posNumberSpinBox->setRange(low, qMax(low, last));
+        ui->posHorizontalSlider->setRange(low, qMax(low, last));
+        ui->posHorizontalSlider->setPageStep(qMax(1, (last - low) / 100));
+    }
+
+    ui->posNumberSpinBox->setEnabled(navigable);
+    ui->posHorizontalSlider->setEnabled(navigable);
+    ui->previousPushButton->setEnabled(navigable);
+    ui->nextPushButton->setEnabled(navigable);
+    ui->startPushButton->setEnabled(navigable);
+    // (the end button goes back to the live edge, which is what is wanted when behind)
+    ui->endPushButton->setEnabled(true);
 }
 
 // Video playback ------------------------------------------------------------------------------------------------------
@@ -423,6 +455,7 @@ void MainWindow::updatePlaybackState(bool playing)
     playbackShowsPause = playing;
     updatePlayButtonIcon();
     actionPlayPause->setText(playing ? tr("&Pause") : tr("&Play"));
+    updateLiveControls();
 
     // Say if the machine could not keep up, so a jerky video is not mistaken for a bad capture
     if (!playing) renderer->stop();
@@ -685,6 +718,8 @@ void MainWindow::updateGuiLoaded()
 
     // Disable "Save Metadata", now we've loaded the metadata into the GUI
     ui->actionSave_Metadata->setEnabled(false);
+
+    updateLiveControls();
 
 	//resize the windows to fit the content in full screen
 	MainWindow::resize_on_aspect();
