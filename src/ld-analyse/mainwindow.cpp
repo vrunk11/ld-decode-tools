@@ -213,7 +213,7 @@ void MainWindow::setupPlayback()
     playPushButton->setToolTip(tr("Play / pause (Space)"));
     connect(playPushButton, &QPushButton::clicked, this, &MainWindow::togglePlayback);
     const qint32 nextIndex = ui->horizontalLayout_3->indexOf(ui->nextPushButton);
-    ui->horizontalLayout_3->insertWidget(nextIndex + 1, playPushButton);
+    ui->horizontalLayout_3->insertWidget(nextIndex, playPushButton);
 
     QMenu *menu = new QMenu(tr("&Playback"), this);
     ui->menuBar->insertMenu(ui->menuWindow->menuAction(), menu);

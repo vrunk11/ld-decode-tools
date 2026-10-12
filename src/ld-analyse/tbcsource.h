@@ -63,13 +63,6 @@ public:
     QString getMetadataFormatName();
     QString getLastIOError();
 
-    RenderSettings getRenderSettings();
-    quint32 getSettingsGeneration() const { return settingsGeneration; }
-    bool openForRendering(const RenderSettings &settings);
-    void applyRenderSettings(const RenderSettings &settings);
-    // Use this image, rendered elsewhere, for the frame (field in field view) if it is the one loaded
-    void setPrerenderedImage(qint32 position, const QImage &image);
-
     void setHighlightDropouts(bool _state);
     void setChromaDecoder(bool _state);
     void setFieldView(bool _state);
@@ -115,6 +108,13 @@ public:
         ViewMode viewMode;
         SourceMode sourceMode;
     };
+
+    RenderSettings getRenderSettings();
+    quint32 getSettingsGeneration() const { return settingsGeneration; }
+    bool openForRendering(const RenderSettings &settings);
+    void applyRenderSettings(const RenderSettings &settings);
+    // Use this image, rendered elsewhere, for the frame (field in field view) if it is the one loaded
+    void setPrerenderedImage(qint32 position, const QImage &image);
 
     void load(qint32 frameNumber, qint32 fieldNumber);
 
