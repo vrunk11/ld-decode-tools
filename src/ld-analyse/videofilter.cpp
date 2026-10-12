@@ -18,6 +18,7 @@ extern "C" {
 #include <libavfilter/buffersrc.h>
 #include <libavutil/error.h>
 #include <libavutil/frame.h>
+#include <libavutil/version.h>
 #include <libavutil/log.h>
 #include <libavutil/mem.h>
 }
@@ -161,8 +162,14 @@ struct VideoFilter::Impl
         frame->pts = nextPts++;
         if (format.interlaced) {
             // The picture is a frame of two interleaved fields
+#if LIBAVUTIL_VERSION_INT >= AV_VERSION_INT(58, 29, 100)
             frame->flags |= AV_FRAME_FLAG_INTERLACED;
             if (format.topFieldFirst) frame->flags |= AV_FRAME_FLAG_TOP_FIELD_FIRST;
+#else
+            // Before ffmpeg 6.1 these were fields of their own
+            frame->interlaced_frame = 1;
+            frame->top_field_first = format.topFieldFirst ? 1 : 0;
+#endif
         }
 
         result = av_buffersrc_add_frame_flags(source, frame, 0);

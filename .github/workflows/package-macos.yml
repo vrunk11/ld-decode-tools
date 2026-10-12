@@ -79,9 +79,42 @@ jobs:
           arch: 'clang_64'
           cache: true
 
+      # libavfilter for the video filters of ld-analyse: the manifest's "ffmpeg"
+      # feature, a minimal shared build with no third-party codecs, so macdeployqt
+      # bundles a few dylibs rather than Homebrew's whole ffmpeg dependency tree.
+      # A failure here leaves the package without the filters (with a warning
+      # below) instead of failing it.
+      - name: Cache ffmpeg from vcpkg
+        id: ffmpeg-cache
+        uses: actions/cache@v6
+        with:
+          path: vcpkg_installed
+          key: vcpkg-ffmpeg-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('vcpkg.json') }}
+
+      - name: Build ffmpeg with vcpkg
+        if: steps.ffmpeg-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          brew install nasm autoconf automake libtool || true
+          if [[ "$(uname -m)" == arm64 ]]; then triplet=arm64-osx-dynamic; else triplet=x64-osx-dynamic; fi
+          # A full clone: vcpkg resolves the builtin-baseline of vcpkg.json from its history
+          git clone --quiet https://github.com/microsoft/vcpkg.git vcpkg
+          ./vcpkg/bootstrap-vcpkg.sh -disableMetrics
+          ./vcpkg/vcpkg install \
+            --triplet "$triplet" \
+            --x-manifest-root=. \
+            --x-install-root="$PWD/vcpkg_installed" \
+            --x-feature=ffmpeg
+
       - name: Configure and build
         shell: bash
         run: |
+          # ffmpeg from vcpkg, if it was built (see above)
+          for dir in vcpkg_installed/*/lib/pkgconfig; do
+            [[ -d "$dir" ]] && export PKG_CONFIG_PATH="$PWD/$dir${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+          done
           # Homebrew's fftw is single-architecture, so build for the runner's
           # architecture only even though Qt itself is universal.
           cmake -S . -B build -G Ninja \
@@ -91,6 +124,9 @@ jobs:
             -DEZPWD_DIR="$PWD/external/ezpwd-reed-solomon/c++" \
             -DAPP_BRANCH=github-actions \
             -DAPP_COMMIT=${{ steps.version.outputs.version }}
+          if ! grep -q '^FFMPEG_FOUND:INTERNAL=1' build/CMakeCache.txt; then
+            echo "::warning::libavfilter was not found: this ld-analyse has no video filters"
+          fi
           cmake --build build --parallel
 
       - name: Assemble app bundle

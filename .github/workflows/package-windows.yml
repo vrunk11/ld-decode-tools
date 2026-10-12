@@ -1,5 +1,5 @@
 # Windows package: every tool built with MSVC against an official Qt, with its
-# Qt and FFTW runtime beside it, delivered as a portable ZIP.
+# Qt, FFTW and ffmpeg runtime beside it, delivered as a portable ZIP.
 #
 # SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -84,15 +84,17 @@ jobs:
       # FFTW is found through pkg-config (see the root CMakeLists.txt), so the
       # manifest supplies pkgconf as well as the library. The manifest's "qt"
       # feature is left off: CI uses the official Qt installed below rather
-      # than building it from source.
-      - name: Install FFTW and pkgconf from vcpkg.json
+      # than building it from source. Its "ffmpeg" feature is on: a minimal
+      # libavfilter (no third-party codecs) for the video filters of ld-analyse.
+      - name: Install FFTW, ffmpeg and pkgconf from vcpkg.json
         if: steps.vcpkg-cache.outputs.cache-hit != 'true'
         shell: pwsh
         run: |
           .\vcpkg\vcpkg.exe install `
             --triplet $env:VCPKG_TRIPLET `
             --x-manifest-root=. `
-            --x-install-root="$PWD\vcpkg_installed"
+            --x-install-root="$PWD\vcpkg_installed" `
+            --x-feature=ffmpeg
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Install Qt
@@ -134,6 +136,12 @@ jobs:
             "-DAPP_COMMIT=${{ steps.version.outputs.version }}"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+          # The package is meant to have the video filters of ld-analyse
+          if (-not (Select-String -Path build\CMakeCache.txt -Pattern '^FFMPEG_FOUND:INTERNAL=1' -Quiet)) {
+            Write-Error "libavfilter was not found: ld-analyse would have no video filters"
+            exit 1
+          }
+
           cmake --build build --parallel
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
@@ -158,7 +166,7 @@ jobs:
           & windeployqt --release --no-translations --no-system-d3d-compiler --no-opengl-sw @stagedExes
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-          # Non-Qt runtime: FFTW from vcpkg.
+          # Non-Qt runtime: FFTW and ffmpeg (libavfilter) from vcpkg.
           Get-ChildItem -Path "vcpkg_installed\$env:VCPKG_TRIPLET\bin" -Filter "*.dll" |
             ForEach-Object { Copy-Item $_.FullName $stage -Force }
 

@@ -80,9 +80,41 @@ jobs:
           arch: 'linux_gcc_64'
           cache: true
 
+      # libavfilter for the video filters of ld-analyse: the manifest's "ffmpeg"
+      # feature, a minimal shared build with no third-party codecs, so the
+      # AppImage gains a few libraries rather than the distribution's whole
+      # ffmpeg dependency tree. A failure here leaves the package without the
+      # filters (with a warning below) instead of failing it.
+      - name: Cache ffmpeg from vcpkg
+        id: ffmpeg-cache
+        uses: actions/cache@v6
+        with:
+          path: vcpkg_installed
+          key: vcpkg-ffmpeg-${{ runner.os }}-x64-linux-dynamic-${{ hashFiles('vcpkg.json') }}
+
+      - name: Build ffmpeg with vcpkg
+        if: steps.ffmpeg-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y nasm
+          # A full clone: vcpkg resolves the builtin-baseline of vcpkg.json from its history
+          git clone --quiet https://github.com/microsoft/vcpkg.git vcpkg
+          ./vcpkg/bootstrap-vcpkg.sh -disableMetrics
+          ./vcpkg/vcpkg install \
+            --triplet x64-linux-dynamic \
+            --x-manifest-root=. \
+            --x-install-root="$PWD/vcpkg_installed" \
+            --x-feature=ffmpeg
+
       - name: Configure and build
         shell: bash
         run: |
+          vcpkg_lib="$PWD/vcpkg_installed/x64-linux-dynamic/lib"
+          if [[ -d "$vcpkg_lib/pkgconfig" ]]; then
+            export PKG_CONFIG_PATH="$vcpkg_lib/pkgconfig"
+          fi
           cmake -S . -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_INSTALL_PREFIX=/usr \
@@ -90,6 +122,9 @@ jobs:
             -DEZPWD_DIR="$PWD/external/ezpwd-reed-solomon/c++" \
             -DAPP_BRANCH=github-actions \
             -DAPP_COMMIT=${{ steps.version.outputs.version }}
+          if ! grep -q '^FFMPEG_FOUND:INTERNAL=1' build/CMakeCache.txt; then
+            echo "::warning::libavfilter was not found: this ld-analyse has no video filters"
+          fi
           cmake --build build --parallel
 
       - name: Install into AppDir
@@ -139,6 +174,9 @@ jobs:
           LDAI_OUTPUT: ld-analyse-${{ steps.version.outputs.version }}-x86_64.AppImage
         run: |
           set -euo pipefail
+
+          # Where linuxdeploy finds the ffmpeg libraries to bundle
+          export LD_LIBRARY_PATH="$PWD/vcpkg_installed/x64-linux-dynamic/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
           # linuxdeploy-plugin-qt bundles every SQL driver Qt ships, and the
           # official Qt includes drivers (MIMER, ODBC, PostgreSQL, ...) whose
