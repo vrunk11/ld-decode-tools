@@ -21,6 +21,7 @@
 #include "lddecodemetadata.h"
 #include "sourcevideo.h"
 #include "targetvideo.h"
+#include "tbcfiles.h"
 
 int main(int argc, char *argv[])
 {
@@ -46,7 +47,9 @@ int main(int argc, char *argv[])
                 "Converts a CVBS capture (<name>.cvbs, as written by ld-decode or\n"
                 "decode-orc) to <name>.tbc with <name>.tbc.db metadata (or .tbc.json).\n"
                 "A Y/C pair (<name>.cvbsy and <name>.cvbsc) becomes <name>.tbc and\n"
-                "<name>_chroma.tbc. Use ld-tbc-to-cvbs for the opposite direction.\n"
+                "<name>_chroma.tbc, or <name>.tbcy and <name>.tbcc (as decode-orc names\n"
+                "them) if the output file is named <name>.tbcy.\n"
+                "Use ld-tbc-to-cvbs for the opposite direction.\n"
                 "\n"
                 "GPLv3 Open-Source - github: https://github.com/happycube/ld-decode");
     parser.addHelpOption();
@@ -117,9 +120,12 @@ int main(int argc, char *argv[])
         qCritical().noquote() << "Output file" << outputFileName << "is a CVBS file name - give a .tbc file name";
         return -1;
     }
-    const QString outputChromaFileName = (outputFileName.endsWith(".tbc", Qt::CaseInsensitive)
-                                          ? outputFileName.left(outputFileName.length() - 4) : outputFileName)
-                                         + "_chroma.tbc";
+    // A Y/C capture is named <name>.tbc and <name>_chroma.tbc, as ld-decode and vhs-decode
+    // do; or <name>.tbcy and <name>.tbcc, as decode-orc does, if the output is named so
+    if (outputFileName.endsWith(".tbcc", Qt::CaseInsensitive)) outputFileName = TbcFiles::lumaFileName(outputFileName);
+    const QString outputChromaFileName = TbcFiles::isOrcYcFile(outputFileName)
+            ? TbcFiles::baseName(outputFileName) + ".tbcc"
+            : TbcFiles::baseName(outputFileName) + "_chroma.tbc";
 
     // Read the metadata: the companion if there is one, otherwise <name>.meta
     const QString inputMetadataFileName = LdDecodeMetaData::findMetadataFile(inputFileName);
@@ -138,8 +144,7 @@ int main(int argc, char *argv[])
                                                                                        : metaData.getFormat();
     const QString outputMetadataFileName = LdDecodeMetaData::metadataFileName(outputFileName, outputFormat);
 
-    const QString outputBase = outputFileName.endsWith(".tbc", Qt::CaseInsensitive)
-            ? outputFileName.left(outputFileName.length() - 4) : outputFileName;
+    const QString outputBase = TbcFiles::baseName(outputFileName);
     const QString wavFileName = CvbsAudio::wavFileName(Cvbs::baseName(inputFileName), 0);
     const QString outputPcmFileName = outputBase + ".pcm";
     const bool hasAudio = QFileInfo::exists(wavFileName);

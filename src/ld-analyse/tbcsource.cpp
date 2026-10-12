@@ -13,6 +13,7 @@
 
 #include "tbcsource.h"
 #include "cvbs.h"
+#include "tbcfiles.h"
 #include "tbc/logging.h"
 
 #include "sourcefield.h"
@@ -1220,33 +1221,25 @@ bool TbcSource::startBackgroundLoad(QString sourceFilename)
     tbcDebugStream() << "TbcSource::startBackgroundLoad(): Processing metadata...";
     emit busy("Processing metadata...");
 
-    // SQLite (.tbc.db), or JSON (.tbc.json) when that is all there is
-    QString metadataFileName = LdDecodeMetaData::findMetadataFile(sourceFilename);
-
     const bool isCvbs = Cvbs::isDataFileName(sourceFilename);
-    const bool isChromaTbc = sourceFilename.endsWith("_chroma.tbc")
-                             || (isCvbs && Cvbs::channel(sourceFilename) == Cvbs::Channel::Chroma);
-    if (isCvbs && isChromaTbc) {
-        // The user specified a .cvbsc file: the pair shares its metadata with
-        // the .cvbsy file, so open both, defaulting to the chroma view
-        const QString lumaFilename = Cvbs::pairedDataFileName(sourceFilename);
-        metadataFileName = LdDecodeMetaData::findMetadataFile(lumaFilename);
-        if (QFileInfo::exists(lumaFilename)) sourceFilename = lumaFilename;
-    } else if (isChromaTbc && !QFileInfo::exists(metadataFileName)) {
-        // The user specified a _chroma.tbc file, and it doesn't have metadata.
-
-        // The corresponding luma file should have metadata, so use that.
-        QString baseFilename = sourceFilename;
-        baseFilename.chop(11);
-        metadataFileName = LdDecodeMetaData::findMetadataFile(baseFilename + ".tbc");
-
-        // But does the luma file itself exist?
-        QString lumaFilename = baseFilename + ".tbc";
-        if (QFileInfo::exists(lumaFilename)) {
-            // Yes. Open both of them, defaulting to the chroma view.
-            sourceFilename = lumaFilename;
-        }
+    const bool isChromaTbc = isCvbs ? Cvbs::channel(sourceFilename) == Cvbs::Channel::Chroma
+                                    : TbcFiles::isChromaFile(sourceFilename);
+    if (isChromaTbc) {
+        // The user specified a chroma file (.cvbsc, .tbcc or _chroma.tbc). The pair
+        // shares its metadata with the luma file, so open both, defaulting to the chroma
+        // view -- unless the chroma file has metadata of its own
+        const QString lumaFilename = isCvbs ? Cvbs::pairedDataFileName(sourceFilename)
+                                            : TbcFiles::lumaFileName(sourceFilename);
+        const bool hasOwnMetadata = !isCvbs && !TbcFiles::isOrcYcFile(sourceFilename)
+                                    && (QFileInfo::exists(LdDecodeMetaData::metadataFileName(sourceFilename, LdDecodeMetaData::MetadataFormat::Sqlite))
+                                        || QFileInfo::exists(LdDecodeMetaData::metadataFileName(sourceFilename, LdDecodeMetaData::MetadataFormat::Json)));
+        if (!hasOwnMetadata && QFileInfo::exists(lumaFilename)) sourceFilename = lumaFilename;
     }
+
+    // SQLite (.tbc.db), or JSON (.tbc.json) when that is all there is. For decode-orc's
+    // .tbcy and .tbcc files it is that of the .tbc, and a chroma file with no metadata of
+    // its own has that of its luma file.
+    QString metadataFileName = LdDecodeMetaData::findMetadataFile(sourceFilename);
 
     if (!ldDecodeMetaData.read(metadataFileName)) {
         // Open failed
@@ -1274,14 +1267,11 @@ bool TbcSource::startBackgroundLoad(QString sourceFilename)
         return false;
     }
 
-    // Is there a separate _chroma.tbc file (or the .cvbsc of a .cvbsy)?
-    QString chromaSourceFilename = sourceFilename;
-    if (isCvbs) {
-        chromaSourceFilename = Cvbs::pairedDataFileName(sourceFilename);
-    } else {
-        chromaSourceFilename.chop(4);
-        chromaSourceFilename += "_chroma.tbc";
-    }
+    // Is there a separate chroma file: _chroma.tbc beside a .tbc, .tbcc beside a .tbcy,
+    // or .cvbsc beside a .cvbsy? (A chroma file opened alone has none to go with it.)
+    QString chromaSourceFilename = isCvbs ? Cvbs::pairedDataFileName(sourceFilename)
+                                          : TbcFiles::chromaFileName(sourceFilename);
+    if (chromaSourceFilename == sourceFilename) chromaSourceFilename.clear();
     if (!chromaSourceFilename.isEmpty() && QFileInfo::exists(chromaSourceFilename)) {
         // Yes! Open it.
         tbcDebugStream() << "TbcSource::startBackgroundLoad(): Loading chroma TBC file...";

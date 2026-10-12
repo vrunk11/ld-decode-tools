@@ -16,7 +16,7 @@ For `capture.tbc` it writes:
   dropouts, ...) in the usual ld-decode format, which the CVBS core metadata has no place for
 
 A Y/C capture (`capture.tbc` with `capture_chroma.tbc`, or decode-orc's `capture.tbcy` with
-`capture.tbcc`) becomes `capture.cvbsy` and `capture.cvbsc`.
+`capture.tbcc`) becomes `capture.cvbsy` and `capture.cvbsc`. Either file of the pair, in either naming, names it; the metadata is that of the `.tbc` (`capture.tbc.db` or `.tbc.json`).
 
 The TBC levels are mapped onto the standard levels of the video system, as decode-orc does, so the
 output is the same as decode-orc's own conversion. When the metadata has no blanking level (older JSON

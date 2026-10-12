@@ -15,7 +15,7 @@ TBC files.
 For `capture.cvbs` it writes `capture.tbc` and `capture.tbc.db`. The metadata comes from the companion
 `capture.cvbs.db` / `capture.cvbs.json` when there is one (keeping every field's metadata), otherwise
 from `capture.meta` and `capture.dropouts.meta`. A Y/C pair (`capture.cvbsy` and `capture.cvbsc`)
-becomes `capture.tbc` and `capture_chroma.tbc`.
+becomes `capture.tbc` and `capture_chroma.tbc`, or, if the output file is named `output.tbcy`, `output.tbcy` and `output.tbcc` as decode-orc names them (the metadata is then `output.tbc.db`, or `.tbc.json`).
 
 The audio of the first channel pair (`capture_audio_0.wav`) is copied to `capture.pcm` as 16-bit PCM, without resampling; the sample rate declared in the metadata is the WAV's own (normally 48000 Hz), or `--samplerate`. Other channel pairs are not converted (a TBC capture has one audio track).
 

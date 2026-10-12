@@ -19,6 +19,7 @@
 #include "cvbs.h"
 #include "cvbsaudio.h"
 #include "streamreader.h"
+#include "tbcfiles.h"
 
 // assert() is compiled out of release builds, so check explicitly
 #define CHECK(condition) \
@@ -52,6 +53,56 @@ static void testGeometry()
     VideoSystem system;
     CHECK(Cvbs::systemForFieldLength(910 * 263, system) && system == NTSC);
     CHECK(!Cvbs::systemForFieldLength(1234, system));
+}
+
+static void touch(const QString &fileName)
+{
+    QFile file(fileName);
+    CHECK(file.open(QIODevice::WriteOnly));
+}
+
+static void testTbcFiles(const QString &directory)
+{
+    std::cerr << "Testing the TBC file names\n";
+
+    // The two namings of a Y/C capture
+    CHECK(TbcFiles::isOrcYcFile("a.tbcy") && TbcFiles::isOrcYcFile("A.TBCC") && !TbcFiles::isOrcYcFile("a.tbc"));
+    CHECK(TbcFiles::isChromaFile("a.tbcc") && TbcFiles::isChromaFile("a_chroma.tbc"));
+    CHECK(!TbcFiles::isChromaFile("a.tbcy") && !TbcFiles::isChromaFile("a.tbc"));
+    CHECK(TbcFiles::baseName("d/a.tbc") == "d/a" && TbcFiles::baseName("d/a.tbcy") == "d/a");
+    CHECK(TbcFiles::baseName("d/a.tbcc") == "d/a" && TbcFiles::baseName("d/a_chroma.tbc") == "d/a");
+    CHECK(TbcFiles::baseName("d/a.cvbs") == "d/a.cvbs");
+    CHECK(TbcFiles::lumaFileName("d/a.tbcc") == "d/a.tbcy");
+    CHECK(TbcFiles::lumaFileName("d/a_chroma.tbc") == "d/a.tbc");
+    CHECK(TbcFiles::lumaFileName("d/a.tbc") == "d/a.tbc" && TbcFiles::lumaFileName("d/a.tbcy") == "d/a.tbcy");
+
+    // The metadata of the pair of decode-orc naming is that of the .tbc
+    CHECK(LdDecodeMetaData::metadataFileName("d/a.tbcy", LdDecodeMetaData::MetadataFormat::Sqlite) == "d/a.tbc.db");
+    CHECK(LdDecodeMetaData::metadataFileName("d/a.tbcc", LdDecodeMetaData::MetadataFormat::Json) == "d/a.tbc.json");
+    CHECK(LdDecodeMetaData::metadataFileName("d/a.tbc", LdDecodeMetaData::MetadataFormat::Sqlite) == "d/a.tbc.db");
+    CHECK(LdDecodeMetaData::metadataFileName("d/a_chroma.tbc", LdDecodeMetaData::MetadataFormat::Sqlite) == "d/a_chroma.tbc.db");
+
+    // The chroma file is only there if the file is
+    const QString legacy = directory + "/legacy";
+    touch(legacy + ".tbc");
+    CHECK(TbcFiles::chromaFileName(legacy + ".tbc").isEmpty());
+    touch(legacy + "_chroma.tbc");
+    CHECK(TbcFiles::chromaFileName(legacy + ".tbc") == legacy + "_chroma.tbc");
+    CHECK(TbcFiles::chromaFileName(legacy + "_chroma.tbc") == legacy + "_chroma.tbc");
+
+    const QString orc = directory + "/orc";
+    touch(orc + ".tbcy");
+    CHECK(TbcFiles::chromaFileName(orc + ".tbcy").isEmpty());
+    touch(orc + ".tbcc");
+    CHECK(TbcFiles::chromaFileName(orc + ".tbcy") == orc + ".tbcc");
+    CHECK(TbcFiles::chromaFileName(orc + ".tbcc") == orc + ".tbcc");
+
+    // A chroma file with no metadata of its own has that of the luma file
+    touch(legacy + ".tbc.db");
+    CHECK(LdDecodeMetaData::findMetadataFile(legacy + "_chroma.tbc") == legacy + ".tbc.db");
+    touch(orc + ".tbc.json");
+    CHECK(LdDecodeMetaData::findMetadataFile(orc + ".tbcc") == orc + ".tbc.json");
+    CHECK(LdDecodeMetaData::findMetadataFile(orc + ".tbcy") == orc + ".tbc.json");
 }
 
 static void testFileNames()
@@ -426,6 +477,7 @@ int main(int argc, char *argv[])
 
     testGeometry();
     testFileNames();
+    testTbcFiles(directory.path());
     testSampleConversion();
     testFrameFields();
     testDropouts(directory.path());

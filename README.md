@@ -73,6 +73,7 @@ each GitHub release.
   - Tools that write video (`ld-dropout-correct`, `ld-disc-stacker`, `ld-discmap`) write CVBS for CVBS input and TBC for TBC input; `ld-tbc-to-cvbs` and `ld-cvbs-to-tbc` convert between the two
   - Audio: the converters copy the `.pcm` to the first channel pair `capture_audio_0.wav` (24-bit WAV) and back, without resampling. `--samplerate` sets the rate the audio is declared to have: by default 44100 Hz for a TBC source and the WAV's own rate (normally 48000 Hz) for a CVBS source. decode-orc only accepts 48000 Hz, so use `--samplerate 48000` for a capture it should read (the audio then plays faster, as it is not resampled)
 - **File Extensions**: TBC files use `.tbc` extension, metadata uses `.tbc.db` (SQLite) or `.tbc.json` (JSON)
+  - A Y/C capture has two files, named `<name>.tbc` and `<name>_chroma.tbc` (ld-decode, vhs-decode) or `<name>.tbcy` and `<name>.tbcc` (decode-orc); both namings are supported, and the metadata is that of `<name>.tbc` either way. `ld-analyse`, `ld-tbc-to-cvbs` and `ld-cvbs-to-tbc` work with Y/C pairs (`ld-cvbs-to-tbc` names its output after the output file: `x.tbcy` gives `x.tbcy` and `x.tbcc`)
 - **Dependencies**: Qt 6 and FFTW3; FFmpeg is only needed for the chroma tests and to turn the decoded output into video files
 - **Performance**: Many tools support multi-threading for faster processing
 

@@ -4,7 +4,7 @@ ld-analyse is a graphical application originally designed to assist with the ana
 
 The primary file-type is TBC (time-base corrected) video files containing the raw NTSC or PAL fields.
 
-TBC files are usually identified by the `.tbc` & `_chroma.tbc` file-extensions.
+TBC files are usually identified by the `.tbc` & `_chroma.tbc` file-extensions. The Y/C pair that decode-orc writes, `.tbcy` (luma) and `.tbcc` (chroma), is opened too (either file of the pair opens both); its metadata is that of the `.tbc` (`.tbc.db` or `.tbc.json`).
 
 The application also presents source and tool-chain metadata (supplied by the TBC's metadata file, `.tbc.db` or `.tbc.json`; for a CVBS capture, `.meta` and its companion `.cvbs.db` or `.cvbs.json`) that provide additional details about the TBC file's contents such as VBI data and TV System.
 

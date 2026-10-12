@@ -23,32 +23,9 @@
 #include "lddecodemetadata.h"
 #include "sourcevideo.h"
 #include "targetvideo.h"
+#include "tbcfiles.h"
 
 namespace {
-
-// The chroma file of a Y/C TBC capture: <name>_chroma.tbc beside <name>.tbc
-// (ld-decode and vhs-decode), or <name>.tbcc beside <name>.tbcy (decode-orc)
-QString chromaFileFor(const QString &inputFileName)
-{
-    QString chromaFileName;
-    if (inputFileName.endsWith(".tbcy", Qt::CaseInsensitive)) {
-        chromaFileName = inputFileName.left(inputFileName.length() - 1) + "c";
-    } else if (inputFileName.endsWith(".tbc", Qt::CaseInsensitive)) {
-        chromaFileName = inputFileName.left(inputFileName.length() - 4) + "_chroma.tbc";
-    }
-    return QFileInfo::exists(chromaFileName) ? chromaFileName : QString();
-}
-
-// The input file name without its .tbc / .tbcy extension
-QString inputBaseName(const QString &inputFileName)
-{
-    for (const char *extension: {".tbcy", ".tbc"}) {
-        if (inputFileName.endsWith(extension, Qt::CaseInsensitive)) {
-            return inputFileName.left(inputFileName.length() - static_cast<int>(qstrlen(extension)));
-        }
-    }
-    return inputFileName;
-}
 
 // The blanking level of a TBC capture. Metadata from before blanking16bIre
 // existed has only the black level, which for NTSC is normally on the 7.5 IRE
@@ -169,7 +146,7 @@ int main(int argc, char *argv[])
         qCritical("You must specify an input TBC file, and optionally the output CVBS file");
         return -1;
     }
-    const QString inputFileName = positionalArguments.at(0);
+    QString inputFileName = positionalArguments.at(0);
     if (Cvbs::isDataFileName(inputFileName)) {
         qCritical().noquote() << inputFileName << "is already CVBS";
         return -1;
@@ -177,6 +154,16 @@ int main(int argc, char *argv[])
     if (!QFileInfo::exists(inputFileName)) {
         qCritical().noquote() << "Input file" << inputFileName << "does not exist";
         return -1;
+    }
+
+    // Either file of a Y/C pair (_chroma.tbc, .tbcc) names the pair: start from the luma
+    if (TbcFiles::isChromaFile(inputFileName)) {
+        const QString lumaFileName = TbcFiles::lumaFileName(inputFileName);
+        if (!QFileInfo::exists(lumaFileName)) {
+            qCritical().noquote() << "The luma file" << lumaFileName << "of the Y/C pair does not exist";
+            return -1;
+        }
+        inputFileName = lumaFileName;
     }
 
     // Sample encoding
@@ -201,12 +188,13 @@ int main(int argc, char *argv[])
         }
     }
 
-    // Composite or Y/C
-    const QString chromaFileName = chromaFileFor(inputFileName);
+    // Composite, or Y/C: <name>_chroma.tbc beside <name>.tbc (ld-decode, vhs-decode),
+    // or <name>.tbcc beside <name>.tbcy (decode-orc)
+    const QString chromaFileName = TbcFiles::chromaFileName(inputFileName);
     const bool isYc = !chromaFileName.isEmpty();
 
     // Output file names
-    QString outputBase = inputBaseName(inputFileName);
+    QString outputBase = TbcFiles::baseName(inputFileName);
     if (positionalArguments.count() == 2) {
         const QString outputFileName = positionalArguments.at(1);
         if (!Cvbs::isDataFileName(outputFileName)) {
@@ -331,7 +319,7 @@ int main(int argc, char *argv[])
     // The audio: the CVBS format carries it as a 24-bit WAV channel pair. The
     // samples are copied as they are, declared to be at the sample rate asked
     // for, else the one in the metadata, else ld-decode's 44.1 kHz.
-    const QString pcmFileName = inputBaseName(inputFileName) + ".pcm";
+    const QString pcmFileName = TbcFiles::baseName(inputFileName) + ".pcm";
     if (QFileInfo::exists(pcmFileName)) {
         const bool hasParameters = inputMetaData.hasPcmAudioParameters();
         if (hasParameters && (inputMetaData.getPcmAudioParameters().bits != 16

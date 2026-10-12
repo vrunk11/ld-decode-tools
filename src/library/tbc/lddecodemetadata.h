@@ -287,6 +287,9 @@ public:
     // otherwise <tbc>.json if that exists, otherwise <tbc>.db.
     // For CVBS data files the companion <base>.cvbs.db or .cvbs.json is used
     // the same way, then <base>.meta.
+    // A chroma file (<name>.tbcc or <name>_chroma.tbc) with none of its own has the
+    // metadata of the luma file; <name>.tbcy and <name>.tbcc (decode-orc) have that
+    // of <name>.tbc.
     static QString findMetadataFile(const QString &tbcFileName);
     // The metadata file name for a TBC file in a given format; for a CVBS
     // data file, its companion (<base>.cvbs.db or <base>.cvbs.json).

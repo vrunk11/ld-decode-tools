@@ -779,7 +779,7 @@ void MainWindow::on_actionOpen_TBC_file_triggered()
     QString inputFileName = QFileDialog::getOpenFileName(this,
                 tr("Open TBC or CVBS file"),
                 configuration.getSourceDirectory()+tr("/ldsample.tbc"),
-                tr("TBC and CVBS files (*.tbc *.cvbs *.cvbsy *.cvbsc);;TBC output (*.tbc);;CVBS (*.cvbs *.cvbsy *.cvbsc);;All Files (*)"));
+                tr("TBC and CVBS files (*.tbc *.tbcy *.tbcc *.cvbs *.cvbsy *.cvbsc);;TBC output (*.tbc *.tbcy *.tbcc);;CVBS (*.cvbs *.cvbsy *.cvbsc);;All Files (*)"));
 
     // Was a filename specified?
     if (!inputFileName.isEmpty() && !inputFileName.isNull()) {

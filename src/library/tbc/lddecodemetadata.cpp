@@ -14,6 +14,7 @@
 
 #include "cvbs.h"
 #include "cvbsaudio.h"
+#include "tbcfiles.h"
 #include "jsonio.h"
 #include "sqliteio.h"
 
@@ -797,13 +798,23 @@ QString LdDecodeMetaData::findMetadataFile(const QString &tbcFileName)
     if (Cvbs::isDataFileName(tbcFileName) && QFileInfo::exists(Cvbs::metaFileName(tbcFileName))) {
         return Cvbs::metaFileName(tbcFileName);
     }
+
+    // A chroma file has no metadata of its own: it is that of the luma file
+    if (TbcFiles::isChromaFile(tbcFileName)) {
+        const QString lumaFileName = TbcFiles::lumaFileName(tbcFileName);
+        if (lumaFileName != tbcFileName) {
+            const QString lumaMetadataFileName = findMetadataFile(lumaFileName);
+            if (QFileInfo::exists(lumaMetadataFileName)) return lumaMetadataFileName;
+        }
+    }
     return sqliteFileName;
 }
 
 QString LdDecodeMetaData::metadataFileName(const QString &tbcFileName, MetadataFormat _format)
 {
     if (Cvbs::isDataFileName(tbcFileName)) return Cvbs::companionFileName(tbcFileName, _format == MetadataFormat::Json);
-    return tbcFileName + (_format == MetadataFormat::Json ? ".json" : ".db");
+    // decode-orc's <name>.tbcy and <name>.tbcc have the metadata of <name>.tbc
+    return TbcFiles::metadataBaseName(tbcFileName) + (_format == MetadataFormat::Json ? ".json" : ".db");
 }
 
 bool LdDecodeMetaData::isCvbs() const
