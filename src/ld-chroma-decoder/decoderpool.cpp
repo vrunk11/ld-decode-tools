@@ -137,7 +137,10 @@ bool DecoderPool::process()
     threads.resize(maxThreads);
     for (qint32 i = 0; i < maxThreads; i++) {
         threads[i] = decoder.makeThread(abort, *this);
-        threads[i]->start(QThread::LowPriority);
+        // Decoding a file yields to the rest of the machine. A stream may be live, with the
+        // capture running beside it: starved of the CPU, low priority threads stall the
+        // video for seconds, so they share it on equal terms.
+        threads[i]->start(sourceVideo.isStream() ? QThread::NormalPriority : QThread::LowPriority);
     }
 
     // Wait for the workers to finish
@@ -186,7 +189,12 @@ bool DecoderPool::getInputFrames(qint32 &startFrameNumber, QVector<SourceField> 
     // This assumes that the synchronisation to get a new batch is less
     // expensive than computing a single frame, so a batch size of 1 is
     // reasonable.
-    const qint32 maxBatchSize = qMin(DEFAULT_BATCH_SIZE, qMax(1, length / maxThreads));
+    //
+    // A stream is the exception, as it may be live: a batch is only handed out once
+    // all of it has arrived, so a batch of 16 frames would make the output come in
+    // bursts, a half-second apart, with each frame waiting for the 15 after it.
+    // Each frame is sent for decoding as soon as it (and what it looks ahead to) is in.
+    const qint32 maxBatchSize = sourceVideo.isStream() ? 1 : qMin(DEFAULT_BATCH_SIZE, qMax(1, length / maxThreads));
 
     // Work out how many frames will be in this batch
     qint32 batchFrames = qMin(maxBatchSize, lastFrameNumber + 1 - inputFrameNumber);
@@ -277,6 +285,10 @@ bool DecoderPool::putOutputFrame(qint32 frameNumber, const OutputFrame &outputFr
             qCritical() << "Writing to the output video file failed";
             return false;
         }
+
+        // Piped output goes on at once, rather than when the buffer next fills up: a live
+        // viewer or encoder on the other end would otherwise see each frame late
+        if (outputFileName == "-") targetVideo.flush();
 
         pendingOutputFrames.remove(outputFrameNumber);
         outputFrameNumber++;
