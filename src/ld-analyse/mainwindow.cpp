@@ -290,7 +290,7 @@ bool MainWindow::filterImage(QImage &image, qint32 displayWidth, qint32 displayH
     format.interlaced = tbcSource.getFrameViewEnabled();
 
     // While playing, the images come in order and the filter can keep its history
-    const bool continuous = (playback->isPlaying() || playbackStarting) && lastFilteredPosition >= 0
+    const bool continuous = playback->isPlaying() && lastFilteredPosition >= 0
                             && position > lastFilteredPosition;
     lastFilteredPosition = position;
 
@@ -327,9 +327,11 @@ void MainWindow::updateLive()
         // Moving the ends of the controls must not look like the user seeking
         const QSignalBlocker spinBlocker(ui->posNumberSpinBox);
         const QSignalBlocker sliderBlocker(ui->posHorizontalSlider);
-        ui->posNumberSpinBox->setRange(first, qMax(first, last));
-        ui->posHorizontalSlider->setRange(first, qMax(first, last));
-        ui->posHorizontalSlider->setPageStep(qMax(1, (last - first) / 100));
+        // (the whole of what has arrived, as a timeline: the part the buffer no longer holds
+        // can not be gone back to, but a range that moved with it would make the handle jump)
+        ui->posNumberSpinBox->setRange(1, qMax(1, last));
+        ui->posHorizontalSlider->setRange(1, qMax(1, last));
+        ui->posHorizontalSlider->setPageStep(qMax(1, last / 100));
     }
 
     playback->setLive(true, ended);
@@ -433,7 +435,7 @@ void MainWindow::updatePlaybackState(bool playing)
 
 void MainWindow::togglePlayback()
 {
-    if (playback->isPlaying() || playbackStarting) {
+    if (playback->isPlaying()) {
         pausePlayback();
         return;
     }
@@ -459,16 +461,16 @@ void MainWindow::togglePlayback()
     renderGeneration = tbcSource.getSettingsGeneration();
     renderer->start(tbcSource.getRenderSettings(), renderGeneration, playbackStartPosition, lastPosition,
                     isLive ? &tbcSource : nullptr);
-    playbackStarting = true;
-    updatePlaybackState(true);
-    statusBar()->showMessage(tr("Decoding ahead..."));
+    // The clock starts at once: the picture on show stays until the first decoded one is ready,
+    // rather than the button waiting for it
+    firstImageShown = false;
+    playback->play(playbackStartPosition);
 }
 
 // Stop playing, as when the user takes over (does nothing if not playing)
 void MainWindow::pausePlayback()
 {
-    const bool wasActive = playback->isPlaying() || playbackStarting;
-    playbackStarting = false;
+    const bool wasActive = playback->isPlaying();
     playback->pause();
     renderer->stop();
     if (wasActive) updatePlaybackState(false);
@@ -485,7 +487,7 @@ void MainWindow::playbackPositionDue(qint32 position)
 // Show the newest image that is ready for a position that has fallen due
 void MainWindow::showRenderedImage()
 {
-    if (!playback->isPlaying() && !playbackStarting) return;
+    if (!playback->isPlaying()) return;
 
     if (renderer->hasFailed()) {
         pausePlayback();
@@ -504,12 +506,11 @@ void MainWindow::showRenderedImage()
     QImage image;
     if (!renderer->take(playbackDue, position, image)) return;
 
-    if (playbackStarting) {
-        // The first image is the one already on show: the clock starts from here
-        playbackStarting = false;
-        statusBar()->clearMessage();
-        playback->play(playbackStartPosition);
-        return;
+    // The first image can be a few frames late (the decoders were just started): that is not
+    // the machine failing to keep up
+    if (!firstImageShown) {
+        firstImageShown = true;
+        playback->clearSkipped();
     }
 
     tbcSource.setPrerenderedImage(position, image);
@@ -1099,6 +1100,12 @@ void MainWindow::sanitizeCurrentPosition()
     if (tbcSource.getIsLive() && currentFrameNumber < tbcSource.getFirstAvailableFrame()) {
         currentFrameNumber = tbcSource.getFirstAvailableFrame();
         currentFieldNumber = 2 * currentFrameNumber - 1;
+        // (the controls were moved to a frame that is gone: show where the video is)
+        const QSignalBlocker spinBlocker(ui->posNumberSpinBox);
+        const QSignalBlocker sliderBlocker(ui->posHorizontalSlider);
+        const qint32 shown = tbcSource.getFieldViewEnabled() ? currentFieldNumber : currentFrameNumber;
+        ui->posNumberSpinBox->setValue(shown);
+        ui->posHorizontalSlider->setValue(shown);
     }
 
     if (currentFrameNumber > tbcSource.getNumberOfFrames() || currentFieldNumber > tbcSource.getNumberOfFields()) {
@@ -1450,8 +1457,12 @@ void MainWindow::on_nextPushButton_released()
 // Skip to the next chapter (note: this button was repurposed from 'end frame')
 void MainWindow::on_endPushButton_clicked()
 {
+    const bool wasPlaying = playback->isPlaying();
     pausePlayback();
+    // Live input: the end is the live edge, and playing goes on from there
+    if (tbcSource.getIsLive()) updateLive();
     setCurrentFrame(tbcSource.startOfNextChapter(currentFrameNumber));
+    if (tbcSource.getIsLive() && wasPlaying) QTimer::singleShot(0, this, [this]() { togglePlayback(); });
     auto uiNumber = currentFrameNumber;
 
     if (tbcSource.getFieldViewEnabled()) {
@@ -1777,6 +1788,8 @@ void MainWindow::on_sourcesPushButton_clicked()
 // Frame/Field view button clicked
 void MainWindow::on_viewPushButton_clicked()
 {
+    // Playing goes on in the new view (the clock counts frames or fields, so it is restarted)
+    const bool wasPlaying = playback->isPlaying();
     pausePlayback();
     switch (tbcSource.getViewMode()) {
         case TbcSource::ViewMode::FRAME_VIEW:
@@ -1823,6 +1836,8 @@ void MainWindow::on_viewPushButton_clicked()
 
     // Show the current image
     showImage();
+
+    if (wasPlaying) togglePlayback();
 }
 
 // Normal/Reverse field order button clicked
@@ -2292,6 +2307,14 @@ void MainWindow::on_finishedLoading(bool success)
             ui->actionReload_TBC->setEnabled(false);
             liveTimer->start();
             updateLive();
+            // At the live edge, not at the first frame, which would be as late as loading took
+            setCurrentFrame(qMax(1, tbcSource.getNumberOfFrames() - 1));
+            {
+                const QSignalBlocker spinBlocker(ui->posNumberSpinBox);
+                const QSignalBlocker sliderBlocker(ui->posHorizontalSlider);
+                ui->posNumberSpinBox->setValue(currentFrameNumber);
+                ui->posHorizontalSlider->setValue(currentFrameNumber);
+            }
             togglePlayback();
         }
     } else {

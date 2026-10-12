@@ -39,6 +39,7 @@ public:
     bool getLoop() const { return loop; }
     bool isPlaying() const { return timer.isActive(); }
     qint32 getSkippedPositions() const { return skipped; }
+    void clearSkipped() { skipped = 0; }
 
     void play(qint32 fromPosition);
     void pause();

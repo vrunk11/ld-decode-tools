@@ -201,7 +201,7 @@ private:
     void applyVideoFilter(const VideoFilterSettings &settings);
     bool filterImage(QImage &image, qint32 displayWidth, qint32 displayHeight);
     quint32 renderGeneration = 0;
-    bool playbackStarting = false;
+    bool firstImageShown = false;
     qint32 playbackStartPosition = 0;
     qint32 playbackDue = 0;
     void showRenderedImage();
