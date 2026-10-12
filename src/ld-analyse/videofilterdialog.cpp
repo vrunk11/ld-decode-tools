@@ -96,12 +96,12 @@ VideoFilterDialog::VideoFilterDialog(QWidget *parent)
     // The command line: always there to edit, and applied when the Filters button is on
     grid->addWidget(new QLabel(tr("Other filters:"), this), 3, 0);
     customEdit = new QLineEdit(this);
-    customEdit->setPlaceholderText(tr("e.g. hqdn3d=2:1,unsharp=5:5:0.8"));
+    customEdit->setPlaceholderText(tr("Type ffmpeg filters here (none yet)"));
     grid->addWidget(customEdit, 3, 1, 1, 2);
     layout->addLayout(grid);
 
-    QLabel *help = new QLabel(tr("The other filters are written as in ffmpeg's -vf option; $W and $H stand for the size "
-                                 "the picture is shown at. They are applied when the Filters button is on."), this);
+    QLabel *help = new QLabel(tr("The other filters are written as in ffmpeg's -vf option, for example hqdn3d=2:1,unsharp=5:5:0.8. $W and $H stand for "
+                                 "the size the picture is shown at. They are applied when the Filters button is on."), this);
     help->setWordWrap(true);
     layout->addWidget(help);
 
