@@ -36,7 +36,8 @@ Options for video piped in (input is -), which comes without metadata:
   --white-level <number>        TBC: the white16bIre of the capture (default: the standard level)
   --subcarrier-locked <yes|no>  Whether PAL was sampled locked to the subcarrier (default yes for CVBS, no for TBC)
   --sample-encoding <encoding>  CVBS: u10 (the default), u16, tpg21 or s16
-  --buffer-frames <number>      Frames read ahead of the one shown, and kept behind it (default: 5 seconds of video)
+  --buffer-frames <number>      Frames kept behind the one shown, to go back to when paused (default: 5 seconds of video)
+  --read-ahead-frames <number>  Frames of the input kept in reserve ahead of the one shown, so that pausing does not hold the input up (default: 20 seconds of video)
 
 Arguments:
   input               Specify input TBC or CVBS file, or - for video piped in
@@ -182,7 +183,7 @@ A pipe carries no metadata, so the video system must be given (`--system`), and 
 
 The video has no length: the frame count grows as it arrives, and playback starts by itself, at the newest frame, and stays on, waiting at the end of what has arrived and carrying on as more comes. A live input can not be sought while it plays, so the navigation controls are off then (the end button goes back to the live edge).
 
-Pause it (the play button or the space bar) to go through the last few seconds: the buffer (`--buffer-frames`, by default 5 seconds of video) holds them, and the slider, the frame number and the previous and next buttons work on them. This is for analysing a sequence. Playing again carries on from the frame reached, behind the live edge (the status bar says how far); the end button catches up. A pipe can not be read again, so a producer is held up once the buffer is full: a long pause, or playing far behind, makes a live capture wait for the viewer. When the stream ends, playback stops at its last frame.
+Pause it (the play button or the space bar) to go through the last few seconds: the buffer (`--buffer-frames`, by default 5 seconds of video) holds them, and the slider, the frame number and the previous and next buttons work on them. This is for analysing a sequence. Playing again carries on from the frame reached, behind the live edge (the status bar says how far); the end button catches up. While paused the input goes on being read into a reserve ahead (`--read-ahead-frames`, by default 20 seconds of video, which takes about 30 MB of memory for each second), so pausing does not hold the producer up and playing again finds the video that arrived meanwhile. The status bar shows how much of the reserve is used. A pipe can not be read again, so once the reserve is full the producer is held up: a longer pause, or playing far behind, makes a live capture wait for the viewer. When the stream ends, playback stops at its last frame.
 
 Dropout, SNR and VBI information comes from ld-decode's metadata, and a pipe has none, so those windows stay empty; the picture, line scope, vectorscope and the chroma decoder settings all work.
 

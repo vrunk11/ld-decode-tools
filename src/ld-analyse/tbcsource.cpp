@@ -1555,6 +1555,7 @@ bool TbcSource::startBackgroundStream()
     options.system = streamInput.system;
     options.encoding = streamInput.encoding;
     options.bufferFrames = streamInput.bufferFrames;
+    options.aheadFrames = streamInput.aheadFrames;
     sourceVideo.setStreamOptions(options);
     if (!sourceVideo.open("-", videoParameters.fieldWidth * videoParameters.fieldHeight)) {
         lastIOError = "Could not open the input stream";
@@ -1629,6 +1630,16 @@ void TbcSource::updateLive()
         firstFrame += lookBehind;
     }
     liveFirstFrame = qMin(firstFrame, qMax(1, liveFrames));
+}
+
+qint32 TbcSource::getFramesReadAhead()
+{
+    return isLive ? sourceVideo.getFramesReadAhead() : 0;
+}
+
+qint32 TbcSource::getMaxFramesReadAhead()
+{
+    return isLive ? sourceVideo.getMaxFramesReadAhead() : 0;
 }
 
 qint32 TbcSource::getFirstAvailableFrame()

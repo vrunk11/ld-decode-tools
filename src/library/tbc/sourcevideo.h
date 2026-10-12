@@ -69,6 +69,10 @@ public:
     // 0 for a source that is not a stream
     qint32 getFieldsReadSoFar();
     qint32 getFirstFieldHeld();
+    // For a stream: frames read ahead of the one furthest asked for, and the most that will be
+    // (where the producer is held up); 0 for a source that is not a stream
+    qint32 getFramesReadAhead();
+    qint32 getMaxFramesReadAhead();
 
     // Field handling methods
     Data getVideoField(qint32 fieldNumber, qint32 startFieldLine = -1, qint32 endFieldLine = -1);

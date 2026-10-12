@@ -62,7 +62,8 @@ public:
         Cvbs::SampleEncoding encoding = Cvbs::SampleEncoding::U10_4FSC;
         qint32 blackLevel = -1, whiteLevel = -1;      // TBC only; -1 for the standard level
         bool isSubcarrierLocked = false;
-        qint32 bufferFrames = 32;
+        qint32 bufferFrames = 32;           // kept behind the frame shown
+        qint32 aheadFrames = 0;             // read ahead of it (0: as many)
     };
 
     void loadSource(QString inputFileName);
@@ -75,6 +76,9 @@ public:
     // True once a stream has ended: it has no more frames to come
     bool getIsLiveEnded();
     qint32 getLookAheadFrames();
+    // A stream: frames read ahead of the one shown, and the most that are (then the producer is held up)
+    qint32 getFramesReadAhead();
+    qint32 getMaxFramesReadAhead();
     void unloadSource();
     bool getIsSourceLoaded();
     void saveSourceMetadata();

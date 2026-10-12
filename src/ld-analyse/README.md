@@ -53,7 +53,8 @@ Video piped in has no metadata, so the system must be given. See "Live input" be
 - `--input-format <tbc|cvbs>`: Fields of TBC (the default) or frames of CVBS
 - `--black-level`, `--white-level`: TBC levels (default: the standard ones)
 - `--subcarrier-locked <yes|no>`, `--sample-encoding <u10|u16|tpg21|s16>`
-- `--buffer-frames <number>`: Frames read ahead and kept behind (default: 5 seconds of video)
+- `--buffer-frames <number>`: Frames kept behind the one shown, to go back to when paused (default: 5 seconds of video)
+- `--read-ahead-frames <number>`: Frames of the input kept in reserve ahead, so that pausing does not hold it up (default: 20 seconds of video, about 30 MB of memory each second)
 
 #### Arguments
 - `input`: Input TBC or CVBS file to analyze, or `-` for video piped in
