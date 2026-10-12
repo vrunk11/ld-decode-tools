@@ -218,6 +218,9 @@ private:
     void updateLive();
     void updateLiveControls();
     void updateLiveGraphs();
+    QTimer *snrFileTimer = nullptr;        // refreshes the SNR graphs while a file is measured from its video
+    void setFileSnrMeasuring(bool measuring);
+    void updateFileSnrGraphs();
     qint32 liveGraphTick = 0;
     QPushButton *playPushButton;
     QAction *actionPlayPause;

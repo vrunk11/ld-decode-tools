@@ -25,8 +25,9 @@ class SnrSourceBar : public QWidget
 public:
     explicit SnrSourceBar(QWidget *parent = nullptr);
 
-    // The values are those of the metadata (ld-decode's), read from the file
-    void setMetadataSource();
+    // A file: the values are those of its metadata (ld-decode's) or, if measuring is ticked, measured
+    // from the video (progressPercent: how far through the file, -1 if not measuring)
+    void setFileSource(bool measuring, qint32 progressPercent = -1);
     // The values are measured from the video. wholeHistory: for every frame received, rather
     // than only those that were shown
     void setLiveSource(bool measuring, bool wholeHistory);

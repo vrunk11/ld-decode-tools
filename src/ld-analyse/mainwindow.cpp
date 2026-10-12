@@ -153,12 +153,19 @@ MainWindow::MainWindow(QString inputFilenameParam, const TbcSource::StreamInput 
     pendingSliderValue = -1;
 
     setupPlayback();
+    snrFileTimer = new QTimer(this);
+    snrFileTimer->setInterval(1000);
+    connect(snrFileTimer, &QTimer::timeout, this, &MainWindow::updateFileSnrGraphs);
     for (SnrSourceBar *bar: { blackSnrAnalysisDialog->sourceBar(), whiteSnrAnalysisDialog->sourceBar() }) {
         connect(bar, &SnrSourceBar::clearRequested, this, [this]() {
             tbcSource.clearLiveSnr();
             updateLiveGraphs();
         });
         connect(bar, &SnrSourceBar::measuringToggled, this, [this](bool measuring) {
+            if (!tbcSource.getIsLive()) {
+                setFileSnrMeasuring(measuring);
+                return;
+            }
             tbcSource.setLiveSnrEnabled(measuring);
             for (SnrSourceBar *other: { blackSnrAnalysisDialog->sourceBar(), whiteSnrAnalysisDialog->sourceBar() }) {
                 other->setLiveSource(measuring, tbcSource.getLiveSnrIsWholeHistory());
@@ -507,6 +514,43 @@ void MainWindow::updateLiveGraphs()
     }
     if (whiteSnrAnalysisDialog->isVisible()) {
         whiteSnrAnalysisDialog->setLiveHistory(tbcSource.getLiveSnrHistory(false, MAX_POINTS), frames);
+    }
+}
+
+// A file: measure the SNR from the video (instead of using the metadata), or go back to the metadata
+void MainWindow::setFileSnrMeasuring(bool measuring)
+{
+    if (measuring) {
+        tbcSource.startFileSnr();
+        snrFileTimer->start();
+        updateFileSnrGraphs();
+    } else {
+        snrFileTimer->stop();
+        tbcSource.stopFileSnr();
+        // The graphs of the metadata again
+        updateGraphs();
+        for (SnrSourceBar *bar: { blackSnrAnalysisDialog->sourceBar(), whiteSnrAnalysisDialog->sourceBar() }) {
+            bar->setFileSource(false);
+        }
+    }
+}
+
+// While the SNR of a file is measured from its video, the graphs show how far it has got
+void MainWindow::updateFileSnrGraphs()
+{
+    if (!tbcSource.getFileSnrActive()) return;
+    const qint32 progress = tbcSource.getFileSnrProgressPercent();
+    const qint32 frames = tbcSource.getNumberOfFrames();
+    static constexpr qint32 MAX_POINTS = 4000;
+
+    for (SnrSourceBar *bar: { blackSnrAnalysisDialog->sourceBar(), whiteSnrAnalysisDialog->sourceBar() }) {
+        bar->setFileSource(true, progress);
+    }
+    if (blackSnrAnalysisDialog->isVisible()) {
+        blackSnrAnalysisDialog->setLiveHistory(tbcSource.getFileSnrHistory(true, MAX_POINTS), frames);
+    }
+    if (whiteSnrAnalysisDialog->isVisible()) {
+        whiteSnrAnalysisDialog->setLiveHistory(tbcSource.getFileSnrHistory(false, MAX_POINTS), frames);
     }
 }
 
@@ -868,7 +912,7 @@ void MainWindow::updateGuiLoaded()
     // Where the SNR in the graphs comes from
     for (SnrSourceBar *bar: { blackSnrAnalysisDialog->sourceBar(), whiteSnrAnalysisDialog->sourceBar() }) {
         if (tbcSource.getIsLive()) bar->setLiveSource(tbcSource.getLiveSnrEnabled(), tbcSource.getLiveSnrIsWholeHistory());
-        else bar->setMetadataSource();
+        else bar->setFileSource(tbcSource.getFileSnrActive(), tbcSource.getFileSnrProgressPercent());
     }
     {
         const QSignalBlocker blocker(actionFieldOrder);
@@ -936,6 +980,7 @@ void MainWindow::updateGuiLoaded()
 // Method to update the GUI when a file is unloaded
 void MainWindow::updateGuiUnloaded()
 {
+    snrFileTimer->stop();
     liveTimer->stop();
     setPlaybackOptionsVisible(true);
     // Disable the GUI controls

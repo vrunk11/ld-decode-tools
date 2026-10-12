@@ -25,6 +25,7 @@
 #include "lddecodemetadata.h"
 #include "linenumber.h"
 #include "fieldvbi.h"
+#include "filesnr.h"
 #include "livesnr.h"
 #include "vitsmetrics.h"
 #include "vbidecoder.h"
@@ -97,6 +98,13 @@ public:
     void setLiveSnrEnabled(bool enabled);
     // Forget the SNR history so far
     void clearLiveSnr();
+
+    // A file: measure the SNR from the video instead of using the metadata, on a thread of its own
+    void startFileSnr();
+    void stopFileSnr();
+    bool getFileSnrActive();
+    qint32 getFileSnrProgressPercent();
+    QVector<QPointF> getFileSnrHistory(bool black, qint32 maxPoints);
     // Live input, two buffers: freezing (pausing) keeps the frames around the one shown as they are,
     // while the input goes on filling the ring with newer ones; playing again carries on from the
     // frozen one into them. The number of frames and the first one available are the frozen
@@ -266,6 +274,7 @@ private:
     QSet<qint32> liveAnalysedFrames;
     QMap<qint32, double> liveBlackSnr, liveWhiteSnr;
     std::unique_ptr<LiveSnr> liveSnr;       // after sourceVideo: stopped before it is closed
+    std::unique_ptr<FileSnr> fileSnr;
     void analyseLiveFrame(qint32 frameNumber);
     bool liveFrozen = false;
     bool liveProtected = false;

@@ -38,19 +38,34 @@ SnrSourceBar::SnrSourceBar(QWidget *parent)
     connect(clearButton, &QPushButton::clicked, this, &SnrSourceBar::clearRequested);
 
     connect(measureCheck, &QCheckBox::toggled, this, &SnrSourceBar::measuringToggled);
-    setMetadataSource();
+    setFileSource(false);
 }
 
-void SnrSourceBar::setMetadataSource()
+void SnrSourceBar::setFileSource(bool measuring, qint32 progressPercent)
 {
-    sourceLabel->setText(tr("Source: the metadata of the capture (ld-decode)"));
-    measureCheck->setVisible(false);
+    if (measuring) {
+        sourceLabel->setText(progressPercent >= 0 && progressPercent < 100
+                             ? tr("Source: measured from the video (%1% of the file)").arg(progressPercent)
+                             : tr("Source: measured from the video"));
+    } else {
+        sourceLabel->setText(tr("Source: the metadata of the capture (ld-decode)"));
+    }
+    {
+        const QSignalBlocker blocker(measureCheck);
+        measureCheck->setChecked(measuring);
+    }
+    measureCheck->setText(tr("Measure from the video"));
+    measureCheck->setToolTip(tr("Measure the SNR from the video itself instead of using the metadata, "
+                                "for when it has none or is not to be trusted"));
+    measureCheck->setVisible(true);
     followCheck->setVisible(false);
     clearButton->setVisible(false);
 }
 
 void SnrSourceBar::setLiveSource(bool measuring, bool wholeHistory)
 {
+    measureCheck->setText(tr("Measure live"));
+    measureCheck->setToolTip(tr("Measure the SNR of the video as it arrives. Switched off, what arrives meanwhile is not measured"));
     sourceLabel->setText(wholeHistory ? tr("Source: measured live from the video, every frame received")
                                       : tr("Source: measured live from the video, the frames shown"));
     {

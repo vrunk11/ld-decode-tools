@@ -58,6 +58,7 @@ void TbcSource::loadSource(QString sourceFilename)
 void TbcSource::unloadSource()
 {
     liveSnr.reset();
+    fileSnr.reset();
     sourceVideo.close();
     if (sourceMode != ONE_SOURCE) chromaSourceVideo.close();
     resetState();
@@ -599,6 +600,7 @@ void TbcSource::setVideoParameters(const LdDecodeMetaData::VideoParameters &vide
     ldDecodeMetaData.setVideoParameters(videoParameters);
 
     // The SNR of a live input depends on the black and white levels: measure it again
+    if (fileSnr) fileSnr->setVideoParameters(videoParameters);
     if (liveAnalyse) {
         if (liveSnr) {
             liveSnr->setVideoParameters(videoParameters);
@@ -912,6 +914,7 @@ qint32 TbcSource::startOfChapter(qint32 currentFrameNumber)
 void TbcSource::resetState()
 {
     liveSnr.reset();
+    fileSnr.reset();
     // Default frame image options
     chromaOn = false;
     dropoutsOn = false;
@@ -1838,4 +1841,45 @@ void TbcSource::clearLiveSnr()
         liveBlackSnr.clear();
         liveWhiteSnr.clear();
     }
+}
+
+// A file: measure the SNR of every frame from the video, for when the metadata has none or is not
+// to be trusted. It is done on a thread of its own, so the window carries on meanwhile.
+void TbcSource::startFileSnr()
+{
+    if (isLive || !sourceReady || fileSnr) return;
+
+    QVector<QPair<qint32, qint32>> frameFields;
+    const qint32 frames = ldDecodeMetaData.getNumberOfFrames();
+    frameFields.reserve(frames);
+    for (qint32 frame = 1; frame <= frames; frame++) {
+        frameFields.append(qMakePair(ldDecodeMetaData.getFirstFieldNumber(frame), ldDecodeMetaData.getSecondFieldNumber(frame)));
+    }
+
+    const LdDecodeMetaData::VideoParameters videoParameters = ldDecodeMetaData.getVideoParameters();
+    fileSnr = std::make_unique<FileSnr>(currentSourceFilename, videoParameters.fieldWidth * videoParameters.fieldHeight,
+                                        videoParameters.fieldWidth, frameFields);
+    fileSnr->setVideoParameters(videoParameters);
+    fileSnr->start(QThread::LowPriority);
+}
+
+void TbcSource::stopFileSnr()
+{
+    fileSnr.reset();
+}
+
+bool TbcSource::getFileSnrActive()
+{
+    return fileSnr != nullptr;
+}
+
+qint32 TbcSource::getFileSnrProgressPercent()
+{
+    if (!fileSnr || fileSnr->totalFrames() == 0) return -1;
+    return static_cast<qint32>(100LL * fileSnr->measuredFrames() / fileSnr->totalFrames());
+}
+
+QVector<QPointF> TbcSource::getFileSnrHistory(bool black, qint32 maxPoints)
+{
+    return fileSnr ? fileSnr->history(black, maxPoints) : QVector<QPointF>();
 }
