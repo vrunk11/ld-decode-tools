@@ -17,9 +17,10 @@
 #include <QLabel>
 #include <QLineEdit>
 
-// What the video is shown through: a deinterlacer, a scaling algorithm and any other
-// ffmpeg filters, each of which can be switched off without losing its setting. They run in
-// that order.
+// What the video is shown through: a deinterlacer, a scaling algorithm and any other ffmpeg
+// filters, which run in that order. The deinterlacer is used by the Deinterlaced mode of the
+// view button and the other filters when the Filters button is on, so those two flags are set by
+// the window; the scaler has its own switch.
 struct VideoFilterSettings {
     bool deinterlacerOn = false;
     QString deinterlacer = QStringLiteral("yadif");
@@ -44,6 +45,9 @@ public:
     void setSettings(const VideoFilterSettings &settings);
     VideoFilterSettings getSettings() const;
 
+    // Say whether the Filters button is on (it applies the other filters, below)
+    void setFiltersOn(bool on);
+
     // Show the result of applying the filters (empty for success)
     void showResult(const QString &errorText);
 
@@ -52,12 +56,11 @@ signals:
     void settingsChosen(const VideoFilterSettings &settings);
 
 private:
-    QCheckBox *deinterlacerCheck;
     QComboBox *deinterlacerCombo;
     QCheckBox *scalerCheck;
     QComboBox *scalerCombo;
-    QCheckBox *customCheck;
     QLineEdit *customEdit;
+    QLabel *buttonStateLabel;
     QLabel *graphLabel;
     QLabel *resultLabel;
 

@@ -208,18 +208,16 @@ MainWindow::~MainWindow()
 }
 
 // The ffmpeg video filters: Window > Video filter...
-// Give the filter the graph of the filters on. The master switch (the Filters button) turns all of
-// them off at once; the Deinterlaced view uses the deinterlacer chosen whether or not they are on.
-// Returns ffmpeg's complaint, if any.
+// Give the filter the graph of the filters on: the deinterlacer in the Deinterlaced view, the scaler
+// if it is ticked, and the other filters (the command line) if the Filters button is on. Returns
+// ffmpeg's complaint, if any.
 QString MainWindow::updateVideoFilterGraph()
 {
+    // Deinterlacing is the Deinterlaced view, scaling has its own switch, and the Filters button is
+    // the other filters (the command line)
     VideoFilterSettings settings = videoFilterSettings;
-    if (!filtersEnabled) {
-        settings.deinterlacerOn = false;
-        settings.scalerOn = false;
-        settings.customOn = false;
-    }
-    if (deinterlacedView) settings.deinterlacerOn = true;
+    settings.deinterlacerOn = deinterlacedView;
+    settings.customOn = filtersEnabled;
     lastFilteredPosition = -1;
     return videoFilter.setGraph(settings.toGraph());
 }
@@ -228,9 +226,9 @@ void MainWindow::saveVideoFilterConfig()
 {
     configuration.setVideoFilter({
         { "enabled", filtersEnabled },
-        { "deinterlacerOn", videoFilterSettings.deinterlacerOn }, { "deinterlacer", videoFilterSettings.deinterlacer },
+        { "deinterlacer", videoFilterSettings.deinterlacer },
         { "scalerOn", videoFilterSettings.scalerOn }, { "scaler", videoFilterSettings.scaler },
-        { "customOn", videoFilterSettings.customOn }, { "custom", videoFilterSettings.custom },
+        { "custom", videoFilterSettings.custom },
     });
 }
 
@@ -252,10 +250,12 @@ void MainWindow::setFiltersEnabled(bool enabled)
         actionFilters->setChecked(enabled);
     }
     updateFiltersButton();
+    videoFilterDialog->setFiltersOn(enabled);
 
     const QString problem = updateVideoFilterGraph();
     if (!problem.isEmpty()) {
         filtersEnabled = false;
+        videoFilterDialog->setFiltersOn(false);
         updateVideoFilterGraph();
         const QSignalBlocker blocker(actionFilters);
         actionFilters->setChecked(false);
@@ -264,8 +264,9 @@ void MainWindow::setFiltersEnabled(bool enabled)
     }
     saveVideoFilterConfig();
 
-    // With nothing chosen to switch on, ask which filters it is to be
-    if (filtersEnabled && videoFilterSettings.toGraph().isEmpty() && !deinterlacedView) {
+    // With no command line to switch on, ask what it is to be
+    if (filtersEnabled && videoFilterSettings.custom.trimmed().isEmpty()) {
+        videoFilterDialog->setFiltersOn(true);
         videoFilterDialog->setSettings(videoFilterSettings);
         videoFilterDialog->show();
         videoFilterDialog->raise();
@@ -280,7 +281,7 @@ void MainWindow::setupVideoFilter()
     videoFilterDialog = new VideoFilterDialog(this);
 
     QAction *action = new QAction(tr("Video filter..."), this);
-    actionFilters = new QAction(tr("Video filters on"), this);
+    actionFilters = new QAction(tr("Other filters on"), this);
     actionFilters->setCheckable(true);
     // With the other windows and configuration dialogues
     ui->menuWindow->addAction(action);
@@ -290,8 +291,8 @@ void MainWindow::setupVideoFilter()
     filtersPushButton = new QPushButton(this);
     filtersPushButton->setSizePolicy(QSizePolicy::MinimumExpanding, QSizePolicy::Fixed);
     filtersPushButton->setMaximumWidth(100);
-    filtersPushButton->setToolTip(tr("Video filters on or off (Window > Video filter... chooses them). "
-                                     "The Deinterlaced view uses its deinterlacer either way"));
+    filtersPushButton->setToolTip(tr("The ffmpeg filters typed in Window > Video filter... (the command line) on or off. "
+                                     "Deinterlacing (the Deinterlaced view) and scaling are separate"));
     ui->horizontalLayout_3->insertWidget(ui->horizontalLayout_3->indexOf(ui->fieldOrderPushButton) + 1, filtersPushButton);
 
     if (!VideoFilter::isAvailable()) {
@@ -305,6 +306,7 @@ void MainWindow::setupVideoFilter()
     }
     connect(action, &QAction::triggered, this, [this]() {
         videoFilterDialog->setSettings(videoFilterSettings);
+        videoFilterDialog->setFiltersOn(filtersEnabled);
         videoFilterDialog->show();
         videoFilterDialog->raise();
     });
@@ -315,11 +317,9 @@ void MainWindow::setupVideoFilter()
     // The filters of the last session
     const QVariantMap saved = configuration.getVideoFilter();
     VideoFilterSettings settings;
-    settings.deinterlacerOn = saved.value("deinterlacerOn", false).toBool();
     settings.deinterlacer = saved.value("deinterlacer", settings.deinterlacer).toString();
     settings.scalerOn = saved.value("scalerOn", false).toBool();
     settings.scaler = saved.value("scaler", settings.scaler).toString();
-    settings.customOn = saved.value("customOn", false).toBool();
     settings.custom = saved.value("custom").toString();
     videoFilterSettings = settings;
     filtersEnabled = saved.value("enabled", true).toBool();
@@ -335,13 +335,15 @@ void MainWindow::setupVideoFilter()
     updateFiltersButton();
 }
 
-// Show the picture through these filters (chosen in the dialogue, which also switches them on)
+// Show the picture through these filters (chosen in the dialogue; typing a new command line there also
+// switches the Filters button on)
 void MainWindow::applyVideoFilter(const VideoFilterSettings &settings)
 {
     const VideoFilterSettings previous = videoFilterSettings;
     const bool wasEnabled = filtersEnabled;
     videoFilterSettings = settings;
-    filtersEnabled = true;
+    // (typing a command line and applying it is asking for it)
+    if (!settings.custom.trimmed().isEmpty() && settings.custom != previous.custom) filtersEnabled = true;
     const QString problem = updateVideoFilterGraph();
     videoFilterDialog->showResult(problem);
     if (!problem.isEmpty()) {
@@ -353,9 +355,10 @@ void MainWindow::applyVideoFilter(const VideoFilterSettings &settings)
 
     {
         const QSignalBlocker blocker(actionFilters);
-        actionFilters->setChecked(true);
+        actionFilters->setChecked(filtersEnabled);
     }
     updateFiltersButton();
+    videoFilterDialog->setFiltersOn(filtersEnabled);
     saveVideoFilterConfig();
     lastFilteredPosition = -1;
     if (tbcSource.getIsSourceLoaded() && !playback->isPlaying()) updateImageViewer();

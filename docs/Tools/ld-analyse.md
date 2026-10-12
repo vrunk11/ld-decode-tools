@@ -162,15 +162,13 @@ Playback follows the wall clock, and the frames are decoded ahead by several thr
 
 # Video filters
 
-Window > Video filter... shows the picture through ffmpeg filters (libavfilter). Each of these has a check box, so it can be switched off without losing its setting, and they run in this order:
+Window > Video filter... shows the picture through ffmpeg filters (libavfilter). There are three kinds, which are independent of each other and run in this order:
 
-* a deinterlacer: yadif, bwdif, w3fdif or estdif
-* a scaling algorithm that gives the picture the size it is shown at: bilinear, bicubic, lanczos, spline, gaussian, area averaging or nearest neighbour
-* other ffmpeg filters, written as in ffmpeg's `-vf` option (`$W` and `$H` stand for the size the picture is shown at)
+* **Deinterlacing**: the Deinterlaced mode of the view button (after Frame, Split and Field) shows the frame through a deinterlacer, which is chosen in the dialogue: yadif, bwdif, w3fdif or estdif.
+* **Scaling**: gives the picture the size it is shown at, with the algorithm chosen (bilinear, bicubic, lanczos, spline, gaussian, area averaging or nearest neighbour). It has its own check box in the dialogue.
+* **Other filters**: a text field for any ffmpeg filters, written as in ffmpeg's `-vf` option (`$W` and `$H` stand for the size the picture is shown at). The field can always be edited. What is in it is applied when the Filters button, beside the other options, is on (Window > Other filters on does the same), so the picture can be compared with and without it. Typing a new command line in the dialogue and applying it switches the button on.
 
-The Filters button, beside the other options, switches all of them on or off at once (Window > Video filters on does the same), keeping their settings, so the picture can be compared with and without; applying filters in the dialogue switches them on. The setting is remembered between sessions.
-
-The view button also has a Deinterlaced mode, after Frame, Split and Field, which shows the frame through the deinterlacer chosen, whether or not its check box is ticked.
+The settings are remembered between sessions.
 
 The filters only change the picture shown: the line scope, vectorscope and the other analysis tools still read the TBC data. They are available when ld-analyse was built with libavfilter (build.bat does, unless `USE_FFMPEG=0`); otherwise the menu entry is greyed out.
 

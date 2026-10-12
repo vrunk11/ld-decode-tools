@@ -66,41 +66,47 @@ VideoFilterDialog::VideoFilterDialog(QWidget *parent)
     : QDialog(parent)
 {
     setWindowTitle(tr("Video filter"));
-    setMinimumWidth(520);
+    setMinimumWidth(540);
 
     QVBoxLayout *layout = new QVBoxLayout(this);
-    QLabel *intro = new QLabel(tr("The video is shown through ffmpeg filters, in this order. They change only the "
-                                  "picture shown: the line scope, vectorscope and the other analysis tools still "
-                                  "read the TBC data."), this);
+    QLabel *intro = new QLabel(tr("The video is shown through ffmpeg filters. They change only the picture shown: "
+                                  "the line scope, vectorscope and the other analysis tools still read the TBC data. "
+                                  "Deinterlacing, scaling and the other filters are independent, and run in that order."), this);
     intro->setWordWrap(true);
     layout->addWidget(intro);
 
     QGridLayout *grid = new QGridLayout;
     grid->setColumnStretch(2, 1);
 
-    deinterlacerCheck = new QCheckBox(tr("Deinterlace:"), this);
+    // Deinterlacing is the Deinterlaced mode of the view button: only the algorithm is chosen here
+    grid->addWidget(new QLabel(tr("Deinterlace with:"), this), 0, 0);
     deinterlacerCombo = new QComboBox(this);
     for (const Choice &choice: DEINTERLACERS) deinterlacerCombo->addItem(tr(choice.name), QString::fromLatin1(choice.id));
-    grid->addWidget(deinterlacerCheck, 0, 0);
+    deinterlacerCombo->setToolTip(tr("Used by the Deinterlaced mode of the view button"));
     grid->addWidget(deinterlacerCombo, 0, 1, 1, 2);
+    QLabel *deinterlaceHelp = new QLabel(tr("(when the view button is on Deinterlaced)"), this);
+    grid->addWidget(deinterlaceHelp, 1, 1, 1, 2);
 
     scalerCheck = new QCheckBox(tr("Scale to the display size:"), this);
     scalerCombo = new QComboBox(this);
     for (const Choice &choice: SCALERS) scalerCombo->addItem(tr(choice.name), QString::fromLatin1(choice.id));
-    grid->addWidget(scalerCheck, 1, 0);
-    grid->addWidget(scalerCombo, 1, 1, 1, 2);
+    grid->addWidget(scalerCheck, 2, 0);
+    grid->addWidget(scalerCombo, 2, 1, 1, 2);
 
-    customCheck = new QCheckBox(tr("Other filters:"), this);
+    // The command line: always there to edit, and applied when the Filters button is on
+    grid->addWidget(new QLabel(tr("Other filters:"), this), 3, 0);
     customEdit = new QLineEdit(this);
     customEdit->setPlaceholderText(tr("e.g. hqdn3d=2:1,unsharp=5:5:0.8"));
-    grid->addWidget(customCheck, 2, 0);
-    grid->addWidget(customEdit, 2, 1, 1, 2);
+    grid->addWidget(customEdit, 3, 1, 1, 2);
     layout->addLayout(grid);
 
-    QLabel *help = new QLabel(tr("Other filters are written as in ffmpeg's -vf option. $W and $H stand for the size "
-                                 "the picture is shown at."), this);
+    QLabel *help = new QLabel(tr("The other filters are written as in ffmpeg's -vf option; $W and $H stand for the size "
+                                 "the picture is shown at. They are applied when the Filters button is on."), this);
     help->setWordWrap(true);
     layout->addWidget(help);
+
+    buttonStateLabel = new QLabel(this);
+    layout->addWidget(buttonStateLabel);
 
     graphLabel = new QLabel(this);
     graphLabel->setWordWrap(true);
@@ -123,55 +129,61 @@ VideoFilterDialog::VideoFilterDialog(QWidget *parent)
         accept();
     });
 
-    // Anything changed is shown at once in the graph, and the fields follow their check boxes
+    // Anything changed is shown at once in the graph; the scaler's list follows its check box
     const auto update = [this]() {
-        deinterlacerCombo->setEnabled(deinterlacerCheck->isChecked());
         scalerCombo->setEnabled(scalerCheck->isChecked());
-        customEdit->setEnabled(customCheck->isChecked());
         updateGraphLabel();
     };
-    connect(deinterlacerCheck, &QCheckBox::toggled, this, update);
     connect(scalerCheck, &QCheckBox::toggled, this, update);
-    connect(customCheck, &QCheckBox::toggled, this, update);
     connect(deinterlacerCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, update);
     connect(scalerCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, update);
     connect(customEdit, &QLineEdit::textChanged, this, update);
     connect(customEdit, &QLineEdit::returnPressed, this, [this]() { emit settingsChosen(getSettings()); });
 
     setSettings(VideoFilterSettings());
+    setFiltersOn(true);
 }
 
 void VideoFilterDialog::setSettings(const VideoFilterSettings &settings)
 {
-    deinterlacerCheck->setChecked(settings.deinterlacerOn);
     deinterlacerCombo->setCurrentIndex(qMax(0, deinterlacerCombo->findData(settings.deinterlacer)));
     scalerCheck->setChecked(settings.scalerOn);
     scalerCombo->setCurrentIndex(qMax(0, scalerCombo->findData(settings.scaler)));
-    customCheck->setChecked(settings.customOn);
     customEdit->setText(settings.custom);
 
-    deinterlacerCombo->setEnabled(settings.deinterlacerOn);
     scalerCombo->setEnabled(settings.scalerOn);
-    customEdit->setEnabled(settings.customOn);
     updateGraphLabel();
 }
 
+// What is chosen here. Whether the deinterlacer and the other filters are on is not: the view
+// button (Deinterlaced) and the Filters button say that, so those flags are left to the owner.
 VideoFilterSettings VideoFilterDialog::getSettings() const
 {
     VideoFilterSettings settings;
-    settings.deinterlacerOn = deinterlacerCheck->isChecked();
+    settings.deinterlacerOn = false;
     settings.deinterlacer = deinterlacerCombo->currentData().toString();
     settings.scalerOn = scalerCheck->isChecked();
     settings.scaler = scalerCombo->currentData().toString();
-    settings.customOn = customCheck->isChecked();
+    settings.customOn = true;
     settings.custom = customEdit->text().trimmed();
     return settings;
 }
 
+void VideoFilterDialog::setFiltersOn(bool on)
+{
+    buttonStateLabel->setText(on ? tr("The Filters button is on: the other filters are applied.")
+                                 : tr("The Filters button is off: the other filters are not applied."));
+}
+
 void VideoFilterDialog::updateGraphLabel()
 {
+    VideoFilterSettings deinterlacing = getSettings();
+    deinterlacing.deinterlacerOn = true;
+    deinterlacing.scalerOn = false;
+    deinterlacing.customOn = false;
     const QString graph = getSettings().toGraph();
-    graphLabel->setText(graph.isEmpty() ? tr("Filter graph: none") : tr("Filter graph: %1").arg(graph));
+    graphLabel->setText(tr("Deinterlaced view: %1\nScaling and other filters: %2")
+                        .arg(deinterlacing.toGraph(), graph.isEmpty() ? tr("none") : graph));
     resultLabel->clear();
 }
 
@@ -179,7 +191,7 @@ void VideoFilterDialog::showResult(const QString &errorText)
 {
     if (errorText.isEmpty()) {
         resultLabel->setStyleSheet(QString());
-        resultLabel->setText(getSettings().toGraph().isEmpty() ? tr("No filter.") : tr("Filters applied."));
+        resultLabel->setText(tr("Applied."));
     } else {
         resultLabel->setStyleSheet("color: #d03030;");
         resultLabel->setText(tr("Not applied: %1").arg(errorText));
