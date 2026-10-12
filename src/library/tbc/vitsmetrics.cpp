@@ -16,7 +16,7 @@
 #include "tbc/logging.h"
 
 namespace {
-// Get a specific slice of a field line and return all the values, as IRE
+// Get a specific slice of a field line and return all the values, as sample values
 QVector<double> getFieldLineSlice(const SourceVideo::Data &sourceField, qint32 firstLineInData, qint32 fieldLine,
                                   qint32 startUs, qint32 lengthUs,
                                   const LdDecodeMetaData::VideoParameters &videoParameters)
@@ -42,11 +42,9 @@ QVector<double> getFieldLineSlice(const SourceVideo::Data &sourceField, qint32 f
     const qint32 length = static_cast<qint32>(lengthSampleDouble);
     if (startPointer < 0 || startPointer + length > sourceField.size()) return returnData;
 
-    // Convert data points to floating-point IRE values
     returnData.resize(length);
     for (qint32 i = startPointer; i < startPointer + length; i++) {
-        returnData[i - startPointer] = (static_cast<double>(sourceField[i]) - static_cast<double>(videoParameters.black16bIre)) /
-                ((static_cast<double>(videoParameters.white16bIre) - static_cast<double>(videoParameters.black16bIre)) / 100.0);
+        returnData[i - startPointer] = static_cast<double>(sourceField[i]);
     }
 
     return returnData;
@@ -73,16 +71,6 @@ double calcStd(const QVector<double> &data)
     return sqrt(standardDeviation / static_cast<double>(data.size()));
 }
 
-// Calculate the SNR or Percentage SNR
-double calculateSnr(const QVector<double> &data, bool usePsnr)
-{
-    double signal = 0;
-    if (usePsnr) signal = 100.0; else signal = calcMean(data); // Compute the arithmetic mean
-    const double noise = calcStd(data); // Compute the standard deviation
-
-    return 20.0 * log10(signal / noise);
-}
-
 // Round a double to x decimal places
 double roundDouble(double in, qint32 decimalPlaces)
 {
@@ -91,50 +79,72 @@ double roundDouble(double in, qint32 decimalPlaces)
 }
 }
 
-void computeVitsMetrics(const SourceVideo::Data &fieldLines, qint32 firstLineInData,
-                        const LdDecodeMetaData::VideoParameters &videoParameters,
-                        LdDecodeMetaData::Field &fieldMetadata)
+VitsRawMeasurements measureVitsRaw(const SourceVideo::Data &fieldLines, qint32 firstLineInData,
+                                   const LdDecodeMetaData::VideoParameters &videoParameters)
 {
     // Get multiple possible black and white measurement points based on video format, etc.
     QVector<QVector<double>> wlSlice;
-    QVector<QVector<double>> blSlice;
+    QVector<double> blSlice;
 
     if (videoParameters.system == PAL) {
         // 625 lines (taken from ld-decode core.py)
         wlSlice.append(getFieldLineSlice(fieldLines, firstLineInData, 19, 12, 8, videoParameters));
-        blSlice.append(getFieldLineSlice(fieldLines, firstLineInData, 22, 12, 50, videoParameters));
+        blSlice = getFieldLineSlice(fieldLines, firstLineInData, 22, 12, 50, videoParameters);
     } else {
         // 525 lines (taken from ld-decode core.py)
         wlSlice.append(getFieldLineSlice(fieldLines, firstLineInData, 20, 14, 12, videoParameters));
         wlSlice.append(getFieldLineSlice(fieldLines, firstLineInData, 20, 52, 8, videoParameters));
         wlSlice.append(getFieldLineSlice(fieldLines, firstLineInData, 13, 13, 15, videoParameters));
-        blSlice.append(getFieldLineSlice(fieldLines, firstLineInData, 1, 10, 20, videoParameters));
+        blSlice = getFieldLineSlice(fieldLines, firstLineInData, 1, 10, 20, videoParameters);
     }
 
+    VitsRawMeasurements raw;
+    raw.hasBlack = !blSlice.isEmpty();
+    if (raw.hasBlack) raw.blackStd = calcStd(blSlice);
+    for (const QVector<double> &slice: wlSlice) {
+        VitsRawMeasurements::WhiteSlice measured;
+        if (!slice.isEmpty()) {
+            measured.mean = calcMean(slice);
+            measured.std = calcStd(slice);
+        } else {
+            measured.mean = std::nan("");
+        }
+        raw.white.append(measured);
+    }
+    return raw;
+}
+
+void applyVitsLevels(const VitsRawMeasurements &raw, const LdDecodeMetaData::VideoParameters &videoParameters,
+                     LdDecodeMetaData::Field &fieldMetadata)
+{
+    // The measurements are in sample values; the SNR is of the signal between the levels (100 IRE)
+    // over the noise, as in IRE
+    const double ireScale = (static_cast<double>(videoParameters.white16bIre) - static_cast<double>(videoParameters.black16bIre)) / 100.0;
+    const double black = static_cast<double>(videoParameters.black16bIre);
+
     // Only pick the white slice if it has a mean value between 90 and 110 IRE
-    qint32 wlSliceToUse = -1;
-    for (qint32 i = 0; i < wlSlice.size(); i++) {
-        if (wlSlice[i].isEmpty()) continue;
-        const double wlMean = calcMean(wlSlice[i]);
-        if (wlMean >= 90 && wlMean <= 110) {
-            wlSliceToUse = i;
+    double wSNR = 0;
+    for (const VitsRawMeasurements::WhiteSlice &slice: raw.white) {
+        if (std::isnan(slice.mean)) continue;
+        const double meanIre = (slice.mean - black) / ireScale;
+        if (meanIre >= 90 && meanIre <= 110) {
+            wSNR = 20.0 * log10(100.0 / (slice.std / ireScale));
             break;
         }
     }
 
-    // Always use the first black slice (there is only ever one to choose from)
-    // Doing it this way in case more sources are added in the future
-    const qint32 blSliceToUse = blSlice[0].isEmpty() ? -1 : 0;
-
-    // Only calculate the wSNR if we have a valid slice
-    double wSNR = 0;
-    if (wlSliceToUse != -1) wSNR = calculateSnr(wlSlice[wlSliceToUse], true);
-
-    // Only calculate the bPSNR if we have a valid slice
+    // The black slice is always the first (and only) one
     double bPSNR = 0;
-    if (blSliceToUse != -1) bPSNR = calculateSnr(blSlice[blSliceToUse], true);
+    if (raw.hasBlack) bPSNR = 20.0 * log10(100.0 / (raw.blackStd / ireScale));
 
     // Update the metadata for the field
     fieldMetadata.vitsMetrics.wSNR = roundDouble(wSNR, 1);
     fieldMetadata.vitsMetrics.bPSNR = roundDouble(bPSNR, 1);
+}
+
+void computeVitsMetrics(const SourceVideo::Data &fieldLines, qint32 firstLineInData,
+                        const LdDecodeMetaData::VideoParameters &videoParameters,
+                        LdDecodeMetaData::Field &fieldMetadata)
+{
+    applyVitsLevels(measureVitsRaw(fieldLines, firstLineInData, videoParameters), videoParameters, fieldMetadata);
 }
