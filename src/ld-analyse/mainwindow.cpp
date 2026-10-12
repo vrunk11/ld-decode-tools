@@ -196,6 +196,16 @@ MainWindow::~MainWindow()
 }
 
 // The ffmpeg video filters: View > Video filter...
+// Give the filter the graph of the filters on. The Deinterlaced view uses the deinterlacer
+// chosen whether or not its check box is ticked. Returns ffmpeg's complaint, if any.
+QString MainWindow::updateVideoFilterGraph()
+{
+    VideoFilterSettings settings = videoFilterSettings;
+    if (deinterlacedView) settings.deinterlacerOn = true;
+    lastFilteredPosition = -1;
+    return videoFilter.setGraph(settings.toGraph());
+}
+
 void MainWindow::setupVideoFilter()
 {
     videoFilterDialog = new VideoFilterDialog(this);
@@ -225,7 +235,7 @@ void MainWindow::setupVideoFilter()
     settings.customOn = saved.value("customOn", false).toBool();
     settings.custom = saved.value("custom").toString();
     videoFilterSettings = settings;
-    if (!videoFilter.setGraph(settings.toGraph()).isEmpty()) {
+    if (!updateVideoFilterGraph().isEmpty()) {
         // They no longer work (an ffmpeg without a filter): start without
         videoFilterSettings = VideoFilterSettings();
     }
@@ -234,11 +244,16 @@ void MainWindow::setupVideoFilter()
 // Show the picture through these filters
 void MainWindow::applyVideoFilter(const VideoFilterSettings &settings)
 {
-    const QString problem = videoFilter.setGraph(settings.toGraph());
-    videoFilterDialog->showResult(problem);
-    if (!problem.isEmpty()) return;
-
+    const VideoFilterSettings previous = videoFilterSettings;
     videoFilterSettings = settings;
+    const QString problem = updateVideoFilterGraph();
+    videoFilterDialog->showResult(problem);
+    if (!problem.isEmpty()) {
+        videoFilterSettings = previous;
+        updateVideoFilterGraph();
+        return;
+    }
+
     configuration.setVideoFilter({
         { "deinterlacerOn", settings.deinterlacerOn }, { "deinterlacer", settings.deinterlacer },
         { "scalerOn", settings.scalerOn }, { "scaler", settings.scaler },
@@ -515,6 +530,8 @@ TbcSource& MainWindow::getTbcSource()
 
 void MainWindow::resetGui()
 {
+    deinterlacedView = false;
+    updateVideoFilterGraph();
     ui->posNumberSpinBox->setMinimum(1);
     ui->posHorizontalSlider->setMinimum(1);
 
@@ -958,6 +975,8 @@ void MainWindow::setViewValues()
 
 			if (tbcSource.getSplitViewEnabled()) {
 				buttonLabel = QString("Split View");
+			} else if (deinterlacedView) {
+				buttonLabel = QString("Deinterlaced View");
 			} else {
 				buttonLabel = QString("Frame View");
 			}
@@ -977,6 +996,8 @@ void MainWindow::setViewValues()
 
 			if (tbcSource.getSplitViewEnabled()) {
 				buttonLabel = QString("Split");
+			} else if (deinterlacedView) {
+				buttonLabel = QString("Deint");
 			} else {
 				buttonLabel = QString("Frame");
 			}
@@ -1699,6 +1720,12 @@ void MainWindow::on_viewPushButton_clicked()
     pausePlayback();
     switch (tbcSource.getViewMode()) {
         case TbcSource::ViewMode::FRAME_VIEW:
+            if (deinterlacedView) {
+                tbcDebugStream() << "Leaving the deinterlaced view for FRAME_VIEW mode";
+                deinterlacedView = false;
+                updateVideoFilterGraph();
+                break;
+            }
             tbcDebugStream() << "Changing to SPLIT_VIEW mode";
 
             // Set split mode
@@ -1715,10 +1742,19 @@ void MainWindow::on_viewPushButton_clicked()
             break;
 
         case TbcSource::ViewMode::FIELD_VIEW:
-            tbcDebugStream() << "Changing to FRAME_VIEW mode";
-
-            // Set frame mode
+            // Then a frame through the chosen deinterlacer, if this build has the filters
             tbcSource.setViewMode(TbcSource::ViewMode::FRAME_VIEW);
+            if (VideoFilter::isAvailable()) {
+                tbcDebugStream() << "Changing to the deinterlaced view";
+                deinterlacedView = true;
+                const QString problem = updateVideoFilterGraph();
+                if (!problem.isEmpty()) {
+                    deinterlacedView = false;
+                    updateVideoFilterGraph();
+                    statusBar()->showMessage(tr("The deinterlacer could not be used: %1").arg(problem), 10000);
+                }
+            }
+            if (!deinterlacedView) tbcDebugStream() << "Changing to FRAME_VIEW mode";
             break;
     }
 
