@@ -13,6 +13,7 @@ set(ld-analyse_SOURCES
     videoparametersdialog.cpp videoparametersdialog.ui
     chromadecoderconfigdialog.cpp chromadecoderconfigdialog.ui
     tbcsource.cpp
+    playbackcontroller.cpp
     vbidialog.cpp vbidialog.ui
     configuration.cpp
     dropoutanalysisdialog.cpp dropoutanalysisdialog.ui

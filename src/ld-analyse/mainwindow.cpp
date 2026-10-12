@@ -152,6 +152,8 @@ MainWindow::MainWindow(QString inputFilenameParam, QWidget *parent) :
     // Button press/release signals for chroma seek mode are auto-connected by Qt's auto-connection mechanism
     pendingSliderValue = -1;
 
+    setupPlayback();
+
     // Set the GUI to unloaded
     updateGuiUnloaded();
     
@@ -192,6 +194,102 @@ MainWindow::~MainWindow()
     delete ui;
 }
 
+// Video playback ------------------------------------------------------------------------------------------------------
+
+// Create the play button, the Playback menu and the clock
+void MainWindow::setupPlayback()
+{
+    playback = new PlaybackController(this);
+    connect(playback, &PlaybackController::positionDue, this, &MainWindow::playbackPositionDue);
+    connect(playback, &PlaybackController::stateChanged, this, &MainWindow::updatePlaybackState);
+
+    // The play button sits beside the frame stepping buttons
+    playPushButton = new QPushButton(this);
+    playPushButton->setMinimumSize(30, 30);
+    playPushButton->setIconSize(QSize(24, 24));
+    playPushButton->setFocusPolicy(Qt::NoFocus);
+    playPushButton->setToolTip(tr("Play / pause (Space)"));
+    connect(playPushButton, &QPushButton::clicked, this, &MainWindow::togglePlayback);
+    const qint32 nextIndex = ui->horizontalLayout_3->indexOf(ui->nextPushButton);
+    ui->horizontalLayout_3->insertWidget(nextIndex + 1, playPushButton);
+
+    QMenu *menu = new QMenu(tr("&Playback"), this);
+    ui->menuBar->insertMenu(ui->menuWindow->menuAction(), menu);
+
+    actionPlayPause = menu->addAction(tr("&Play"));
+    actionPlayPause->setShortcut(Qt::Key_Space);
+    actionPlayPause->setShortcutContext(Qt::ApplicationShortcut);
+    connect(actionPlayPause, &QAction::triggered, this, &MainWindow::togglePlayback);
+
+    actionLoop = menu->addAction(tr("&Loop"));
+    actionLoop->setCheckable(true);
+    connect(actionLoop, &QAction::toggled, playback, &PlaybackController::setLoop);
+
+    // Speed relative to the real speed of the video
+    menu->addSeparator();
+    speedActions = new QActionGroup(this);
+    for (const double speed: {0.25, 0.5, 1.0, 2.0, 4.0}) {
+        QAction *action = menu->addAction(tr("%1x speed").arg(speed));
+        action->setCheckable(true);
+        action->setChecked(speed == 1.0);
+        speedActions->addAction(action);
+        connect(action, &QAction::triggered, this, [this, speed]() { playback->setSpeed(speed); });
+    }
+
+    updatePlaybackState(false);
+}
+
+void MainWindow::updatePlaybackState(bool playing)
+{
+    playPushButton->setIcon(style()->standardIcon(playing ? QStyle::SP_MediaPause : QStyle::SP_MediaPlay));
+    actionPlayPause->setText(playing ? tr("&Pause") : tr("&Play"));
+
+    // Say if the machine could not keep up, so a jerky video is not mistaken for a bad capture
+    if (!playing && playback->getSkippedPositions() > 0) {
+        statusBar()->showMessage(tr("Playback skipped %1 %2 that could not be shown in time")
+                                 .arg(playback->getSkippedPositions())
+                                 .arg(tbcSource.getFieldViewEnabled() ? tr("fields") : tr("frames")), 8000);
+    }
+}
+
+void MainWindow::togglePlayback()
+{
+    if (playback->isPlaying()) {
+        playback->pause();
+        return;
+    }
+    if (!tbcSource.getIsSourceLoaded()) return;
+
+    // The clock counts frames, or fields in field view, where it has twice as many
+    const bool isFieldView = tbcSource.getFieldViewEnabled();
+    const double frameRate = tbcSource.getSystem() == PAL ? 25.0 : 30000.0 / 1001.0;
+    playback->setRate(isFieldView ? 2.0 * frameRate : frameRate);
+    playback->setRange(1, isFieldView ? tbcSource.getNumberOfFields() : tbcSource.getNumberOfFrames());
+    playback->play(isFieldView ? currentFieldNumber : currentFrameNumber);
+}
+
+// Stop playing, as when the user takes over (does nothing if not playing)
+void MainWindow::pausePlayback()
+{
+    playback->pause();
+}
+
+// Show the frame (or field) that has fallen due
+void MainWindow::playbackPositionDue(qint32 position)
+{
+    if (tbcSource.getFieldViewEnabled()) {
+        setCurrentField(position);
+    } else {
+        setCurrentFrame(position);
+    }
+
+    // Move the controls along without making them seek
+    const QSignalBlocker spinBlocker(ui->posNumberSpinBox);
+    const QSignalBlocker sliderBlocker(ui->posHorizontalSlider);
+    ui->posNumberSpinBox->setValue(position);
+    ui->posHorizontalSlider->setValue(position);
+}
+
 // Update GUI methods for when TBC source files are loaded and unloaded -----------------------------------------------
 
 // Enable or disable all the GUI controls
@@ -205,6 +303,9 @@ void MainWindow::setGuiEnabled(bool enabled)
     ui->endPushButton->setEnabled(enabled);
     ui->posHorizontalSlider->setEnabled(enabled);
     ui->mediaControl_frame->setEnabled(enabled);
+    playPushButton->setEnabled(enabled);
+    actionPlayPause->setEnabled(enabled);
+    if (!enabled) pausePlayback();
 
     // Enable menu options
     ui->actionLine_scope->setEnabled(enabled);
@@ -774,6 +875,7 @@ void MainWindow::on_actionExit_triggered()
 // Load a TBC file based on the file selection from the GUI
 void MainWindow::on_actionOpen_TBC_file_triggered()
 {
+    pausePlayback();
     tbcDebugStream() << "MainWindow::on_actionOpen_TBC_file_triggered(): Called";
 
     QString inputFileName = QFileDialog::getOpenFileName(this,
@@ -1016,6 +1118,7 @@ void MainWindow::on_actionToggleChromaDuringSeek_triggered()
 // Previous field/frame button has been clicked
 void MainWindow::on_previousPushButton_clicked()
 {
+    pausePlayback();
     // Enter chroma seek mode if appropriate
     enterChromaSeekMode(ui->previousPushButton);
     
@@ -1036,6 +1139,7 @@ void MainWindow::on_previousPushButton_clicked()
 // Next field/frame button has been clicked
 void MainWindow::on_nextPushButton_clicked()
 {
+    pausePlayback();
     // Enter chroma seek mode if appropriate
     enterChromaSeekMode(ui->nextPushButton);
     
@@ -1092,6 +1196,7 @@ void MainWindow::on_nextPushButton_released()
 // Skip to the next chapter (note: this button was repurposed from 'end frame')
 void MainWindow::on_endPushButton_clicked()
 {
+    pausePlayback();
     setCurrentFrame(tbcSource.startOfNextChapter(currentFrameNumber));
     auto uiNumber = currentFrameNumber;
 
@@ -1106,6 +1211,7 @@ void MainWindow::on_endPushButton_clicked()
 // Skip to the start of chapter (note: this button was repurposed from 'start frame')
 void MainWindow::on_startPushButton_clicked()
 {
+    pausePlayback();
     setCurrentFrame(tbcSource.startOfChapter(currentFrameNumber));
     auto uiNumber = currentFrameNumber;
 
@@ -1120,6 +1226,7 @@ void MainWindow::on_startPushButton_clicked()
 // Field/Frame number spin box editing has finished
 void MainWindow::on_posNumberSpinBox_editingFinished()
 {
+    pausePlayback();
     qint32 currentNumber;
     qint32 totalNumber;
 
@@ -1173,6 +1280,7 @@ void MainWindow::on_posHorizontalSlider_valueChanged(int value)
 // User started dragging the slider
 void MainWindow::on_posHorizontalSlider_sliderPressed()
 {
+    pausePlayback();
     sliderDragging = true;
     dragPauseTimer->stop(); // Stop any existing timer
 }
@@ -1415,6 +1523,7 @@ void MainWindow::on_sourcesPushButton_clicked()
 // Frame/Field view button clicked
 void MainWindow::on_viewPushButton_clicked()
 {
+    pausePlayback();
     switch (tbcSource.getViewMode()) {
         case TbcSource::ViewMode::FRAME_VIEW:
             tbcDebugStream() << "Changing to SPLIT_VIEW mode";

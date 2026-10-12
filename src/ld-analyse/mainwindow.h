@@ -20,6 +20,12 @@
 #include <QLabel>
 #include <QMouseEvent>
 #include <QTimer>
+#include <QStyle>
+#include <QMenu>
+#include <QMenuBar>
+#include <QActionGroup>
+#include <QPushButton>
+#include <QSignalBlocker>
 
 #include "oscilloscopedialog.h"
 #include "vectorscopedialog.h"
@@ -35,6 +41,7 @@
 #include "chromadecoderconfigdialog.h"
 #include "configuration.h"
 #include "tbcsource.h"
+#include "playbackcontroller.h"
 #include "theme.h"
 #include "themeeditordialog.h"
 
@@ -173,6 +180,18 @@ private:
     bool chromaSeekMode;
     bool originalChromaState;
     QTimer* seekTimer;
+
+    // Video playback: the controller is the clock, MainWindow shows what falls due
+    PlaybackController *playback;
+    QPushButton *playPushButton;
+    QAction *actionPlayPause;
+    QAction *actionLoop;
+    QActionGroup *speedActions;
+    void setupPlayback();
+    void togglePlayback();
+    void pausePlayback();
+    void playbackPositionDue(qint32 position);
+    void updatePlaybackState(bool playing);
 
     // Update GUI methods
     void setGuiEnabled(bool enabled);
