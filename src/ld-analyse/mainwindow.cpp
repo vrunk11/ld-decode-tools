@@ -1508,6 +1508,8 @@ void MainWindow::on_actionExit_triggered()
 // Load a TBC file based on the file selection from the GUI
 void MainWindow::on_actionOpen_TBC_file_triggered()
 {
+    // A live input cannot be replaced by a file
+    if (tbcSource.getIsLive()) return;
     pausePlayback();
     tbcDebugStream() << "MainWindow::on_actionOpen_TBC_file_triggered(): Called";
 
@@ -1526,6 +1528,7 @@ void MainWindow::on_actionOpen_TBC_file_triggered()
 // Reload the current TBC selection from the GUI
 void MainWindow::on_actionReload_TBC_triggered()
 {
+    if (tbcSource.getIsLive()) return;
     // Reload the current TBC file
     if (!lastFilename.isEmpty() && !lastFilename.isNull()) {
         loadTbcFile(lastFilename);
@@ -2669,6 +2672,7 @@ void MainWindow::on_finishedLoading(bool success)
         resetGui();
         updateGuiLoaded();
 
+        ui->actionOpen_TBC_file->setEnabled(!tbcSource.getIsLive());
         // Set the main window title
         this->setWindowTitle(tbcSource.getIsLive() ? tr("ld-analyse - Live input")
                                                    : tr("ld-analyse - ") + tbcSource.getCurrentSourceFilename());
@@ -2684,6 +2688,7 @@ void MainWindow::on_finishedLoading(bool success)
         if (tbcSource.getIsLive()) {
             // There is nothing to reload or save; the video plays as it arrives, and stays on
             ui->actionReload_TBC->setEnabled(false);
+            ui->actionOpen_TBC_file->setEnabled(false);
             setPlaybackOptionsVisible(false);
             if (!tbcSource.getStreamHint().isEmpty()) statusBar()->showMessage(tbcSource.getStreamHint(), 30000);
             liveTimer->start();
