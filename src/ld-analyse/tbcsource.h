@@ -270,6 +270,10 @@ private:
     // A stream: what has arrived
     bool isLive = false;
     StreamInput streamInput;
+    // The levels the SNR is measured against: those of the capture when it was opened (its metadata, or
+    // the standard ones and --black-level and --white-level for a live input). Adjusting the levels in the
+    // video parameters, which is for the picture, does not move the SNR.
+    LdDecodeMetaData::VideoParameters snrParameters;
     bool liveAnalyse = false;
     QSet<qint32> liveAnalysedFrames;
     QMap<qint32, double> liveBlackSnr, liveWhiteSnr;

@@ -56,8 +56,8 @@ void LiveSnr::measureFrame(qint32 frame)
         if (index < 0 || index >= rawFields.size() || !rawValid[index]) continue;
         LdDecodeMetaData::Field field;
         applyVitsLevels(rawFields[index], videoParameters, field, vitsIreSpan(videoParameters.system));
-        if (field.vitsMetrics.bPSNR > 0) { blackTotal += field.vitsMetrics.bPSNR; blackPoints++; }
-        if (field.vitsMetrics.wSNR > 0) { whiteTotal += field.vitsMetrics.wSNR; whitePoints++; }
+        if (std::isfinite(field.vitsMetrics.bPSNR) && field.vitsMetrics.bPSNR > 0) { blackTotal += field.vitsMetrics.bPSNR; blackPoints++; }
+        if (std::isfinite(field.vitsMetrics.wSNR) && field.vitsMetrics.wSNR > 0) { whiteTotal += field.vitsMetrics.wSNR; whitePoints++; }
     }
     while (frameBlack.size() <= frameIndex) { frameBlack.append(std::nan("")); frameWhite.append(std::nan("")); }
     frameBlack[frameIndex] = blackPoints ? blackTotal / blackPoints : std::nan("");

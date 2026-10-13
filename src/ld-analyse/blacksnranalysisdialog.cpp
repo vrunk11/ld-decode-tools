@@ -220,6 +220,7 @@ void BlackSnrAnalysisDialog::setLiveHistory(const QVector<QPointF> &points, qint
     maxY = 48;
     blackPoints.clear();
     for (const QPointF &point: points) {
+        if (!std::isfinite(point.y())) continue;     // (an infinite one would make the scale of the graph infinite)
         // Clamp SNR values to minimum threshold (20 dB)
         const double clamped = std::max(point.y(), 20.0);
         blackPoints.append(QPointF(point.x(), clamped));

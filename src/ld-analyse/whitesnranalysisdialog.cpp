@@ -219,6 +219,7 @@ void WhiteSnrAnalysisDialog::setLiveHistory(const QVector<QPointF> &points, qint
     maxY = 42;
     whitePoints.clear();
     for (const QPointF &point: points) {
+        if (!std::isfinite(point.y())) continue;     // (an infinite one would make the scale of the graph infinite)
         // Clamp SNR values to minimum threshold (14 dB)
         const double clamped = std::max(point.y(), 14.0);
         whitePoints.append(QPointF(point.x(), clamped));

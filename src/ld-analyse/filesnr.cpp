@@ -49,8 +49,8 @@ void FileSnr::computeFrame(qint32 index)
     for (const VitsRawMeasurements *raw: { &rawFirst[index], &rawSecond[index] }) {
         LdDecodeMetaData::Field field;
         applyVitsLevels(*raw, videoParameters, field, vitsIreSpan(videoParameters.system));
-        if (field.vitsMetrics.bPSNR > 0) { blackTotal += field.vitsMetrics.bPSNR; blackPoints++; }
-        if (field.vitsMetrics.wSNR > 0) { whiteTotal += field.vitsMetrics.wSNR; whitePoints++; }
+        if (std::isfinite(field.vitsMetrics.bPSNR) && field.vitsMetrics.bPSNR > 0) { blackTotal += field.vitsMetrics.bPSNR; blackPoints++; }
+        if (std::isfinite(field.vitsMetrics.wSNR) && field.vitsMetrics.wSNR > 0) { whiteTotal += field.vitsMetrics.wSNR; whitePoints++; }
     }
     frameBlack[index] = blackPoints ? blackTotal / blackPoints : std::nan("");
     frameWhite[index] = whitePoints ? whiteTotal / whitePoints : std::nan("");

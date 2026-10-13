@@ -599,15 +599,9 @@ void TbcSource::setVideoParameters(const LdDecodeMetaData::VideoParameters &vide
     // Update the metadata
     ldDecodeMetaData.setVideoParameters(videoParameters);
 
-    // The SNR of a live input depends on the black and white levels: measure it again
-    if (fileSnr) fileSnr->setVideoParameters(videoParameters);
+    // (the SNR is not measured again: it is against the levels of the capture, see snrParameters)
     if (liveAnalyse) {
-        if (liveSnr) {
-            liveSnr->setVideoParameters(videoParameters);
-        } else {
-            liveBlackSnr.clear();
-            liveWhiteSnr.clear();
-        }
+        // The VBI is decoded again, as its decoders use the levels
         liveAnalysedFrames.clear();
         loadedFrameNumber = -1;
     }
@@ -915,6 +909,7 @@ void TbcSource::resetState()
 {
     liveSnr.reset();
     fileSnr.reset();
+    snrParameters = LdDecodeMetaData::VideoParameters();
     // Default frame image options
     chromaOn = false;
     dropoutsOn = false;
@@ -1402,6 +1397,7 @@ bool TbcSource::startBackgroundLoad(QString sourceFilename)
 
     // Get the video parameters from the metadata
     LdDecodeMetaData::VideoParameters videoParameters = ldDecodeMetaData.getVideoParameters();
+    snrParameters = videoParameters;
 
     // Open the new source video
     tbcDebugStream() << "TbcSource::startBackgroundLoad(): Loading TBC file...";
@@ -1572,6 +1568,7 @@ bool TbcSource::startBackgroundStream()
     ldDecodeMetaData.initialiseDefault(streamInput.system, streamInput.blackLevel, streamInput.whiteLevel,
                                        streamInput.isSubcarrierLocked);
     const LdDecodeMetaData::VideoParameters videoParameters = ldDecodeMetaData.getVideoParameters();
+    snrParameters = videoParameters;
 
     StreamReader::Options options;
     options.cvbs = streamInput.cvbs;
@@ -1616,7 +1613,7 @@ bool TbcSource::startBackgroundStream()
     // of the viewer, and this would read ahead of it: only the frames shown are measured then)
     if (!streamInput.throttle) {
         liveSnr = std::make_unique<LiveSnr>(sourceVideo);
-        liveSnr->setVideoParameters(ldDecodeMetaData.getVideoParameters());
+        liveSnr->setVideoParameters(snrParameters);
         liveSnr->start(QThread::LowPriority);
     }
     sourceReady = true;
@@ -1780,7 +1777,7 @@ void TbcSource::analyseLiveFrame(qint32 frameNumber)
 
         LdDecodeMetaData::Field field = ldDecodeMetaData.getField(fieldNumber);
         decodeFieldVbi(lines, 1, videoParameters, field);
-        applyVitsLevels(measureVitsRaw(lines, 1, videoParameters), videoParameters, field, vitsIreSpan(videoParameters.system));
+        applyVitsLevels(measureVitsRaw(lines, 1, videoParameters), snrParameters.isValid ? snrParameters : videoParameters, field, vitsIreSpan(videoParameters.system));
         field.vitsMetrics.inUse = true;
 
         ldDecodeMetaData.updateFieldVbi(field.vbi, fieldNumber);
@@ -1790,11 +1787,11 @@ void TbcSource::analyseLiveFrame(qint32 frameNumber)
         ldDecodeMetaData.updateFieldVitsMetrics(field.vitsMetrics, fieldNumber);
 
         // The average for the frame, as for a file
-        if (field.vitsMetrics.bPSNR > 0) {
+        if (std::isfinite(field.vitsMetrics.bPSNR) && field.vitsMetrics.bPSNR > 0) {
             blackTotal += field.vitsMetrics.bPSNR;
             blackPoints++;
         }
-        if (field.vitsMetrics.wSNR > 0) {
+        if (std::isfinite(field.vitsMetrics.wSNR) && field.vitsMetrics.wSNR > 0) {
             whiteTotal += field.vitsMetrics.wSNR;
             whitePoints++;
         }
@@ -1856,7 +1853,7 @@ void TbcSource::startFileSnr()
         frameFields.append(qMakePair(ldDecodeMetaData.getFirstFieldNumber(frame), ldDecodeMetaData.getSecondFieldNumber(frame)));
     }
 
-    const LdDecodeMetaData::VideoParameters videoParameters = ldDecodeMetaData.getVideoParameters();
+    const LdDecodeMetaData::VideoParameters videoParameters = snrParameters.isValid ? snrParameters : ldDecodeMetaData.getVideoParameters();
     fileSnr = std::make_unique<FileSnr>(currentSourceFilename, videoParameters.fieldWidth * videoParameters.fieldHeight,
                                         videoParameters.fieldWidth, frameFields);
     fileSnr->setVideoParameters(videoParameters);
