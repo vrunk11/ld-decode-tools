@@ -892,6 +892,12 @@ void LdDecodeMetaData::initialiseDefault(VideoSystem system, qint32 black16bIre,
     videoParameters.sampleRate = 4.0 * videoParameters.fSC;
 }
 
+void LdDecodeMetaData::setGeneratedFieldOrder(bool reversed)
+{
+    generatedReversed = reversed;
+    for (qint32 i = 0; i < fields.size(); i++) fields[i].isFirstField = ((i % 2) == 0) != reversed;
+}
+
 void LdDecodeMetaData::ensureFields(qint32 numberOfFields)
 {
     const qint32 have = fields.size();
@@ -900,7 +906,7 @@ void LdDecodeMetaData::ensureFields(qint32 numberOfFields)
     fields.resize(numberOfFields);
     for (qint32 i = have; i < numberOfFields; i++) {
         fields[i].seqNo = i + 1;
-        fields[i].isFirstField = (i % 2) == 0;
+        fields[i].isFirstField = ((i % 2) == 0) != generatedReversed;
     }
     videoParameters.numberOfSequentialFields = numberOfFields;
 }

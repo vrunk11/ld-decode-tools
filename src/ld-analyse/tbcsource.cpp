@@ -202,7 +202,7 @@ void TbcSource::applyRenderSettings(const RenderSettings &settings)
     sourceMode = settings.sourceMode;
 
     ldDecodeMetaData.setVideoParameters(settings.videoParameters);
-    ldDecodeMetaData.setIsFirstFieldFirst(!reverseFoOn);
+    applyFieldOrder();
     configureChromaDecoder();
 
     // Whatever was loaded was loaded with other settings
@@ -256,8 +256,19 @@ void TbcSource::setFieldOrder(bool _state)
     invalidateImageCache();
     reverseFoOn = _state;
 
-    if (reverseFoOn) ldDecodeMetaData.setIsFirstFieldFirst(false);
-    else ldDecodeMetaData.setIsFirstFieldFirst(true);
+    applyFieldOrder();
+}
+
+// Put the field order in the metadata. A live input has fields made up (alternating first and second),
+// for which reversing is pairing them one off; a file has its own flags, and the order is the expectation.
+void TbcSource::applyFieldOrder()
+{
+    if (ldDecodeMetaData.isGenerated()) {
+        ldDecodeMetaData.setGeneratedFieldOrder(reverseFoOn);
+        ldDecodeMetaData.setIsFirstFieldFirst(true);
+    } else {
+        ldDecodeMetaData.setIsFirstFieldFirst(!reverseFoOn);
+    }
 }
 
 // Method to set if we combine source
@@ -340,7 +351,7 @@ void TbcSource::load(qint32 frameNumber, qint32 fieldNumber)
     if (!sourceReady || loadedFrameNumber == frameNumber) return;
 
     // A stream has fields made up for the frames it holds
-    if (isLive) ldDecodeMetaData.ensureFields(2 * frameNumber);
+    if (isLive) ldDecodeMetaData.ensureFields(ldDecodeMetaData.fieldsForFrame(frameNumber));
     loadedFrameNumber = frameNumber;
     inputFieldsValid = false;
     invalidateImageCache();
@@ -1659,6 +1670,9 @@ void TbcSource::updateLive()
     const qint32 frames = sourceVideo.getFieldsReadSoFar() / 2;
     liveEnded = sourceVideo.getNumberOfAvailableFields() >= 0;
     liveFrames = liveEnded ? frames : qMax(0, frames - getLookAheadFrames());
+    // Reversed, a frame is made of a field and the one after the one it would have started with: the
+    // last frame needs a field more than it did
+    if (reverseFoOn) liveFrames = qMax(0, liveFrames - 1);
 
     // The first frame with both its fields still in the buffer
     const qint32 firstHeldField = sourceVideo.getFirstFieldHeld();

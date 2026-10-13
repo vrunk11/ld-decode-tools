@@ -244,6 +244,7 @@ private slots:
     void finishBackgroundSave();
 
 private:
+    void applyFieldOrder();
     bool sourceReady;
 
     // Frame data

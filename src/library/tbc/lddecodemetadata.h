@@ -255,6 +255,12 @@ public:
                            bool isSubcarrierLocked = true);
     // Make sure there are at least numberOfFields fields (see initialiseDefault)
     void ensureFields(qint32 numberOfFields);
+    // Which of a pair of generated fields is the first field: the earlier one, or (reversed) the
+    // later one, which pairs the fields one off. Applies to the fields already made and to those to come.
+    void setGeneratedFieldOrder(bool reversed);
+    // How many fields there must be for a frame to be complete: 2 a frame, and with the order
+    // reversed 2 more, the frame being a field on from where it would start
+    qint32 fieldsForFrame(qint32 frameNumber) const { return 2 * frameNumber + (generatedReversed ? 2 : 0); }
     // True for metadata made by initialiseDefault
     bool isGenerated() const { return generated; }
 
@@ -354,6 +360,7 @@ public:
 private:
     MetadataFormat format = MetadataFormat::Sqlite;
     bool isFirstFieldFirst;
+    bool generatedReversed = false;
     VideoParameters videoParameters;
     PcmAudioParameters pcmAudioParameters;
     QVector<Field> fields;

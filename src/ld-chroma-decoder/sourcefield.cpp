@@ -53,7 +53,7 @@ void SourceField::loadFields(SourceVideo &sourceVideo, LdDecodeMetaData &ldDecod
         // Is this frame outside the bounds of the input file? Metadata that is made
         // up has no bounds, but the stream it goes with may end, anywhere.
         // If so, use real metadata (from frame 1) and black fields.
-        if (isGenerated && frameNumber >= 1) ldDecodeMetaData.ensureFields(2 * frameNumber);
+        if (isGenerated && frameNumber >= 1) ldDecodeMetaData.ensureFields(ldDecodeMetaData.fieldsForFrame(frameNumber));
         bool useBlankFrame = frameNumber < 1 || frameNumber > ldDecodeMetaData.getNumberOfFrames();
 
         // Get the first frame from the file (using frame 1 if outside bounds)
@@ -138,7 +138,7 @@ void SourceField::loadFields(SourceVideo &sourceVideo, LdDecodeMetaData &ldDecod
             if (isUnresolved && carry < 1) {
                 static constexpr qint32 PROBE_FRAMES = 8;
                 for (qint32 probe = 0; probe < PROBE_FRAMES; probe++, frameNumber++) {
-                    if (ldDecodeMetaData.isGenerated()) ldDecodeMetaData.ensureFields(2 * frameNumber);
+                    if (ldDecodeMetaData.isGenerated()) ldDecodeMetaData.ensureFields(ldDecodeMetaData.fieldsForFrame(frameNumber));
                     if (frameNumber > ldDecodeMetaData.getNumberOfFrames()) break;
 
                     const qint32 firstFieldNumber = ldDecodeMetaData.getFirstFieldNumber(frameNumber);
