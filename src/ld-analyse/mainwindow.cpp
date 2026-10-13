@@ -74,7 +74,7 @@ MainWindow::MainWindow(QString inputFilenameParam, const TbcSource::StreamInput 
 
     // Load the window geometry and settings from the configuration
     restoreGeometry(configuration.getMainWindowGeometry());
-    scaleFactor = configuration.getMainWindowScaleFactor();
+    scaleFactor = 1.0; // the zoom is not remembered: every input opens at its original size
 
     vbiDialog->restoreGeometry(configuration.getVbiDialogGeometry());
     oscilloscopeDialog->restoreGeometry(configuration.getOscilloscopeDialogGeometry());
@@ -210,7 +210,6 @@ MainWindow::~MainWindow()
 
     // Save the window geometry and settings to the configuration
     configuration.setMainWindowGeometry(saveGeometry());
-    configuration.setMainWindowScaleFactor(scaleFactor);
     configuration.setVbiDialogGeometry(vbiDialog->saveGeometry());
     configuration.setOscilloscopeDialogGeometry(oscilloscopeDialog->saveGeometry());
     configuration.setVectorscopeDialogGeometry(vectorscopeDialog->saveGeometry());
@@ -2680,6 +2679,9 @@ void MainWindow::on_finishedLoading(bool success)
 
     // Ensure source loaded ok
     if (success) {
+        // Every input opens at its original size, whatever the zoom was before
+        scaleFactor = 1.0;
+
         // Generate the graph data
         updateGraphs();
 
