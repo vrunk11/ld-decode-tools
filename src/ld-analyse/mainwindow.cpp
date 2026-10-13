@@ -2301,7 +2301,6 @@ void MainWindow::on_zoomInPushButton_clicked()
     }
 
     updateImageViewer();
-    resizeForZoom();
 }
 
 // Zoom out
@@ -2313,7 +2312,6 @@ void MainWindow::on_zoomOutPushButton_clicked()
     }
 
     updateImageViewer();
-    resizeForZoom();
 }
 
 // Original size 1:1 zoom
