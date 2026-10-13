@@ -2236,6 +2236,12 @@ void MainWindow::on_viewPushButton_clicked()
 // Normal/Reverse field order button clicked
 void MainWindow::on_fieldOrderPushButton_clicked()
 {
+    // The field order changes what the decoders read: stop them first, and go on afterwards from
+    // the same frame (the interface is set up again below, which would put it back to the first)
+    const bool wasPlaying = playback->isPlaying();
+    const qint32 frameBefore = currentFrameNumber;
+    pausePlayback();
+
 	int width = this->width();
 
     if (tbcSource.getFieldOrder()) {
@@ -2270,6 +2276,11 @@ void MainWindow::on_fieldOrderPushButton_clicked()
     // (the menu entry follows, however the order was changed)
     const QSignalBlocker blocker(actionFieldOrder);
     actionFieldOrder->setChecked(tbcSource.getFieldOrder());
+
+    if (wasPlaying) {
+        if (!tbcSource.getIsLive()) setCurrentFrame(qBound(1, frameBefore, qMax(1, tbcSource.getNumberOfFrames())));
+        togglePlayback();
+    }
 }
 
 void MainWindow::on_toggleAutoResize_toggled(bool checked)
