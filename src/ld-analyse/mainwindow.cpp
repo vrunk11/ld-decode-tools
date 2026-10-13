@@ -633,19 +633,22 @@ void MainWindow::updateLiveControls()
         // Moving the ends of the controls must not look like the user seeking
         const QSignalBlocker spinBlocker(ui->posNumberSpinBox);
         const QSignalBlocker sliderBlocker(ui->posHorizontalSlider);
-        // Playing: the whole of what has arrived, as a timeline (a range that moved with the
-        // buffer would make the handle jump about). Paused: the buffer, which is what can be reached.
-        const qint32 low = navigable ? first : 1;
-        ui->posNumberSpinBox->setRange(low, qMax(low, last));
-        ui->posHorizontalSlider->setRange(low, qMax(low, last));
-        ui->posHorizontalSlider->setPageStep(qMax(1, (last - low) / 100));
-        // Playing at the live edge: the range grows as frames arrive and the position as they are shown,
-        // a frame or two apart, which made the handle step left and right at the far end. Within a few
-        // frames of the newest it sits at the end.
-        if (!navigable) {
-            const qint32 position = isFieldView ? currentFieldNumber : currentFrameNumber;
-            const qint32 edgeFrames = isFieldView ? 6 : 3;
-            ui->posHorizontalSlider->setValue(last - position <= edgeFrames ? last : position);
+        const qint32 position = isFieldView ? currentFieldNumber : currentFrameNumber;
+        if (navigable) {
+            // Paused: the buffer, which is what can be reached, with the handle where the picture is
+            const qint32 high = qMax(first, last);
+            ui->posNumberSpinBox->setRange(first, high);
+            ui->posHorizontalSlider->setRange(first, high);
+            ui->posHorizontalSlider->setPageStep(qMax(1, (high - first) / 100));
+            ui->posNumberSpinBox->setValue(qBound(first, position, high));
+            ui->posHorizontalSlider->setValue(qBound(first, position, high));
+        } else {
+            // Playing: a live input has nothing to seek, so the slider does not move at all: it is
+            // left at its end (a range that grew and a position that moved on, a frame apart, made the
+            // handle step left and right). The frame number goes on counting.
+            ui->posHorizontalSlider->setRange(0, 1);
+            ui->posHorizontalSlider->setValue(1);
+            ui->posNumberSpinBox->setRange(1, qMax(1, last));
         }
     }
 
@@ -857,10 +860,8 @@ void MainWindow::showRenderedImage()
     const QSignalBlocker spinBlocker(ui->posNumberSpinBox);
     const QSignalBlocker sliderBlocker(ui->posHorizontalSlider);
     ui->posNumberSpinBox->setValue(position);
-    // (a live input at its live edge: the handle stays at the end, see updateLiveControls)
-    const qint32 edgeFrames = isFieldView ? 6 : 3;
-    ui->posHorizontalSlider->setValue(tbcSource.getIsLive() && ui->posHorizontalSlider->maximum() - position <= edgeFrames
-                                      ? ui->posHorizontalSlider->maximum() : position);
+    // (a live input: the slider stays where it is, at its end, see updateLiveControls)
+    if (!tbcSource.getIsLive()) ui->posHorizontalSlider->setValue(position);
 }
 
 // The row of media controls and options is crowded: when it has not the room for the field order
