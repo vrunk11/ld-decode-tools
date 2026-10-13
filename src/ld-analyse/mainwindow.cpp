@@ -577,6 +577,14 @@ void MainWindow::updateLiveControls()
         ui->posNumberSpinBox->setRange(low, qMax(low, last));
         ui->posHorizontalSlider->setRange(low, qMax(low, last));
         ui->posHorizontalSlider->setPageStep(qMax(1, (last - low) / 100));
+        // Playing at the live edge: the range grows as frames arrive and the position as they are shown,
+        // a frame or two apart, which made the handle step left and right at the far end. Within a few
+        // frames of the newest it sits at the end.
+        if (!navigable) {
+            const qint32 position = isFieldView ? currentFieldNumber : currentFrameNumber;
+            const qint32 edgeFrames = isFieldView ? 6 : 3;
+            ui->posHorizontalSlider->setValue(last - position <= edgeFrames ? last : position);
+        }
     }
 
     ui->posNumberSpinBox->setEnabled(navigable);
@@ -702,6 +710,17 @@ void MainWindow::togglePlayback()
     const bool isLive = tbcSource.getIsLive();
     if (isLive) tbcSource.unfreezeLive();
     if (isLive) updateLive();
+    if (isLive && !tbcSource.getIsLiveEnded()) {
+        // Playing again goes back to the live edge, not on from where it was stopped: what was frozen
+        // was only there to go through, and is let go of
+        tbcSource.dropLiveProtection();
+        setCurrentFrame(qMax(1, tbcSource.getNumberOfFrames() - 1));
+        const qint32 shown = isFieldView ? currentFieldNumber : currentFrameNumber;
+        const QSignalBlocker spinBlocker(ui->posNumberSpinBox);
+        const QSignalBlocker sliderBlocker(ui->posHorizontalSlider);
+        ui->posNumberSpinBox->setValue(shown);
+        ui->posHorizontalSlider->setValue(shown);
+    }
     const qint32 lastPosition = isFieldView ? tbcSource.getNumberOfFields() : tbcSource.getNumberOfFrames();
     const qint32 firstPosition = isLive ? (isFieldView ? 2 * tbcSource.getFirstAvailableFrame() - 1 : tbcSource.getFirstAvailableFrame()) : 1;
     playback->setLive(isLive, isLive && tbcSource.getIsLiveEnded());
@@ -776,7 +795,10 @@ void MainWindow::showRenderedImage()
     const QSignalBlocker spinBlocker(ui->posNumberSpinBox);
     const QSignalBlocker sliderBlocker(ui->posHorizontalSlider);
     ui->posNumberSpinBox->setValue(position);
-    ui->posHorizontalSlider->setValue(position);
+    // (a live input at its live edge: the handle stays at the end, see updateLiveControls)
+    const qint32 edgeFrames = isFieldView ? 6 : 3;
+    ui->posHorizontalSlider->setValue(tbcSource.getIsLive() && ui->posHorizontalSlider->maximum() - position <= edgeFrames
+                                      ? ui->posHorizontalSlider->maximum() : position);
 }
 
 // The row of media controls and options is crowded: when it has not the room for the field order

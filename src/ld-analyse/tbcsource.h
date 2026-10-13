@@ -111,6 +111,8 @@ public:
     // buffer's while frozen.
     void freezeLive(qint32 aroundFrame);
     void unfreezeLive();
+    // Let go of what was frozen at once, rather than once it has been played through
+    void dropLiveProtection();
     bool getIsLiveFrozen();
     // Once the viewer is past what was frozen, let it go back to being part of the ring
     void releaseLiveProtection(qint32 currentFrame);

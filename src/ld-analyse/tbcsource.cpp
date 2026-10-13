@@ -1718,6 +1718,15 @@ void TbcSource::unfreezeLive()
     liveFrozen = false;
 }
 
+void TbcSource::dropLiveProtection()
+{
+    liveFrozen = false;
+    if (liveProtected) {
+        sourceVideo.clearProtection();
+        liveProtected = false;
+    }
+}
+
 void TbcSource::releaseLiveProtection(qint32 currentFrame)
 {
     if (!liveProtected || liveFrozen) return;
