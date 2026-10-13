@@ -98,13 +98,13 @@ VideoFilterDialog::VideoFilterDialog(QWidget *parent)
     QGroupBox *scaleBox = new QGroupBox(tr("2. Scaling"), this);
     QVBoxLayout *scaleLayout = new QVBoxLayout(scaleBox);
     QHBoxLayout *scaleRow = new QHBoxLayout;
-    scalerCheck = new QCheckBox(tr("Scale to the display size:"), scaleBox);
-    scaleRow->addWidget(scalerCheck);
+    scaleRow->addWidget(new QLabel(tr("Algorithm:"), scaleBox));
     scalerCombo = new QComboBox(scaleBox);
+    scalerCombo->addItem(tr("Default (fast, smooth)"), QString());
     for (const Choice &choice: SCALERS) scalerCombo->addItem(tr(choice.name), QString::fromLatin1(choice.id));
     scaleRow->addWidget(scalerCombo, 1);
     scaleLayout->addLayout(scaleRow);
-    scaleLayout->addWidget(makeHint(tr("Gives the picture the size it is shown at, so the algorithm applies to zooming too.")));
+    scaleLayout->addWidget(makeHint(tr("The default is the program's own smooth scaling. Any other makes ffmpeg give the picture the size it is shown at, with that algorithm, zooming included.")));
     layout->addWidget(scaleBox);
 
     // 3. Other filters: a command line, always there to edit; the check box is the Filters button
@@ -138,12 +138,10 @@ VideoFilterDialog::VideoFilterDialog(QWidget *parent)
         accept();
     });
 
-    // Anything changed is shown at once in the graph; the scaler's list follows its check box
+    // Anything changed is shown at once in the graph
     const auto update = [this]() {
-        scalerCombo->setEnabled(scalerCheck->isChecked());
         updateGraphLabel();
     };
-    connect(scalerCheck, &QCheckBox::toggled, this, update);
     connect(deinterlacerCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, update);
     connect(scalerCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, update);
     connect(customEdit, &QLineEdit::textChanged, this, update);
@@ -157,11 +155,10 @@ VideoFilterDialog::VideoFilterDialog(QWidget *parent)
 void VideoFilterDialog::setSettings(const VideoFilterSettings &settings)
 {
     deinterlacerCombo->setCurrentIndex(qMax(0, deinterlacerCombo->findData(settings.deinterlacer)));
-    scalerCheck->setChecked(settings.scalerOn);
-    scalerCombo->setCurrentIndex(qMax(0, scalerCombo->findData(settings.scaler)));
+    // No algorithm chosen (the first entry, with no id) is the program's own scaling
+    scalerCombo->setCurrentIndex(settings.scalerOn ? qMax(0, scalerCombo->findData(settings.scaler)) : 0);
     customEdit->setText(settings.custom);
 
-    scalerCombo->setEnabled(settings.scalerOn);
     updateGraphLabel();
 }
 
@@ -172,8 +169,8 @@ VideoFilterSettings VideoFilterDialog::getSettings() const
     VideoFilterSettings settings;
     settings.deinterlacerOn = false;
     settings.deinterlacer = deinterlacerCombo->currentData().toString();
-    settings.scalerOn = scalerCheck->isChecked();
     settings.scaler = scalerCombo->currentData().toString();
+    settings.scalerOn = !settings.scaler.isEmpty();
     settings.customOn = true;
     settings.custom = customEdit->text().trimmed();
     return settings;

@@ -59,7 +59,6 @@ signals:
 
 private:
     QComboBox *deinterlacerCombo;
-    QCheckBox *scalerCheck;
     QComboBox *scalerCombo;
     QLineEdit *customEdit;
     QCheckBox *filtersCheck;
