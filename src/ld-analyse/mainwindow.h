@@ -208,6 +208,12 @@ private:
     void setupVideoFilter();
     void applyVideoFilter(const VideoFilterSettings &settings);
     bool filterImage(QImage &image, qint32 displayWidth, qint32 displayHeight);
+    // The frames around a frame, rendered as it is, for deinterlacing a picture that is not playing
+    std::unique_ptr<TbcSource> contextSource;
+    quint32 contextGeneration = 0;
+    QMap<qint32, QImage> contextImages;
+    QImage contextImage(qint32 frame);
+    void resetContext();
     quint32 renderGeneration = 0;
     bool firstImageShown = false;
     qint32 playbackStartPosition = 0;

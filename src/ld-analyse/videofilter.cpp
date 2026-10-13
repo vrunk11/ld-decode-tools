@@ -268,6 +268,36 @@ QImage VideoFilter::filter(const QImage &input, const Format &format, bool conti
     return result;
 }
 
+QImage VideoFilter::filterWithContext(const QImage &previous, const QImage &image, const QImage &next, const Format &format)
+{
+    error.clear();
+    if (!isActive() || image.isNull()) return image;
+
+    error = impl->build(graph, format);
+    if (!error.isEmpty()) return QImage();
+
+    // Give it the three in order, and collect what comes out: a filter that looks ahead by a frame gives
+    // the previous frame after the second and the image after the third; one that does not gives each as
+    // it is given. Either way the image is the second that comes out.
+    QVector<QImage> outputs;
+    for (const QImage *source: { &previous, &image, &next }) {
+        QImage converted = *source;
+        if (converted.format() != QImage::Format_RGB32) converted = converted.convertToFormat(QImage::Format_RGB32);
+        error = impl->push(converted, format);
+        if (!error.isEmpty()) { impl->reset(); return QImage(); }
+        while (true) {
+            QString pullError;
+            const QImage out = impl->pull(pullError);
+            if (!pullError.isEmpty()) error = pullError;
+            if (out.isNull()) break;
+            outputs.append(out);
+        }
+    }
+    impl->reset();
+    if (outputs.size() >= 2) return outputs[1];
+    return outputs.isEmpty() ? QImage() : outputs[0];
+}
+
 #else   // no libavfilter in this build
 
 struct VideoFilter::Impl {};
@@ -278,5 +308,6 @@ VideoFilter::~VideoFilter() = default;
 bool VideoFilter::isAvailable() { return false; }
 QString VideoFilter::setGraph(const QString &) { return QStringLiteral("This build of ld-analyse has no video filters (libavfilter was not found)"); }
 QImage VideoFilter::filter(const QImage &image, const Format &, bool) { return image; }
+QImage VideoFilter::filterWithContext(const QImage &, const QImage &image, const QImage &, const Format &) { return image; }
 
 #endif

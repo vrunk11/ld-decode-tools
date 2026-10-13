@@ -200,6 +200,7 @@ MainWindow::MainWindow(QString inputFilenameParam, const TbcSource::StreamInput 
 
 MainWindow::~MainWindow()
 {
+    resetContext();
     // The decoding threads read the same files (or stream) as the source
     renderer->close();
 
@@ -386,6 +387,53 @@ void MainWindow::applyVideoFilter(const VideoFilterSettings &settings)
 }
 
 
+// A frame as it is shown (decoded with the settings in use), made on a source of its own so that the
+// one the window shows is left as it is. For the frames around the one deinterlaced. A few are kept.
+QImage MainWindow::contextImage(qint32 frame)
+{
+    if (frame < 1 || frame > tbcSource.getNumberOfFrames()) return QImage();
+    if (tbcSource.getIsLive() && !tbcSource.isFrameHeld(frame)) return QImage();
+
+    // Anything that changes the picture makes what was kept of no use
+    const quint32 generation = tbcSource.getSettingsGeneration();
+    if (!contextSource || contextGeneration != generation) {
+        const TbcSource::RenderSettings settings = tbcSource.getRenderSettings();
+        if (!contextSource) {
+            contextSource = std::make_unique<TbcSource>();
+            if (!contextSource->openForRendering(settings, tbcSource.getIsLive() ? &tbcSource : nullptr)) {
+                contextSource.reset();
+                return QImage();
+            }
+        } else {
+            contextSource->applyRenderSettings(settings);
+        }
+        contextGeneration = generation;
+        contextImages.clear();
+    }
+
+    const auto found = contextImages.constFind(frame);
+    if (found != contextImages.constEnd()) return found.value();
+
+    contextSource->load(frame, 2 * frame - 1);
+    const QImage image = contextSource->getImage();
+    contextImages.insert(frame, image);
+    // Keep the few nearest the one shown
+    while (contextImages.size() > 6) {
+        auto farthest = contextImages.begin();
+        for (auto it = contextImages.begin(); it != contextImages.end(); ++it) {
+            if (qAbs(it.key() - currentFrameNumber) > qAbs(farthest.key() - currentFrameNumber)) farthest = it;
+        }
+        contextImages.erase(farthest);
+    }
+    return image;
+}
+
+void MainWindow::resetContext()
+{
+    contextSource.reset();
+    contextImages.clear();
+}
+
 // Show the image through the video filter, if there is one. Returns false if the picture
 // on show should be left as it is (a filter that is still filling up gave nothing yet).
 bool MainWindow::filterImage(QImage &image, qint32 displayWidth, qint32 displayHeight)
@@ -411,7 +459,21 @@ bool MainWindow::filterImage(QImage &image, qint32 displayWidth, qint32 displayH
                             && position > lastFilteredPosition;
     lastFilteredPosition = position;
 
-    QImage filtered = videoFilter.filter(image, format, continuous);
+    QImage filtered;
+    if (!continuous && deinterlacedView && !isFieldView) {
+        // A deinterlacer looks at the frames either side of the one it works on. A picture that is not
+        // playing has none, and its own image twice gives it nothing to go on, so it is given the real ones
+        const QImage previous = contextImage(position - 1);
+        const QImage next = contextImage(position + 1);
+        if (!previous.isNull() || !next.isNull()) {
+            filtered = videoFilter.filterWithContext(previous.isNull() ? image : previous, image,
+                                                     next.isNull() ? image : next, format);
+        } else {
+            filtered = videoFilter.filter(image, format, false);
+        }
+    } else {
+        filtered = videoFilter.filter(image, format, continuous);
+    }
     if (!videoFilter.lastError().isEmpty()) {
         // Do not go on failing for every image: drop the filter, and say why
         const QString problem = videoFilter.lastError();
@@ -1003,6 +1065,7 @@ void MainWindow::updateGuiLoaded()
 // Method to update the GUI when a file is unloaded
 void MainWindow::updateGuiUnloaded()
 {
+    resetContext();
     snrFileTimer->stop();
     liveTimer->stop();
     setPlaybackOptionsVisible(true);
@@ -1285,6 +1348,7 @@ void MainWindow::hideImage()
 // Load a TBC file based on the passed file name
 void MainWindow::loadTbcFile(QString inputFileName)
 {
+    resetContext();
     pausePlayback();
     liveTimer->stop();
     renderer->close();

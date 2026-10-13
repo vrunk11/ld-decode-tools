@@ -119,6 +119,26 @@ int main()
         CHECK(received >= 4);
     }
 
+    // An image given the frames either side of it comes out whole, and is made of them (the same
+    // image three times is just the image on its own)
+    {
+        VideoFilter filter;
+        CHECK(filter.setGraph("yadif=mode=send_frame").isEmpty());
+        const QImage same = filter.filterWithContext(image, image, image, makeFormat(image, 64, 48));
+        CHECK(filter.lastError().isEmpty());
+        CHECK(same.size() == image.size());
+        CHECK(same == filter.filter(image, makeFormat(image, 64, 48), false));
+
+        // Neighbours that differ from it change the result
+        QImage moved(image.size(), QImage::Format_RGB32);
+        for (qint32 y = 0; y < moved.height(); y++) {
+            for (qint32 x = 0; x < moved.width(); x++) moved.setPixel(x, y, (y % 2 == 1) ? qRgb(255, 255, 255) : qRgb(0, 0, 0));
+        }
+        const QImage withContext = filter.filterWithContext(moved, image, moved, makeFormat(image, 64, 48));
+        CHECK(withContext.size() == image.size());
+        CHECK(withContext != same);
+    }
+
     if (failures) {
         std::fprintf(stderr, "%d checks failed\n", failures);
         return 1;

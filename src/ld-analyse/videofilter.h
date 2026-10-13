@@ -54,6 +54,10 @@ public:
     // an image on its own (after a seek, or paused) the graph is made afresh and the image
     // that comes out is always this one. On failure the result is null and lastError says why.
     QImage filter(const QImage &image, const Format &format, bool continuous);
+    // An image on its own, given the frames before and after it, for the filters that look at the
+    // neighbours of a frame to deinterlace (a frozen picture has none of its own, and the same image
+    // twice gives them nothing to go on). The graph is made afresh, as for an image on its own.
+    QImage filterWithContext(const QImage &previous, const QImage &image, const QImage &next, const Format &format);
     QString lastError() const { return error; }
 
 private:
