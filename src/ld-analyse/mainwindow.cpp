@@ -189,6 +189,9 @@ MainWindow::MainWindow(QString inputFilenameParam, const TbcSource::StreamInput 
     // Video piped in, or a filename specified on the command line?
     if (streamInput) {
         lastFilename.clear();
+        // Not a file: opening one is blocked from the start, not only once the input is up
+        ui->actionOpen_TBC_file->setEnabled(false);
+        ui->actionReload_TBC->setEnabled(false);
         tbcSource.loadStream(*streamInput);
     } else if (!inputFilenameParam.isEmpty()) {
         lastFilename = inputFilenameParam;
@@ -2706,6 +2709,7 @@ void MainWindow::on_finishedLoading(bool success)
     } else {
         // Load failed
         updateGuiUnloaded();
+        ui->actionOpen_TBC_file->setEnabled(true);
 
         // Show the error to the user
         QMessageBox messageBox;
