@@ -9,6 +9,7 @@
  * This file is part of ld-decode-tools.
  ******************************************************************************/
 
+#include <QDateTime>
 #include "mainwindow.h"
 #include "ui_mainwindow.h"
 #include "tbc/logging.h"
@@ -1692,21 +1693,21 @@ void MainWindow::on_actionSave_frame_as_PNG_triggered()
 void MainWindow::on_actionZoom_In_triggered()
 {
     on_zoomInPushButton_clicked();
-	MainWindow::resize_on_aspect();
+	resizeForZoom();
 }
 
 // Zoom out menu option
 void MainWindow::on_actionZoom_Out_triggered()
 {
     on_zoomOutPushButton_clicked();
-	MainWindow::resize_on_aspect();
+	resizeForZoom();
 }
 
 // Original size 1:1 zoom menu option
 void MainWindow::on_actionZoom_1x_triggered()
 {
     on_originalSizePushButton_clicked();
-	MainWindow::resize_on_aspect();
+	resizeForZoom();
 }
 
 // 2:1 zoom menu option
@@ -1714,7 +1715,7 @@ void MainWindow::on_actionZoom_2x_triggered()
 {
     scaleFactor = 2.0;
     updateImageViewer();
-	MainWindow::resize_on_aspect();
+	resizeForZoom();
 }
 
 // 3:1 zoom menu option
@@ -1722,7 +1723,7 @@ void MainWindow::on_actionZoom_3x_triggered()
 {
     scaleFactor = 3.0;
     updateImageViewer();
-	MainWindow::resize_on_aspect();
+	resizeForZoom();
 }
 
 // Show closed captions
@@ -2005,6 +2006,16 @@ void MainWindow::on_aspectPushButton_clicked()
 	resize_on_aspect();
 }
 
+// Size the window to the zoom the user chose. With "resize frame with window" on, the window growing
+// would make resizeFrameToWindow change the zoom to fit it (so 3x then 1x did not come back), so
+// that is left alone while the window settles.
+void MainWindow::resizeForZoom()
+{
+    zoomResizeUntil = QDateTime::currentMSecsSinceEpoch() + 600;
+    resizeTimer->stop();
+    resize_on_aspect();
+}
+
 void MainWindow::resize_on_aspect(int passesLeft)
 {
 	if(!this->isFullScreen() && !this->isMaximized() && autoResize)
@@ -2040,6 +2051,9 @@ void MainWindow::resize_on_aspect(int passesLeft)
 // Resize the frame to fit within the current window size
 void MainWindow::resizeFrameToWindow()
 {
+	if (QDateTime::currentMSecsSinceEpoch() < zoomResizeUntil) {
+		return;
+	}
 	if (!tbcSource.getIsSourceLoaded()) {
 		return;
 	}
@@ -2287,7 +2301,7 @@ void MainWindow::on_zoomInPushButton_clicked()
     }
 
     updateImageViewer();
-    resize_on_aspect();
+    resizeForZoom();
 }
 
 // Zoom out
@@ -2299,7 +2313,7 @@ void MainWindow::on_zoomOutPushButton_clicked()
     }
 
     updateImageViewer();
-    resize_on_aspect();
+    resizeForZoom();
 }
 
 // Original size 1:1 zoom
@@ -2307,7 +2321,7 @@ void MainWindow::on_originalSizePushButton_clicked()
 {
     scaleFactor = 1.0;
     updateImageViewer();
-    resize_on_aspect();
+    resizeForZoom();
 }
 
 

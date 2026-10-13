@@ -134,6 +134,7 @@ private slots:
 	
 	// UI handler
 	void resize_on_aspect(int passesLeft = 3);
+	void resizeForZoom();
 
 private:
     Ui::MainWindow *ui;
@@ -161,6 +162,7 @@ private:
     TbcSource tbcSource;
     bool displayAspectRatio;
 	bool autoResize = true;
+	qint64 zoomResizeUntil = 0;
 	bool resizeFrameWithWindow = true;
     qint32 lastScopeLine;
     qint32 lastScopeDot;
