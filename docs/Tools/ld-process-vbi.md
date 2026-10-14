@@ -38,3 +38,7 @@ Options:
 Arguments:
   input                                Specify input TBC file
 ```
+
+## LDX files
+
+The input can be an LDX file (`capture.ldx`, or `capture.ldx#3` for one of its tracks). The new metadata are not written beside the file: they are added to the LDX file as the current metadata of the capture (a block added at the end, which supersedes the one that was there), and the history of the file records it. If they cannot be written the tool says so and ends with an error.

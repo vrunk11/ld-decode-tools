@@ -29,9 +29,12 @@
 #include <QDebug>
 #include <QFileInfo>
 #include <QFile>
+#include <memory>
 
 // TBC library includes
 #include "lddecodemetadata.h"
+
+class LdxCapture;
 
 class SourceAudio
 {
@@ -56,6 +59,7 @@ public:
 private:
     QFile inputAudioFile;
     qint64 audioFileByteLength;
+    std::unique_ptr<LdxCapture> ldx;        // the audio of a capture kept in an LDX file
 };
 
 #endif // SOURCEAUDIO_H

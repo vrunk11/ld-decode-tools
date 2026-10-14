@@ -171,3 +171,13 @@ The tools take an LDX file where they take a `.tbc`, and say which capture with 
 A source of a session that is a track of another file is the same name (`"file": "other.ldx", "track": 3` is `other.ldx#3`). The metadata of a capture are read from its metadata track, and the metadata of a session are those of its first source that is on, as for a `.stack` file. The tools do not write metadata into an LDX file: `ld-container` does.
 
 The first implementation reads `tbc` tracks that are raw. A `cvbs` track and the FLAC and FFV1 codecs are refused with a message that names them until they are written.
+
+## 16. Adding to a file in place
+
+A tool that adds blocks to a file that is already written does it where the file ends, and moves nothing: the new clusters go where the cues were, the cues are written again with the blocks that were there and the new ones, the size of the segment is corrected, and the file is cut after the cues. Tags written at the end hold the history, with what was done added; the last tags of the file are the current ones. A file that is cut short while it is added to can be taken back to its last cues.
+
+**The metadata of a capture** (`ldx.tbcmetadata`, the ld-decode metadata as JSON) are one block of a metadata track whose parameters say which track it is about (`"track": 1`). **The last block of that track is the current metadata**: a tool that changes them (ld-process-vbi, ld-process-vits, any tool that now saves metadata) adds a new block, stamped after everything that is in the file, and what was there stays until the file is written again. `ld-container unpack` and `extract` write the last block.
+
+**EFM and AC3** are tracks of kind `efm` and `ac3` (8 bits). The file they come from has no time of its own, so it is cut in chunks of 64 KiB, which are stamped in proportion to where they are in the file over the time of the video; the chunks put end to end are the file. Their parameters say which track they go with.
+
+**Analogue audio** is a `pcm` track (16-bit stereo, the real sample rate in its parameters, blocks of whole samples one after the other). A tool that wants the samples from a number reads them from the track about the capture: the first sample of a block is found from its time and the sample rate.

@@ -10,8 +10,12 @@
 
 #include "ldxcapture.h"
 
+#include <QCoreApplication>
+#include <QDateTime>
 #include <QObject>
+#include <algorithm>
 #include <cstring>
+#include <vector>
 
 #ifdef LDDECODE_WITH_LDX
 #include "ldx.h"
@@ -37,6 +41,14 @@ struct LdxCapture::Private
     qint32 trackId = 0;
     qint64 fields = 0;
     QJsonObject trackParameters;
+
+    // The audio: a PCM track, the first sample of each of its blocks, and the block read last
+    quint32 audioTrack = 0;
+    double audioRate = 0;
+    std::vector<qint64> audioStarts;
+    qint64 audioTotal = 0;
+    qint64 cachedBlock = -1;
+    QByteArray cachedData;
 #endif
 };
 
@@ -219,25 +231,34 @@ QVector<quint16> LdxCapture::getField(qint32 fieldNumber)
     return field;
 }
 
-bool LdxCapture::readMetadata(QByteArray &json, QString &error)
-{
 #ifdef LDDECODE_WITH_LDX
-    // The metadata track that is about this track or, failing that, the only one there is
+// The metadata track that is about this capture or, failing that, the only one there is (0 if none)
+quint32 LdxCapture::metadataTrackNumber() const
+{
     const Ldx::Track *chosen = nullptr;
     int count = 0;
     const QVector<Ldx::Track> tracks = d->reader.tracks();
     for (const Ldx::Track &candidate: tracks) {
         if (candidate.kind != Ldx::Kind::Metadata) continue;
         count++;
-        if (candidate.parameters.value("track").toInt(0) == d->trackId) { chosen = &candidate; break; }
+        if (candidate.parameters.value("track").toInt(0) == d->trackId) return candidate.number;
         if (!chosen && !candidate.parameters.contains("track")) chosen = &candidate;
     }
-    if (!chosen || (count > 1 && chosen->parameters.value("track").toInt(0) != d->trackId && chosen->parameters.contains("track"))) {
+    return chosen && count >= 1 ? chosen->number : 0;
+}
+#endif
+
+bool LdxCapture::readMetadata(QByteArray &json, QString &error)
+{
+#ifdef LDDECODE_WITH_LDX
+    const quint32 metadataTrack = metadataTrackNumber();
+    if (metadataTrack == 0) {
         error = QObject::tr("Track %1 has no metadata").arg(d->trackId);
         return false;
     }
+    // The last block is the current one: what is added to the file supersedes what was there
     Ldx::Block block;
-    if (d->reader.blockCount(chosen->number) < 1 || !d->reader.readBlock(chosen->number, 0, block)) {
+    if (d->reader.blockCount(metadataTrack) < 1 || !d->reader.readBlock(metadataTrack, d->reader.blockCount(metadataTrack) - 1, block)) {
         error = QObject::tr("The metadata of track %1 could not be read").arg(d->trackId);
         return false;
     }
@@ -248,4 +269,150 @@ bool LdxCapture::readMetadata(QByteArray &json, QString &error)
     error = unsupported();
     return false;
 #endif
+}
+
+bool LdxCapture::writeMetadata(const QString &name, const QByteArray &json, QString &error)
+{
+#ifdef LDDECODE_WITH_LDX
+    QString path;
+    quint32 metadataTrack = 0;
+    qint64 after = 0;
+    qint32 track = 0;
+    {
+        LdxCapture capture;
+        if (!capture.open(name, error)) return false;
+        metadataTrack = capture.metadataTrackNumber();
+        if (metadataTrack == 0) {
+            error = QObject::tr("%1 has no metadata track to keep the metadata in").arg(name);
+            return false;
+        }
+        after = capture.d->reader.lastTimeNs() + 1000;
+        track = capture.track();
+        qint32 ignored;
+        split(name, path, ignored);
+    }
+
+    Ldx::Writer writer;
+    if (!writer.openAppend(path, error)) return false;
+    QJsonObject entry;
+    entry["tool"] = QCoreApplication::applicationName().isEmpty() ? QStringLiteral("a tool of ld-decode-tools") : QCoreApplication::applicationName();
+    entry["command"] = "metadata";
+    entry["detail"] = QString("the metadata of track %1").arg(track);
+    entry["time"] = QDateTime::currentDateTimeUtc().toString(Qt::ISODate);
+    writer.addHistory(entry);
+    if (!writer.writeBlock(metadataTrack, after, json)) {
+        error = writer.lastError().isEmpty() ? QObject::tr("Could not add the metadata to %1").arg(path) : writer.lastError();
+        return false;
+    }
+    return writer.finish(error);
+#else
+    Q_UNUSED(name);
+    Q_UNUSED(json);
+    error = unsupported();
+    return false;
+#endif
+}
+
+bool LdxCapture::openAudio(const QString &name, QString &error)
+{
+#ifdef LDDECODE_WITH_LDX
+    if (!open(name, error)) return false;
+
+    // The PCM track about the capture or, failing that, the first one
+    const Ldx::Track *chosen = nullptr;
+    const QVector<Ldx::Track> tracks = d->reader.tracks();
+    for (const Ldx::Track &candidate: tracks) {
+        if (candidate.kind != Ldx::Kind::Pcm) continue;
+        if (candidate.parameters.value("track").toInt(0) == d->trackId) { chosen = &candidate; break; }
+        if (!chosen) chosen = &candidate;
+    }
+    if (!chosen) {
+        error = QObject::tr("%1 has no analogue audio").arg(name);
+        return false;
+    }
+    if (chosen->parameters.value("channels").toInt(2) != 2) {
+        error = QObject::tr("The audio of %1 is not stereo").arg(name);
+        return false;
+    }
+    d->audioRate = chosen->parameters.value("sampleRate").toDouble(44100);
+    d->audioTrack = chosen->number;
+
+    // Where each block starts, from its time (the blocks are of whole samples, one after the other)
+    const qint64 blocks = d->reader.blockCount(d->audioTrack);
+    if (blocks < 1) {
+        error = QObject::tr("The audio of %1 is empty").arg(name);
+        return false;
+    }
+    d->audioStarts.assign(static_cast<size_t>(blocks), 0);
+    for (qint64 i = 0; i < blocks; i++) {
+        d->audioStarts[static_cast<size_t>(i)] = static_cast<qint64>(d->reader.blockTimeNs(d->audioTrack, i) * d->audioRate / 1.0e9 + 0.5);
+    }
+    Ldx::Block last;
+    if (!d->reader.readBlock(d->audioTrack, blocks - 1, last)) {
+        error = QObject::tr("Could not read the audio of %1").arg(name);
+        return false;
+    }
+    d->audioTotal = d->audioStarts.back() + last.data.size() / 4;
+    d->cachedBlock = blocks - 1;
+    d->cachedData = last.data;
+    return true;
+#else
+    Q_UNUSED(name);
+    error = unsupported();
+    return false;
+#endif
+}
+
+qint64 LdxCapture::audioSamples() const
+{
+#ifdef LDDECODE_WITH_LDX
+    return d->audioTotal;
+#else
+    return 0;
+#endif
+}
+
+double LdxCapture::audioSampleRate() const
+{
+#ifdef LDDECODE_WITH_LDX
+    return d->audioRate;
+#else
+    return 0;
+#endif
+}
+
+QVector<qint16> LdxCapture::getAudio(qint64 startSample, qint64 numberOfSamples)
+{
+    QVector<qint16> samples;
+#ifdef LDDECODE_WITH_LDX
+    if (d->audioStarts.empty() || startSample < 0 || numberOfSamples < 1) return samples;
+    samples.reserve(static_cast<qint32>(numberOfSamples * 2));
+
+    // The block that holds the first sample
+    qint64 block = std::upper_bound(d->audioStarts.begin(), d->audioStarts.end(), startSample) - d->audioStarts.begin() - 1;
+    qint64 position = startSample;
+    const qint64 end = startSample + numberOfSamples;
+    while (position < end && block < static_cast<qint64>(d->audioStarts.size())) {
+        if (d->cachedBlock != block) {
+            Ldx::Block data;
+            if (!d->reader.readBlock(d->audioTrack, block, data)) break;
+            d->cachedBlock = block;
+            d->cachedData = data.data;
+        }
+        const qint64 first = d->audioStarts[static_cast<size_t>(block)];
+        const qint64 inBlock = d->cachedData.size() / 4;
+        const qint64 from = position - first;
+        const qint64 count = qMin(end - position, inBlock - from);
+        if (count <= 0) { block++; continue; }
+        const qint32 old = samples.size();
+        samples.resize(old + static_cast<qint32>(count * 2));
+        std::memcpy(samples.data() + old, d->cachedData.constData() + from * 4, static_cast<size_t>(count * 4));
+        position += count;
+        block++;
+    }
+#else
+    Q_UNUSED(startSample);
+    Q_UNUSED(numberOfSamples);
+#endif
+    return samples;
 }

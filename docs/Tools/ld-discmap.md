@@ -30,3 +30,7 @@ Arguments:
   input                                Specify input TBC file
   output                               Specify output TBC file
 ```
+
+## LDX files
+
+The input can be an LDX file (`capture.ldx`, or `capture.ldx#3` for one of its tracks): the video and the metadata are read from it, and the analogue audio from its `pcm` track. The output stays TBC and PCM files.

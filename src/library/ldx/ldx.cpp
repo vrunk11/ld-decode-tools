@@ -591,6 +591,12 @@ struct Reader::Private
                     }
                 }
                 found = true;
+            } else if (EbmlId(*element) == EBML_ID(KaxTags)) {
+                // Tags that were added at the end of the file are the current ones (the history of what was done)
+                int up = 0;
+                EbmlElement *dummy = nullptr;
+                element->Read(scan, EBML_CONTEXT(element), up, dummy, true);
+                readTags(*static_cast<KaxTags *>(element));
             } else {
                 element->SkipData(scan, EBML_CONTEXT(element));
             }

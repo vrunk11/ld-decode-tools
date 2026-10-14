@@ -8,6 +8,11 @@
  * This file is part of ld-decode-tools.
  ******************************************************************************/
 
+#ifdef Q_OS_WIN
+#include <fcntl.h>
+#include <io.h>
+#endif
+
 #include <QCommandLineParser>
 #include <QCoreApplication>
 #include <QDateTime>
@@ -20,6 +25,7 @@
 #include <QTemporaryDir>
 #include <QTextStream>
 
+#include <map>
 #include <memory>
 #include <vector>
 
@@ -170,6 +176,39 @@ private:
     double rate;
     qint64 limitNs;
     qint64 sample = 0;
+    QByteArray data;
+    bool loaded = false;
+};
+
+// A file of bytes with no time of its own (EFM t-values, AC3 data), in chunks of one size, which are spread over the
+// time of the video in proportion to where they are in the file
+class ChunkSource : public BlockSource
+{
+public:
+    ChunkSource(QFile &file, quint32 track, qint64 durationNs) : file(file), track(track), durationNs(durationNs), total(file.size()) {}
+    qint64 bytes() const { return position; }
+
+    bool peek(Ldx::Block &block) override
+    {
+        if (!loaded) {
+            data = file.read(ChunkBytes);
+            if (data.isEmpty()) return false;
+            loaded = true;
+        }
+        block.track = track;
+        block.timeNs = total > 0 ? static_cast<qint64>(static_cast<double>(position) / static_cast<double>(total) * static_cast<double>(durationNs)) : 0;
+        block.data = data;
+        return true;
+    }
+    void pop() override { position += data.size(); loaded = false; }
+
+private:
+    static constexpr int ChunkBytes = 65536;
+    QFile &file;
+    quint32 track;
+    qint64 durationNs;
+    qint64 total;
+    qint64 position = 0;
     QByteArray data;
     bool loaded = false;
 };
@@ -438,6 +477,8 @@ int pack(const QStringList &arguments)
     parser.addHelpOption();
     parser.addPositionalArgument("input", "The .tbc file");
     parser.addOption(QCommandLineOption({ "o", "output" }, "The LDX file to write", "file"));
+    parser.addOption(QCommandLineOption("efm", "The EFM t-values of the capture (.efm) to add", "file"));
+    parser.addOption(QCommandLineOption("ac3", "The AC3 data of the capture to add", "file"));
     addCaptureOptions(parser);
     parser.process(arguments);
     if (parser.positionalArguments().size() != 1 || !parser.isSet("output")) {
@@ -456,6 +497,30 @@ int pack(const QStringList &arguments)
 
     Ldx::Writer writer;
     addCaptureTracks(writer, capture);
+
+    // What goes with the video as bytes: EFM and AC3
+    struct ByteTrack {
+        QString option;
+        Ldx::Kind kind;
+        Ldx::Track track;
+        std::unique_ptr<QFile> file;
+    };
+    std::vector<ByteTrack> byteTracks;
+    byteTracks.push_back({ "efm", Ldx::Kind::Efm, {}, nullptr });
+    byteTracks.push_back({ "ac3", Ldx::Kind::Ac3, {}, nullptr });
+    for (ByteTrack &bytes: byteTracks) {
+        if (!parser.isSet(bytes.option)) continue;
+        bytes.file.reset(new QFile(parser.value(bytes.option)));
+        if (!bytes.file->open(QIODevice::ReadOnly)) {
+            err << "Could not open " << bytes.file->fileName() << "\n";
+            return 1;
+        }
+        bytes.track.kind = bytes.kind;
+        bytes.track.depth = 8;
+        bytes.track.name = QFileInfo(bytes.file->fileName()).fileName();
+        bytes.track.parameters["track"] = static_cast<int>(capture.video.number);
+        writer.addTrack(bytes.track);
+    }
     writer.setHistory(QJsonArray { historyEntry("pack", QFileInfo(input).fileName()) });
 
     QString error;
@@ -469,12 +534,19 @@ int pack(const QStringList &arguments)
     PcmSource pcm(capture.hasAudio ? *capture.pcm : *capture.tbc, capture.audio.number, capture.pcmRate, fields.endTimeNs());
     std::vector<BlockSource *> sources { &metadata, &fields };
     if (capture.hasAudio) sources.push_back(&pcm);
+    std::vector<std::unique_ptr<ChunkSource>> chunkSources;
+    for (ByteTrack &bytes: byteTracks) {
+        if (!bytes.file) continue;
+        chunkSources.push_back(std::make_unique<ChunkSource>(*bytes.file, bytes.track.number, fields.endTimeNs()));
+        sources.push_back(chunkSources.back().get());
+    }
     if (!mergeInto(writer, sources) || !writer.finish(error)) {
         if (!error.isEmpty()) err << error << "\n";
         return 1;
     }
     out << "Packed " << fields.written() << " fields";
     if (capture.hasAudio) out << " and " << pcm.samples() << " audio samples";
+    for (const std::unique_ptr<ChunkSource> &chunks: chunkSources) out << ", " << chunks->bytes() << " bytes of EFM or AC3";
     out << " as track " << capture.video.number << " of " << output << "\n";
     return 0;
 }
@@ -819,6 +891,72 @@ int info(const QStringList &arguments)
     return 0;
 }
 
+// ld-container extract file.ldx --id 3 [-o file]
+int extractTrack(const QStringList &arguments)
+{
+    QCommandLineParser parser;
+    parser.setApplicationDescription("Write the data of one track of an LDX file as it is: to the output file, or to the standard output, to\n"
+                                     "be piped to a tool (for instance the EFM of a capture to ld-process-efm).");
+    parser.addHelpOption();
+    parser.addPositionalArgument("file", "The LDX file");
+    parser.addOption(QCommandLineOption("id", "The id of the track", "id"));
+    parser.addOption(QCommandLineOption({ "o", "output" }, "The file to write (the standard output if omitted)", "file"));
+    parser.process(arguments);
+    if (parser.positionalArguments().size() != 1 || !parser.isSet("id")) {
+        err << parser.helpText();
+        return 1;
+    }
+    const quint32 id = parser.value("id").toUInt();
+
+    Ldx::Reader reader;
+    QString error;
+    if (!reader.open(parser.positionalArguments().first(), error)) {
+        err << error << "\n";
+        return 1;
+    }
+    const Ldx::Track *chosen = nullptr;
+    const QVector<Ldx::Track> tracks = reader.tracks();
+    for (const Ldx::Track &track: tracks) {
+        if (track.number == id) chosen = &track;
+    }
+    if (!chosen) {
+        err << "There is no track " << id << " in " << parser.positionalArguments().first() << "\n";
+        return 1;
+    }
+
+    QFile file;
+    if (parser.isSet("output")) {
+        file.setFileName(parser.value("output"));
+        if (!file.open(QIODevice::WriteOnly)) {
+            err << "Could not write " << file.fileName() << "\n";
+            return 1;
+        }
+    } else {
+#ifdef Q_OS_WIN
+        _setmode(_fileno(stdout), _O_BINARY);
+#endif
+        if (!file.open(stdout, QIODevice::WriteOnly)) {
+            err << "Could not write to the standard output\n";
+            return 1;
+        }
+    }
+
+    // The metadata of a capture: the last block is the current one. Anything else, all its blocks in turn.
+    const bool lastOnly = chosen->kind == Ldx::Kind::Metadata;
+    QByteArray last;
+    Ldx::Block block;
+    while (reader.nextBlock(block)) {
+        if (block.track != id) continue;
+        if (lastOnly) last = block.data; else if (file.write(block.data) != block.data.size()) {
+            err << "Could not write the data\n";
+            return 1;
+        }
+    }
+    if (lastOnly) file.write(last);
+    file.flush();
+    return 0;
+}
+
 // ld-container verify file.ldx
 int verify(const QStringList &arguments)
 {
@@ -932,11 +1070,19 @@ int unpack(const QStringList &arguments)
         files[track.number] = std::move(file);
     }
 
+    // (the current metadata are the last block of their track: what was added to the file is more recent than what was there)
+    std::map<quint32, QByteArray> current;
+    QSet<quint32> keepLast;
+    for (const Ldx::Track &track: reader.tracks()) {
+        if (track.kind == Ldx::Kind::Metadata) keepLast.insert(track.number);
+    }
     Ldx::Block block;
     while (reader.nextBlock(block)) {
         const auto found = files.find(block.track);
-        if (found != files.end()) found->second->write(block.data);
+        if (found == files.end()) continue;
+        if (keepLast.contains(block.track)) current[block.track] = block.data; else found->second->write(block.data);
     }
+    for (const auto &kept: current) files[kept.first]->write(kept.second);
 
     for (const Ldx::Reader::Attachment &attachment: reader.attachments()) {
         QFile file(directory.filePath(QFileInfo(attachment.name).fileName()));
@@ -970,7 +1116,8 @@ int main(int argc, char *argv[])
                "  stack    keep a stacking session in an .ldx file, its sources being tracks\n"
                "  unpack   write the tracks and attachments of an .ldx file out as separate files\n"
                "  info     show what an .ldx file holds\n"
-               "  verify   check that every block of an .ldx file reads back the same, in order and by place\n\n"
+               "  verify   check that every block of an .ldx file reads back the same, in order and by place\n"
+               "  extract  write the data of one track as it is, to a file or to the standard output (to be piped)\n\n"
                "Use ld-container <command> --help for the options of a command.\n";
         return arguments.size() < 2 ? 1 : 0;
     }
@@ -985,6 +1132,7 @@ int main(int argc, char *argv[])
     if (command == "unpack") return unpack(arguments);
     if (command == "info") return info(arguments);
     if (command == "verify") return verify(arguments);
+    if (command == "extract") return extractTrack(arguments);
     err << "Unknown command " << command << "\n";
     return 1;
 }
