@@ -118,12 +118,11 @@ A stacking session can be an attachment named `session.stack`. Its sources, inst
 
 These do not change what a file contains. The prototype settles them, and the result is written here.
 
-1. **Library**: libebml and libmatroska, or ffmpeg. Raw data (as PCM) and FLAC pass through ffmpeg unchanged; custom metadata tracks and tags may need a lower-level library.
-2. **Late annotations** about old timestamps: how much data is acceptable before the file is written again. Measure.
-3. A real **`.cvbs`** to measure FFV1 against FLAC (the figures in section 4 come from a simulation at 10 bits).
-4. **A TBC reduced to 10 bits** (lossy): allowed or not, and how it is recorded in the history. Not allowed by this version: a `tbc` track is 16 bits.
-5. **Frame as unit** rather than field for the metadata of a frame (the time stamp of the first field of the frame is used meanwhile).
-6. What **VLC** and ffmpeg show for the tracks.
+1. **Late annotations** about old timestamps: how much data is acceptable before the file is written again. Measure.
+2. A real **`.cvbs`** to measure FFV1 against FLAC (the figures in section 4 come from a simulation at 10 bits).
+3. **A TBC reduced to 10 bits** (lossy): allowed or not, and how it is recorded in the history. Not allowed by this version: a `tbc` track is 16 bits.
+4. **Frame as unit** rather than field for the metadata of a frame (the time stamp of the first field of the frame is used meanwhile).
+5. What **VLC** and ffmpeg show for the tracks.
 
 ## 13. Decisions of this version
 
@@ -133,6 +132,7 @@ These do not change what a file contains. The prototype settles them, and the re
 - Raw samples in PCM audio tracks, the real rate in the parameters.
 - Namespaced metadata, the last block wins, history in `LDX_HISTORY`, unknown blocks copied.
 - Compatibility with ld-decode and decode-orc is not a goal of 1.0.
+- Libraries: **libebml and libmatroska** (LGPL-2.1-or-later, in vcpkg, compatible with the GPL-3 of the tools) read and write the container, which gives control of every element: custom tracks, tags, attachments, padding, unknown sizes for pipes, copying unknown blocks. **ffmpeg (libavcodec)** is an optional back end for FLAC and FFV1 only. Raw data, metadata and the container need no ffmpeg, so a reader without it still reads every raw file, as section 4 requires. A library that writes Matroska but does not keep unknown elements (libavformat) is not used for the container.
 
 ## 14. Next steps
 
