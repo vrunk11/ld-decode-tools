@@ -144,6 +144,10 @@ jobs:
 
           cmake --build build --parallel
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Test-Path build\bin\ld-container.exe)) {
+            Write-Error "ld-container was not built (libebml or libmatroska not found)"
+            exit 1
+          }
 
       - name: Assemble package
         shell: pwsh

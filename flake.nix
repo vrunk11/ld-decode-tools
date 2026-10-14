@@ -49,6 +49,8 @@
             qt6.qtsvg
             fftw
             ffmpeg
+            libebml
+            libmatroska
             sqlite
             libGL
           ];
@@ -71,6 +73,8 @@
             qt6.qtsvg
             fftw
             ffmpeg
+            libebml
+            libmatroska
             sqlite
             libGL
             python3

@@ -35,5 +35,5 @@ Replace `ld-analyse` with any other tool from the suite.
 
 ## Notes
 
-- The flake pins all required dependencies, including Qt6, FFmpeg, FFTW, SQLite, and OpenGL.
+- The flake pins all required dependencies, including Qt6, FFmpeg, FFTW, SQLite, OpenGL, libebml and libmatroska (the last two, with FFmpeg's libavcodec, are for LDX files).
 - Build metadata (branch/commit) is set by the flake during the build.
