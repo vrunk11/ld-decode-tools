@@ -24,6 +24,7 @@
 
 #ifdef LDDECODE_WITH_LDX
 #include "ldx.h"
+#include "ldxcapture.h"
 #endif
 
 #ifdef Q_OS_WIN
@@ -128,12 +129,8 @@ bool LdxFieldFilter::run(const Options &options, const Process &process, QString
     }
     for (const Ldx::Reader::Attachment &attachment: reader.attachments()) writer.addAttachment(attachment.name, attachment.mediaType, attachment.data);
     QJsonArray history = reader.history();
-    QJsonObject entry;
+    QJsonObject entry = LdxCapture::historyEntry("process", options.detail);
     entry["tool"] = options.tool;
-    entry["version"] = options.version;
-    entry["command"] = "process";
-    entry["time"] = QDateTime::currentDateTimeUtc().toString(Qt::ISODate);
-    if (!options.detail.isEmpty()) entry["detail"] = options.detail;
     history.append(entry);
     writer.setHistory(history);
     if (!writer.openStream(stdout, error)) return false;

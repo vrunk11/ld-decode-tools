@@ -272,13 +272,7 @@ bool mergeInto(Ldx::Writer &writer, const std::vector<BlockSource *> &sources)
 
 QJsonObject historyEntry(const QString &command, const QString &detail)
 {
-    QJsonObject entry;
-    entry["tool"] = "ld-container";
-    entry["version"] = APP_COMMIT;
-    entry["command"] = command;
-    entry["time"] = QDateTime::currentDateTimeUtc().toString(Qt::ISODate);
-    if (!detail.isEmpty()) entry["detail"] = detail;
-    return entry;
+    return LdxCapture::historyEntry(command, detail);
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -1064,6 +1058,48 @@ int info(const QStringList &arguments)
     return 0;
 }
 
+// ld-container history file.ldx [--json]
+int history(const QStringList &arguments)
+{
+    QCommandLineParser parser;
+    parser.setApplicationDescription("Show the history of an LDX file: what was done to it, by which tool, when, and with what arguments");
+    parser.addHelpOption();
+    parser.addPositionalArgument("file", "The LDX file (- for a stream)");
+    parser.addOption(QCommandLineOption("json", "Write the history as a JSON array, for another program"));
+    parser.process(arguments);
+    if (parser.positionalArguments().size() != 1) {
+        err << parser.helpText();
+        return 1;
+    }
+    Ldx::Reader reader;
+    QString error;
+    if (!openReader(reader, parser.positionalArguments().first(), error)) {
+        err << error << "\n";
+        return 1;
+    }
+    const QJsonArray entries = reader.history();
+    if (parser.isSet("json")) {
+        out << QJsonDocument(entries).toJson(QJsonDocument::Indented);
+        return 0;
+    }
+    if (entries.isEmpty()) out << "The history is empty\n";
+    int number = 0;
+    for (const QJsonValue &value: entries) {
+        const QJsonObject entry = value.toObject();
+        out << ++number << ". " << entry.value("time").toString() << "  " << entry.value("tool").toString();
+        if (entry.contains("version")) out << " (" << entry.value("version").toString() << ")";
+        out << "  " << entry.value("command").toString();
+        if (entry.contains("detail")) out << ": " << entry.value("detail").toString();
+        out << "\n";
+        if (entry.contains("arguments")) {
+            QStringList arguments;
+            for (const QJsonValue &argument: entry.value("arguments").toArray()) arguments << argument.toString();
+            out << "     " << arguments.join(' ') << "\n";
+        }
+    }
+    return 0;
+}
+
 // ld-container extract file.ldx --id 3 [-o file]
 int extractTrack(const QStringList &arguments)
 {
@@ -1401,6 +1437,7 @@ int main(int argc, char *argv[])
         out << "ld-container - pack, unpack and inspect LDX files\n\n"
                "Usage: ld-container <command> [options]\n\n"
                "Commands:\n"
+               "  history  show what was done to a file: the tools, when and with what arguments\n"
                "  pack     pack a .tbc, its metadata and its audio into an .ldx file\n"
                "  add      add a capture to an .ldx file, as a track of its own\n"
                "  remove   remove the track with an id (and what is about it) from an .ldx file\n"
@@ -1423,6 +1460,7 @@ int main(int argc, char *argv[])
     if (command == "stack") return setStack(arguments);
     if (command == "unpack") return unpack(arguments);
     if (command == "info") return info(arguments);
+    if (command == "history") return history(arguments);
     if (command == "verify") return verify(arguments);
     if (command == "recompress") return recompress(arguments);
     if (command == "extract") return extractTrack(arguments);

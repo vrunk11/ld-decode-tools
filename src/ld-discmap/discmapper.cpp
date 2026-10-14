@@ -25,6 +25,7 @@
 #include "discmapper.h"
 #include "tbc/logging.h"
 #include "cvbsaudio.h"
+#include "ldxcapture.h"
 
 DiscMapper::DiscMapper()
 {
@@ -647,6 +648,19 @@ bool DiscMapper::saveDiscMap(DiscMap &discMap)
 
     // Open the output video file (a CVBS output keeps the input's sample encoding)
     TargetVideo targetVideo;
+    const bool ldxOutput = LdxCapture::isLdxName(outputFileInfo.filePath());
+    if (ldxOutput) {
+        // An LDX output holds the video, its metadata and its audio (the history says what was done)
+        LdDecodeMetaData input;
+        if (!input.read(inputMetadataFileInfo.filePath())) {
+            sourceVideo.close();
+            return false;
+        }
+        const LdDecodeMetaData::VideoParameters &parameters = input.getVideoParameters();
+        targetVideo.setLdxVideo(parameters.fieldWidth, parameters.fieldHeight, parameters.sampleRate, QString(),
+                                LdxCapture::historyEntry("process", "disc mapping"));
+        if (!noAudio && !Cvbs::isDataFileName(inputFileInfo.filePath())) targetVideo.setLdxAudio(44100);
+    }
     if (!targetVideo.open(outputFileInfo.filePath(), discMap.getVideoSystem(), discMap.getSampleEncoding())) {
         sourceVideo.close();
         return false;
@@ -687,15 +701,15 @@ bool DiscMapper::saveDiscMap(DiscMap &discMap)
             return false;
         }
 
-        // Open the output audio file
+        // Open the output audio file (an LDX output has the audio in itself)
         targetAudio.setFileName(outputFileInfo.absolutePath() + "/" + outputFileInfo.completeBaseName() + ".pcm");
-        if (targetAudio.exists()) {
+        if (!ldxOutput && targetAudio.exists()) {
             qInfo() << "Target audio file already exists:" << targetAudio.fileName() << "- Cannot proceed!";
             sourceVideo.close();
             sourceAudio.close();
             return false;
         }
-        if (!targetAudio.open(QIODevice::WriteOnly)) {
+        if (!ldxOutput && !targetAudio.open(QIODevice::WriteOnly)) {
             // Could not open target audio file
             qInfo() << "Cannot open target audio file:" << targetAudio.fileName();
             sourceVideo.close();
@@ -703,6 +717,13 @@ bool DiscMapper::saveDiscMap(DiscMap &discMap)
             return false;
         }
     }
+
+    // Audio goes to the .pcm file, or to the track of an LDX output
+    auto putAudio = [&](const SourceAudio::Data &samples) {
+        const qint64 bytes = static_cast<qint64>(samples.size()) * 2;
+        if (ldxOutput) return targetVideo.writeAudio(QByteArray(reinterpret_cast<const char *>(samples.data()), static_cast<qsizetype>(bytes)));
+        return targetAudio.write(reinterpret_cast<const char *>(samples.data()), bytes) == bytes;
+    };
 
     // Make a dummy video field to use when outputting padded frames
     SourceVideo::Data missingFieldData;
@@ -766,10 +787,8 @@ bool DiscMapper::saveDiscMap(DiscMap &discMap)
                                                                       discMap.getSecondFieldAudioDataLength(frameNumber));
 
                     // Write the audio
-                    if (!targetAudio.write(reinterpret_cast<const char *>(sourceAudioFirstField.data()),
-                                           sourceAudioFirstField.size() * 2)) writeFail = true;
-                    if (!targetAudio.write(reinterpret_cast<const char *>(sourceAudioSecondField.data()),
-                                           sourceAudioSecondField.size() * 2)) writeFail = true;
+                    if (!putAudio(sourceAudioFirstField)) writeFail = true;
+                    if (!putAudio(sourceAudioSecondField)) writeFail = true;
                 } else {
                     if (discMap.getFirstFieldAudioDataLength(frameNumber) < 1) {
                         qInfo() << "Warning: Input file seems to have zero audio data in the first field of frame number #" << frameNumber;
@@ -793,10 +812,8 @@ bool DiscMapper::saveDiscMap(DiscMap &discMap)
                 if (!wavWriter.write(silence)) writeFail = true;
             } else if (!noAudio) {
                 // Write the padded audio
-                if (!targetAudio.write(reinterpret_cast<const char *>(missingFieldAudioData.data()),
-                                       missingFieldAudioData.size() * 2)) writeFail = true;
-                if (!targetAudio.write(reinterpret_cast<const char *>(missingFieldAudioData.data()),
-                                       missingFieldAudioData.size() * 2)) writeFail = true;
+                if (!putAudio(missingFieldAudioData)) writeFail = true;
+                if (!putAudio(missingFieldAudioData)) writeFail = true;
             }
         }
 

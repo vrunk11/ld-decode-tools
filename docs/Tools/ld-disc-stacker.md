@@ -86,3 +86,7 @@ An LDX file (see [the container format](../Specifications/container-format.md)) 
 ### From a pipe
 
 The first source can be `-`, an LDX stream on the standard input (`ld-container pack capture.tbc -o - | ld-disc-stacker - other.tbc out.tbc`), without `--input-metadata`: the video and the metadata come from the stream. Stacking needs the metadata of all the fields (VBI and mapping) before the video, so a stream whose metadata come field by field is refused; pack the capture with its whole metadata. The output is a TBC file.
+
+### LDX output
+
+The output can be an LDX file (`out.ldx`): the video is a track of it, with a track for the metadata (the tool adds them when it is done) and, for `ld-discmap`, one for the analogue audio instead of the `.pcm` file. The history of the file records the work, with the arguments of the tool (`ld-container history out.ldx`).
