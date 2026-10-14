@@ -36,4 +36,4 @@ Matching sources by VBI frame number (mapping) in the GUI.
 
 ## Icon
 
-The application icon is a yellow disc (like a CDV), an arrow down and the layers that are stacked, the last one (the result) in green. Sources are `Graphics/ld-stacker-gui.svg` (48 pixels and up) and `Graphics/ld-stacker-gui-small.svg`, drawn on the 16-pixel grid so that it stays readable at 16x16 (used for 16, 24 and 32). The PNGs and `appicon.ico` (the icon of the Windows executable) are rendered from them.
+The application icon is a yellow disc (like a CDV) with its reflections, an arrow down and the discs that are stacked, in different greys and each a little off the one above. Sources are `Graphics/ld-stacker-gui.svg` (48 pixels and up) and `Graphics/ld-stacker-gui-small.svg`, drawn on the 16-pixel grid so that it stays readable at 16x16 (used for 16, 24 and 32). The PNGs and `appicon.ico` (the icon of the Windows executable) are rendered from them.

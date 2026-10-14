@@ -25,7 +25,7 @@ int main(int argc, char *argv[])
     QCoreApplication::setOrganizationDomain("domesday86.com");
     QCoreApplication::setOrganizationName("domesday86.com");
 
-    // The icon: a disc, an arrow and the layers, drawn on the grid of the pixels for the small sizes
+    // The icon: a disc, an arrow and the stacked discs, drawn on the grid of the pixels for the small sizes
     QIcon icon;
     for (const int size: { 16, 24, 32, 48, 64, 128, 256 }) icon.addFile(QString(":/icons/app-%1.png").arg(size), QSize(size, size));
     application.setWindowIcon(icon);

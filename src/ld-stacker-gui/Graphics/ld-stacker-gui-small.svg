@@ -1,12 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- The icon on the grid of 16 x 16 pixels, for the small sizes: a disc, an arrow down, and the layers that
-     are stacked, the last one (the result) in green. -->
+<!-- The icon on the grid of 16 x 16 pixels, for the small sizes: a disc with its reflections, an arrow down,
+     and the discs that are stacked, in different greys and each a pixel off the one above. -->
 <svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">
   <circle cx="5" cy="5" r="4" fill="#F2C94C" stroke="#555753" stroke-width="1"/>
   <circle cx="5" cy="5" r="1" fill="#2E3436"/>
+  <g fill="#FFFFFF" fill-opacity="0.85">
+    <rect x="3" y="2" width="2" height="1"/>
+    <rect x="2" y="3" width="1" height="2"/>
+    <rect x="7" y="7" width="1" height="1" fill-opacity="0.5"/>
+  </g>
   <rect x="12" y="1" width="1" height="6" fill="#555753"/>
   <path d="M10 6h5v1h-1v1h-1v1h-1v-1h-1v-1h-1z" fill="#555753"/>
-  <rect x="1" y="10" width="14" height="1" fill="#888A85"/>
-  <rect x="1" y="12" width="14" height="1" fill="#888A85"/>
-  <rect x="1" y="14" width="14" height="1" fill="#73B345"/>
+  <rect x="2" y="10" width="13" height="1" fill="#BCBFB7"/>
+  <rect x="1" y="12" width="13" height="1" fill="#A0A39B"/>
+  <rect x="2" y="14" width="13" height="1" fill="#6E706A"/>
 </svg>
