@@ -15,6 +15,7 @@ add_library(lddecode-library STATIC
     tbc/navigation.cpp
     tbc/sourceaudio.cpp
     tbc/sourcevideo.cpp
+    tbc/stackercore.cpp
     tbc/tbcfiles.cpp
     tbc/streamreader.cpp
     tbc/targetvideo.cpp
