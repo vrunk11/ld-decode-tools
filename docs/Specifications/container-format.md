@@ -117,7 +117,15 @@ A tool that reads a file or a pipe and writes another **copies the tracks and bl
 
 A stacking session can be an attachment named `session.stack` (media type `application/json`), in the format of the `.stack` files. Each of its sources names **a track of the same file by its id** (`"track": 2`) instead of a path, so that the session does not depend on where any file is on a disk, and the file can be moved, shared or renamed. One file then holds the captures (the sources of a stack, or several captures of the same VHS tape) and the way they are stacked.
 
-A source of an embedded session has either a `track` or a `file` (a path, relative to where the `.ldx` file is, for a capture kept outside). A tool that adds or removes a stream updates the session: a removed track is taken out of its sources, and the tool says so. A `.stack` file on its own keeps working unchanged, and a session can be taken out of a file and put back.
+A source of a session kept in a file names its capture in one of three ways, so that a session can embed the captures it uses, link to them, or mix the two (a file that copies every source can be heavy, and a session can point at another LDX file instead):
+
+| Source | Meaning |
+|---|---|
+| `"track": 2` | a track of the same LDX file |
+| `"file": "other.ldx", "track": 2` | a track of another LDX file (a link) |
+| `"file": "capture.tbc"` | a file outside this one (a link): a TBC, a CVBS, an LDX file or a `.stack` session |
+
+The path of a link is relative to where the `.ldx` file is, so that the two can be moved together. A tool that writes a session into a file can **embed** the sources that are files (it then copies each into a track of its own, with its metadata and audio, and names it by its id) or **leave them as links**; the choice is the tool's, and both give a valid file. A tool that adds or removes a stream updates the sources that are tracks of the same file: a removed track is taken out of the session, and the tool says so. Links are not touched. A `.stack` file on its own keeps working unchanged, and a session can be taken out of a file and put back.
 
 ## 11. Reading rules
 

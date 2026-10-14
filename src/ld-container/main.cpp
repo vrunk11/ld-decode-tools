@@ -231,9 +231,28 @@ void addCaptureOptions(QCommandLineParser &parser)
     parser.addOption(QCommandLineOption("name", "Name of the capture (default: the name of the file)", "name"));
 }
 
+struct CaptureOptions {
+    qint64 start = 0;
+    qint64 fields = 0;          // 0 for all of them
+    QString pcm;                // the audio, if any
+    double pcmRate = 44100;
+    QString name;               // the name of the capture, the name of its file when empty
+};
+
+CaptureOptions captureOptions(const QCommandLineParser &parser)
+{
+    CaptureOptions options;
+    options.start = parser.value("start").toLongLong();
+    options.fields = parser.value("fields").toLongLong();
+    options.pcm = parser.value("pcm");
+    options.pcmRate = parser.value("pcm-rate").toDouble();
+    options.name = parser.value("name");
+    return options;
+}
+
 // Read a capture (its metadata, its TBC file, its audio) and describe its tracks. The tracks are added to the
 // writer by the caller, which then sets the id of the track the metadata is about.
-bool readCapture(const QCommandLineParser &parser, const QString &input, Capture &capture)
+bool readCapture(const CaptureOptions &options, const QString &input, Capture &capture)
 {
     const QString metadataFile = LdDecodeMetaData::findMetadataFile(input);
     LdDecodeMetaData metadata;
@@ -263,15 +282,15 @@ bool readCapture(const QCommandLineParser &parser, const QString &input, Capture
         err << "Could not open " << input << "\n";
         return false;
     }
-    capture.start = parser.value("start").toLongLong();
+    capture.start = options.start;
     capture.fields = capture.tbc->size() / capture.fieldBytes - capture.start;
-    if (parser.value("fields").toLongLong() > 0) capture.fields = qMin(capture.fields, parser.value("fields").toLongLong());
+    if (options.fields > 0) capture.fields = qMin(capture.fields, options.fields);
     if (capture.fields < 1) {
         err << "There is nothing to pack in " << input << "\n";
         return false;
     }
 
-    const QString name = parser.isSet("name") ? parser.value("name") : QFileInfo(input).fileName();
+    const QString name = !options.name.isEmpty() ? options.name : QFileInfo(input).fileName();
     capture.video.kind = Ldx::Kind::Tbc;
     capture.video.depth = 16;
     capture.video.name = name;
@@ -286,14 +305,14 @@ bool readCapture(const QCommandLineParser &parser, const QString &input, Capture
     capture.metadata.parameters["namespace"] = "ldx.tbcmetadata";
     capture.metadata.parameters["format"] = "ld-decode-json";
 
-    capture.hasAudio = parser.isSet("pcm");
+    capture.hasAudio = !options.pcm.isEmpty();
     if (capture.hasAudio) {
-        capture.pcm.reset(new QFile(parser.value("pcm")));
+        capture.pcm.reset(new QFile(options.pcm));
         if (!capture.pcm->open(QIODevice::ReadOnly)) {
-            err << "Could not open " << parser.value("pcm") << "\n";
+            err << "Could not open " << options.pcm << "\n";
             return false;
         }
-        capture.pcmRate = parser.value("pcm-rate").toDouble();
+        capture.pcmRate = options.pcmRate;
         capture.audio.kind = Ldx::Kind::Pcm;
         capture.audio.depth = 16;
         capture.audio.name = QFileInfo(capture.pcm->fileName()).fileName();
@@ -322,8 +341,9 @@ QSet<quint32> sessionTracks(const QByteArray &session)
 {
     QSet<quint32> tracks;
     for (const QJsonValue &value: QJsonDocument::fromJson(session).object().value("sources").toArray()) {
-        const int track = value.toObject().value("track").toInt(0);
-        if (track > 0) tracks.insert(static_cast<quint32>(track));
+        const QJsonObject object = value.toObject();
+        const int track = object.value("track").toInt(0);
+        if (track > 0 && object.value("file").toString().isEmpty()) tracks.insert(static_cast<quint32>(track));
     }
     return tracks;
 }
@@ -335,7 +355,8 @@ QByteArray sessionWithout(const QByteArray &session, const QSet<quint32> &tracks
     QJsonObject root = QJsonDocument::fromJson(session).object();
     QJsonArray sources;
     for (const QJsonValue &value: root.value("sources").toArray()) {
-        if (tracks.contains(static_cast<quint32>(value.toObject().value("track").toInt(0)))) { taken++; continue; }
+        const QJsonObject object = value.toObject();
+        if (object.value("file").toString().isEmpty() && tracks.contains(static_cast<quint32>(object.value("track").toInt(0)))) { taken++; continue; }
         sources.append(value);
     }
     root["sources"] = sources;
@@ -370,13 +391,14 @@ bool openForRewrite(Rewrite &rewrite, const QString &fileName)
     return true;
 }
 
-void prepareWriter(Rewrite &rewrite, Ldx::Writer &writer, const QSet<quint32> &skip)
+void prepareWriter(Rewrite &rewrite, Ldx::Writer &writer, const QSet<quint32> &skip, bool withAttachments = true)
 {
     for (Ldx::Track track: rewrite.tracks) {
         if (skip.contains(track.number)) continue;
         writer.addTrack(track);
     }
     writer.setNextTrackId(rewrite.reader.nextTrackId());
+    if (!withAttachments) return;
     for (const Ldx::Reader::Attachment &attachment: rewrite.attachments) {
         writer.addAttachment(attachment.name, attachment.mediaType, attachment.data);
     }
@@ -412,7 +434,7 @@ int pack(const QStringList &arguments)
     }
 
     Capture capture;
-    if (!readCapture(parser, input, capture)) return 1;
+    if (!readCapture(captureOptions(parser), input, capture)) return 1;
 
     Ldx::Writer writer;
     addCaptureTracks(writer, capture);
@@ -466,7 +488,7 @@ int addStream(const QStringList &arguments)
     Rewrite rewrite;
     if (!openForRewrite(rewrite, source)) return 1;
     Capture capture;
-    if (!readCapture(parser, input, capture)) return 1;
+    if (!readCapture(captureOptions(parser), input, capture)) return 1;
 
     Ldx::Writer writer;
     prepareWriter(rewrite, writer, {});
@@ -565,16 +587,24 @@ int removeStream(const QStringList &arguments)
     return 0;
 }
 
-// ld-container stack file.ldx session.stack -o output.ldx
+// ld-container stack file.ldx session.stack -o output.ldx [--embed]
+//
+// A source of a session names its capture in one of three ways:
+//   "track": 2                         a track of this file
+//   "file": "other.ldx", "track": 2    a track of another LDX file (a link)
+//   "file": "capture.tbc"              a file outside this one (a link), which --embed brings in as a track
 int setStack(const QStringList &arguments)
 {
     QCommandLineParser parser;
-    parser.setApplicationDescription("Keep a stacking session in an LDX file. The sources of the session are tracks of the\n"
-                                     "file, named by their id (\"track\": 2), and not paths. The file is written again, to the output.");
+    parser.setApplicationDescription("Keep a stacking session in an LDX file. A source of the session is either a track of the\n"
+                                     "file (\"track\": 2), a link to a file or to a track of another LDX file (\"file\": ..., and\n"
+                                     "\"track\": ...), or, with --embed, a .tbc file brought into this file as a track.\n"
+                                     "The file is written again, to the output.");
     parser.addHelpOption();
     parser.addPositionalArgument("file", "The LDX file");
     parser.addPositionalArgument("session", "The .stack file");
     parser.addOption(QCommandLineOption({ "o", "output" }, "The LDX file to write", "file"));
+    parser.addOption(QCommandLineOption("embed", "Bring the sources that are .tbc files into the LDX file, as tracks (the others stay links)"));
     parser.process(arguments);
     if (parser.positionalArguments().size() != 2 || !parser.isSet("output")) {
         err << parser.helpText();
@@ -592,39 +622,96 @@ int setStack(const QStringList &arguments)
         err << "Could not open " << sessionFile.fileName() << "\n";
         return 1;
     }
-    const QByteArray session = sessionFile.readAll();
-    if (QJsonDocument::fromJson(session).object().value("sources").toArray().isEmpty()) {
+    QJsonObject session = QJsonDocument::fromJson(sessionFile.readAll()).object();
+    const QJsonArray sourceList = session.value("sources").toArray();
+    if (sourceList.isEmpty()) {
         err << sessionFile.fileName() << " is not a session with sources\n";
         return 1;
     }
+    const QDir sessionDirectory = QFileInfo(sessionFile.fileName()).absoluteDir();
+    const QDir outputDirectory = QFileInfo(output).absoluteDir();
 
     Rewrite rewrite;
     if (!openForRewrite(rewrite, source)) return 1;
-
-    // Each source is a track of the file
     QSet<quint32> existing;
     for (const Ldx::Track &track: rewrite.tracks) existing.insert(track.number);
-    for (const QJsonValue &value: QJsonDocument::fromJson(session).object().value("sources").toArray()) {
-        const int track = value.toObject().value("track").toInt(0);
-        if (track < 1) {
-            err << "A source of the session is a file and not a track: name its track with \"track\": id, and leave out \"file\"\n";
+
+    Ldx::Writer writer;
+    prepareWriter(rewrite, writer, {}, false);
+
+    // The sources, one by one
+    std::vector<std::unique_ptr<Capture>> embedded;
+    QJsonArray newSources;
+    int links = 0, tracks = 0;
+    for (const QJsonValue &value: sourceList) {
+        QJsonObject object = value.toObject();
+        const int track = object.value("track").toInt(0);
+        const QString file = object.value("file").toString();
+        const QString absolute = file.isEmpty() ? QString() : QDir::cleanPath(QFileInfo(file).isAbsolute() ? file : sessionDirectory.absoluteFilePath(file));
+
+        if (track < 1 && file.isEmpty()) {
+            err << "A source of the session has neither a file nor a track\n";
             return 1;
         }
-        if (!existing.contains(static_cast<quint32>(track))) {
-            err << "The session has a source on track " << track << ", which is not in " << source << "\n";
-            return 1;
+        if (file.isEmpty()) {
+            // A track of this file
+            if (!existing.contains(static_cast<quint32>(track))) {
+                err << "The session has a source on track " << track << ", which is not in " << source << "\n";
+                return 1;
+            }
+            tracks++;
+        } else if (track >= 1 && absolute.endsWith(".ldx", Qt::CaseInsensitive)) {
+            // A track of another LDX file: it is checked if the file is there
+            if (QFile::exists(absolute)) {
+                Ldx::Reader other;
+                QString otherError;
+                bool has = false;
+                if (other.open(absolute, otherError)) {
+                    for (const Ldx::Track &candidate: other.tracks()) has = has || candidate.number == static_cast<quint32>(track);
+                }
+                if (!has) {
+                    err << "The session has a source on track " << track << " of " << file << ", which has no such track\n";
+                    return 1;
+                }
+            } else {
+                err << "  note: " << file << " is not there now, so its track " << track << " cannot be checked\n";
+            }
+            object["file"] = outputDirectory.relativeFilePath(absolute);
+            links++;
+        } else if (parser.isSet("embed") && absolute.endsWith(".tbc", Qt::CaseInsensitive)) {
+            // A .tbc: brought in as a track of this file, with its audio if a .pcm of the same name is beside it
+            CaptureOptions options;
+            options.name = object.value("label").toString().isEmpty() ? QFileInfo(absolute).fileName() : object.value("label").toString();
+            const QString pcm = QFileInfo(absolute).dir().filePath(QFileInfo(absolute).completeBaseName() + ".pcm");
+            if (QFileInfo::exists(pcm)) options.pcm = pcm;
+            auto capture = std::make_unique<Capture>();
+            if (!readCapture(options, absolute, *capture)) return 1;
+            addCaptureTracks(writer, *capture);
+            object.remove("file");
+            object["track"] = static_cast<int>(capture->video.number);
+            out << "  embedding " << QFileInfo(absolute).fileName() << " as track " << capture->video.number << "\n";
+            embedded.push_back(std::move(capture));
+            tracks++;
+        } else {
+            // A file outside this one: a link, kept as the path from where the LDX file is
+            object["file"] = outputDirectory.relativeFilePath(absolute);
+            if (parser.isSet("embed")) out << "  " << QFileInfo(absolute).fileName() << " stays a link (only .tbc files can be embedded for now)\n";
+            links++;
         }
+        newSources.append(object);
     }
+    session["sources"] = newSources;
+    const QByteArray sessionData = QJsonDocument(session).toJson(QJsonDocument::Indented);
 
     bool replaced = false;
     for (Ldx::Reader::Attachment &attachment: rewrite.attachments) {
-        if (attachment.name == StackAttachment) { attachment.data = session; attachment.mediaType = "application/json"; replaced = true; }
+        if (attachment.name == StackAttachment) { attachment.data = sessionData; attachment.mediaType = "application/json"; replaced = true; }
     }
-    if (!replaced) rewrite.attachments.append({ StackAttachment, "application/json", session });
-
-    Ldx::Writer writer;
-    prepareWriter(rewrite, writer, {});
-    rewrite.history.append(historyEntry("stack", QString("%1 sources").arg(sessionTracks(session).size())));
+    if (!replaced) rewrite.attachments.append({ StackAttachment, "application/json", sessionData });
+    for (const Ldx::Reader::Attachment &attachment: rewrite.attachments) {
+        writer.addAttachment(attachment.name, attachment.mediaType, attachment.data);
+    }
+    rewrite.history.append(historyEntry("stack", QString("%1 sources on tracks, %2 links").arg(tracks).arg(links)));
     writer.setHistory(rewrite.history);
 
     QString error;
@@ -632,12 +719,28 @@ int setStack(const QStringList &arguments)
         err << error << "\n";
         return 1;
     }
+
+    // The blocks of the file, and those of the captures brought in
     LdxSource old(rewrite.reader, {});
-    if (!mergeInto(writer, { &old }) || !writer.finish(error)) {
+    std::vector<std::unique_ptr<BlockSource>> owned;
+    std::vector<BlockSource *> sources { &old };
+    for (const std::unique_ptr<Capture> &capture: embedded) {
+        owned.push_back(std::make_unique<OnceSource>(capture->metadata.number, capture->metadataJson));
+        sources.push_back(owned.back().get());
+        auto fields = std::make_unique<FieldSource>(*capture->tbc, capture->video.number, capture->system, capture->fieldBytes, capture->start, capture->fields);
+        const qint64 end = fields->endTimeNs();
+        sources.push_back(fields.get());
+        owned.push_back(std::move(fields));
+        if (capture->hasAudio) {
+            owned.push_back(std::make_unique<PcmSource>(*capture->pcm, capture->audio.number, capture->pcmRate, end));
+            sources.push_back(owned.back().get());
+        }
+    }
+    if (!mergeInto(writer, sources) || !writer.finish(error)) {
         if (!error.isEmpty()) err << error << "\n";
         return 1;
     }
-    out << "The session is kept in " << output << "\n";
+    out << "The session is kept in " << output << " (" << tracks << " sources on tracks, " << links << " links)\n";
     return 0;
 }
 
