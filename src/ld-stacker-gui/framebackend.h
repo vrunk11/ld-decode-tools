@@ -110,6 +110,7 @@ private:
 
     // Frame number of a source for a frame of the stack, or -1 if the source has none there
     qint32 sourceFrame(Loaded &source, qint32 frame, qint32 offset);
+    bool isPadded(Loaded &source, qint32 ownFrame);
     static QImage weave(const SourceVideo::Data &first, const SourceVideo::Data &second, qint32 width, qint32 fieldHeight);
     // The picture of a frame decoded to colour. For the stack, the two fields stacked are given and
     // replace those of the source the frame is read from.

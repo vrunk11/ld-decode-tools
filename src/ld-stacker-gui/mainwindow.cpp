@@ -10,6 +10,8 @@
 
 #include "mainwindow.h"
 
+#include "processdialog.h"
+
 #include <QAction>
 #include <QCheckBox>
 #include <QCloseEvent>
@@ -325,9 +327,7 @@ void MainWindow::buildMenus()
     file->addAction(tr("&Add source..."), this, &MainWindow::addSourcesDialog);
     file->addSeparator();
     file->addAction(tr("&Export session..."), QKeySequence::Save, this, &MainWindow::exportSession);
-    QAction *process = file->addAction(tr("&Process..."));
-    process->setEnabled(false);
-    process->setToolTip(tr("Stacks the sources to a file: not available yet"));
+    file->addAction(tr("&Process..."), this, &MainWindow::processSession);
     file->addSeparator();
     file->addAction(tr("E&xit"), QKeySequence::Quit, this, &QWidget::close);
 
@@ -454,6 +454,18 @@ void MainWindow::openSession()
     loadSession(fileName);
 }
 
+// Stack the sources to a file
+void MainWindow::processSession()
+{
+    QString suggested = project.outputFile;
+    if (suggested.isEmpty() && !project.sources.isEmpty()) {
+        const QFileInfo first(project.sources.first().file);
+        suggested = first.absoluteDir().absoluteFilePath(first.completeBaseName() + "-stack." + first.suffix());
+    }
+    ProcessDialog dialog(project, suggested, this);
+    dialog.exec();
+}
+
 void MainWindow::exportSession()
 {
     QSettings settings;
@@ -536,6 +548,10 @@ void MainWindow::rebuildSourceList()
         offset->setPrefix(source.offset > 0 ? "+" : "");
         offset->setToolTip(tr("Offset in frames: the source is shifted by this many frames to align it with the others"));
         offset->setFixedWidth(70);
+        if (index == referenceIndex()) {
+            offset->setEnabled(false);
+            offset->setToolTip(tr("The first source that is on is the reference: the others are lined up with it, and it has no offset"));
+        }
         layout->addWidget(offset);
 
         QToolButton *snrButton = new QToolButton;
@@ -550,6 +566,7 @@ void MainWindow::rebuildSourceList()
             project.sources[at].enabled = on;
             name->setEnabled(on);
             sourcesChanged();
+            QTimer::singleShot(0, this, [this]() { rebuildSourceList(); });
         });
         connect(offset, &QSpinBox::valueChanged, this, [this, id, offset](qint32 value) {
             const qint32 at = project.indexOfSource(id);
@@ -588,6 +605,22 @@ void MainWindow::rebuildTabs()
     updateTabTexts();
 }
 
+// The first source on that is loaded is the reference: the stack is as long as it is, and the other sources
+// are lined up with it by their offsets (its own offset means nothing)
+qint32 MainWindow::referenceIndex() const
+{
+    for (qint32 index = 0; index < project.sources.size(); index++) {
+        const StackSource &source = project.sources[index];
+        if (source.enabled && states.value(source.id).loaded) return index;
+    }
+    return -1;
+}
+
+qint32 MainWindow::effectiveOffset(qint32 index) const
+{
+    return index == referenceIndex() ? 0 : project.sources[index].offset;
+}
+
 float MainWindow::sourceSnr(const SourceState &state, qint32 atFrame, qint32 offset, bool &known) const
 {
     known = false;
@@ -614,14 +647,14 @@ void MainWindow::updateTabTexts()
     for (qint32 index = 0; index < project.sources.size(); index++) {
         const StackSource &source = project.sources[index];
         bool known;
-        const float value = sourceSnr(states.value(source.id), frame, source.offset, known);
+        const float value = sourceSnr(states.value(source.id), frame, effectiveOffset(index), known);
         if (known && source.enabled && (best < 0 || value > bestValue)) { best = index; bestValue = value; }
     }
 
     for (qint32 index = 0; index < project.sources.size(); index++) {
         const StackSource &source = project.sources[index];
         bool known;
-        const float value = sourceSnr(states.value(source.id), frame, source.offset, known);
+        const float value = sourceSnr(states.value(source.id), frame, effectiveOffset(index), known);
         tabBar->setTabText(index + 1, known ? tr("%1  %2 dB").arg(index + 1).arg(value, 0, 'f', 1) : QString::number(index + 1));
         tabBar->setTabTextColor(index + 1, index == best ? QColor("#3b6d11") : palette().color(QPalette::WindowText));
     }
@@ -631,13 +664,11 @@ void MainWindow::updateTabTexts()
 void MainWindow::updateTimeline()
 {
     qint32 total = 0;
-    for (const StackSource &source: project.sources) {
-        const SourceState state = states.value(source.id);
-        if (!state.loaded || !source.enabled) continue;
-        total = qMax(total, state.info.frames + source.offset);
-    }
-    if (total == 0) {
-        // None on: the sources that are loaded give the length
+    const qint32 reference = referenceIndex();
+    if (reference >= 0) {
+        total = states.value(project.sources[reference].id).info.frames;
+    } else {
+        // None on: the longest of those that are loaded
         for (const StackSource &source: project.sources) {
             const SourceState state = states.value(source.id);
             if (state.loaded) total = qMax(total, state.info.frames + source.offset);
@@ -728,7 +759,7 @@ void MainWindow::sendRequest(const QString &view, qint32 channel)
         FrameRequest::Entry entry;
         entry.id = source.id;
         entry.enabled = source.enabled;
-        entry.offset = source.offset;
+        entry.offset = effectiveOffset(request.entries.size());
         request.entries.append(entry);
     }
     backend->latest[channel].store(request.serial);
@@ -792,7 +823,7 @@ void MainWindow::updateSnrWindow()
     QVector<float> values(totalFrames, std::nanf(""));
     for (qint32 at = 1; at <= totalFrames; at++) {
         bool known;
-        const float value = sourceSnr(state, at, source.offset, known);
+        const float value = sourceSnr(state, at, effectiveOffset(index), known);
         if (known) values[at - 1] = value;
     }
     snrWindow->setContent(tr("SNR - source %1 (%2)").arg(index + 1).arg(sourceTitle(source)), values, colorFor(source.id),
@@ -817,7 +848,7 @@ void MainWindow::updatePlot()
     QVector<float> values(totalFrames, std::nanf(""));
     for (qint32 at = 1; at <= totalFrames; at++) {
         bool known;
-        const float value = sourceSnr(state, at, source.offset, known);
+        const float value = sourceSnr(state, at, effectiveOffset(index), known);
         if (known) values[at - 1] = value;
     }
     snrPlot->setSeries(values, colorFor(source.id), tr("Source %1: white SNR (metadata)").arg(index + 1));

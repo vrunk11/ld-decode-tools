@@ -124,6 +124,15 @@ qint32 FrameBackend::sourceFrame(Loaded &source, qint32 frame, qint32 offset)
     return own;
 }
 
+// A frame with a padded (missing) field is not one the stack can use
+bool FrameBackend::isPadded(Loaded &source, qint32 ownFrame)
+{
+    const qint32 first = source.metadata.getFirstFieldNumber(ownFrame);
+    const qint32 second = source.metadata.getSecondFieldNumber(ownFrame);
+    if (first < 1 || second < 1) return true;
+    return source.metadata.getField(first).pad || source.metadata.getField(second).pad;
+}
+
 // The two fields of a frame as a grey picture, as ld-analyse shows a source
 QImage FrameBackend::weave(const SourceVideo::Data &first, const SourceVideo::Data &second, qint32 width, qint32 fieldHeight)
 {
@@ -266,6 +275,7 @@ void FrameBackend::render(const FrameRequest &request)
     // The stack
     for (qint32 i = 0; i < total; i++) {
         if (request.entries[i].enabled && frames[i] >= 0) {
+            if (isPadded(*sources.value(request.entries[i].id), frames[i])) continue;
             if (reference < 0) reference = i;
             available.append(i);
         }
@@ -316,10 +326,10 @@ void FrameBackend::render(const FrameRequest &request)
     const bool noDiffDod = !request.settings.diffDod;
     core.stackField(request.frame, firstData, videoParameters, firstMetadata, usable, noDiffDod,
                     request.settings.passthrough, outputFirst, outputFirstDropOuts, mode,
-                    request.settings.smartThreshold, false);
+                    request.settings.smartThreshold * 256, false);
     core.stackField(request.frame, secondData, videoParameters, secondMetadata, usable, noDiffDod,
                     request.settings.passthrough, outputSecond, outputSecondDropOuts, mode,
-                    request.settings.smartThreshold, false);
+                    request.settings.smartThreshold * 256, false);
 
     if (request.chroma) {
         Loaded &referenceSource = *sources.value(request.entries[usable[0]].id);

@@ -2,9 +2,9 @@ set(ld-stacker-gui_SOURCES
     main.cpp
     mainwindow.cpp
     framebackend.cpp
-    stackproject.cpp
     snrplot.cpp
     toolwindows.cpp
+    processdialog.cpp
 )
 
 add_executable(ld-stacker-gui ${ld-stacker-gui_SOURCES})
