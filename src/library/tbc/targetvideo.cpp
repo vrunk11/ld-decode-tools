@@ -15,6 +15,10 @@
 #include <QFileInfo>
 #include <QJsonArray>
 #include <cstdio>
+#ifdef Q_OS_WIN
+#include <fcntl.h>
+#include <io.h>
+#endif
 
 #include "ldxcapture.h"
 #ifdef LDDECODE_WITH_LDX
@@ -30,7 +34,7 @@ TargetVideo::~TargetVideo()
 
 struct TargetVideo::LdxOutput {
     Ldx::Writer writer;
-    quint32 video = 0, audio = 0;
+    quint32 video = 0, audio = 0, metadata = 0;
     qint64 fields = 0;
 };
 
@@ -42,13 +46,19 @@ qint64 fieldTimeNs(qint64 field, VideoSystem system)
 }
 }
 
-void TargetVideo::setLdxVideo(qint32 fieldWidth, qint32 fieldHeight, double sampleRate, const QString &name, const QJsonObject &historyEntry)
+void TargetVideo::setLdxStream(const QByteArray &parametersJson)
+{
+    ldxStreamOutput = true;
+    ldxParameters = parametersJson;
+}
+
+void TargetVideo::setLdxVideo(qint32 fieldWidth, qint32 fieldHeight, double sampleRate, const QString &name, const QJsonArray &history)
 {
     ldxFieldWidth = fieldWidth;
     ldxFieldHeight = fieldHeight;
     ldxSampleRate = sampleRate;
     ldxName = name;
-    ldxHistory = historyEntry;
+    ldxHistory = history;
 }
 
 void TargetVideo::setLdxAudio(double sampleRate) { ldxAudioRate = sampleRate; }
@@ -63,7 +73,8 @@ bool TargetVideo::writeAudio(const QByteArray &samples)
 
 #else
 
-void TargetVideo::setLdxVideo(qint32, qint32, double, const QString &, const QJsonObject &) {}
+void TargetVideo::setLdxVideo(qint32, qint32, double, const QString &, const QJsonArray &) {}
+void TargetVideo::setLdxStream(const QByteArray &) {}
 void TargetVideo::setLdxAudio(double) {}
 bool TargetVideo::isLdx() const { return false; }
 bool TargetVideo::writeAudio(const QByteArray &) { return false; }
@@ -76,9 +87,9 @@ bool TargetVideo::open(const QString &fileName, VideoSystem system, Cvbs::Sample
     hasPendingField = false;
     ldxSystem = system;
 
-    if (fileName != "-" && LdxCapture::isLdxName(fileName)) {
+    if ((fileName == "-" && ldxStreamOutput) || (fileName != "-" && LdxCapture::isLdxName(fileName))) {
 #ifdef LDDECODE_WITH_LDX
-        if (fileName.contains('#')) {
+        if (fileName != "-" && fileName.contains('#')) {
             qCritical().noquote() << "The output" << fileName << "is a track of an LDX file: name the file";
             return false;
         }
@@ -101,6 +112,7 @@ bool TargetVideo::open(const QString &fileName, VideoSystem system, Cvbs::Sample
         metadata.parameters["format"] = "ld-decode-json";
         metadata.parameters["track"] = static_cast<int>(video.number);
         ldx->writer.addTrack(metadata);
+        ldx->metadata = metadata.number;
         if (ldxAudioRate > 0) {
             Ldx::Track audio;
             audio.kind = Ldx::Kind::Pcm;
@@ -112,9 +124,21 @@ bool TargetVideo::open(const QString &fileName, VideoSystem system, Cvbs::Sample
             ldx->writer.addTrack(audio);
             ldx->audio = audio.number;
         }
-        if (!ldxHistory.isEmpty()) ldx->writer.setHistory(QJsonArray { ldxHistory });
+        if (!ldxHistory.isEmpty()) ldx->writer.setHistory(ldxHistory);
         QString error;
-        if (!ldx->writer.open(fileName, error)) {
+        if (fileName == "-") {
+#ifdef Q_OS_WIN
+            _setmode(_fileno(stdout), _O_BINARY);
+#endif
+        }
+        const bool opened = fileName == "-" ? ldx->writer.openStream(stdout, error) : ldx->writer.open(fileName, error);
+        if (opened && ldxStreamOutput && !ldxParameters.isEmpty() && !ldx->writer.writeBlock(ldx->metadata, 0, ldxParameters)) {
+            error = ldx->writer.lastError();
+            qCritical().noquote() << "Could not write the parameters of the video to" << fileName << "-" << error;
+            ldx.reset();
+            return false;
+        }
+        if (!opened) {
             qCritical().noquote() << "Unable to open output LDX file" << fileName << "-" << error;
             ldx.reset();
             return false;
@@ -150,6 +174,22 @@ bool TargetVideo::open(const QString &fileName, VideoSystem system, Cvbs::Sample
     }
 
     return true;
+}
+
+bool TargetVideo::writeField(const QVector<quint16> &fieldData, const QByteArray &metadataJson)
+{
+#ifdef LDDECODE_WITH_LDX
+    if (ldx && ldx->metadata != 0 && !metadataJson.isEmpty()) {
+        // (the metadata of a field go just before its video)
+        if (!ldx->writer.writeBlock(ldx->metadata, fieldTimeNs(ldx->fields, ldxSystem), metadataJson)) {
+            qCritical().noquote() << "Could not write to the output LDX file:" << ldx->writer.lastError();
+            return false;
+        }
+    }
+#else
+    Q_UNUSED(metadataJson);
+#endif
+    return writeField(fieldData);
 }
 
 bool TargetVideo::writeField(const QVector<quint16> &fieldData)

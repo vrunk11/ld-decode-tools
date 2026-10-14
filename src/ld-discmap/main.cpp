@@ -176,6 +176,11 @@ int main(int argc, char *argv[])
             qCritical("The specified output file already exists - please delete the existing file or use another output file name");
             return -1;
         }
+        // The output "-" is an LDX stream, which holds TBC video here
+        if (outputFilename == "-" && Cvbs::isDataFileName(inputFileInfo.filePath())) {
+            qCritical("CVBS video cannot be sent as an LDX stream yet: name an output file");
+            return -1;
+        }
         // The output stays in the input's container (TBC or CVBS)
         if (!checkSameVideoContainer(inputFileInfo.filePath(), outputFileInfo.filePath())) return -1;
     }

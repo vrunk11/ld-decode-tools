@@ -12,6 +12,7 @@
 #define LDXSTREAM_H
 
 #include <QByteArray>
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QString>
 #include <cstdio>
@@ -36,6 +37,9 @@ public:
     static bool openStdin(QString &error);
     // The stream that was opened, if one was
     static LdxStream *instance();
+
+    // The history the stream came with (what was done to it before)
+    QJsonArray history() const;
 
     // What the video is
     bool isCvbs() const;

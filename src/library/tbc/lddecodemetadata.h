@@ -274,6 +274,9 @@ public:
     void setFieldProvider(FieldProvider provider) { fieldProvider = std::move(provider); }
     // One field as JSON (a member of "fields" in ld-decode metadata), and back. False if it is not one.
     static QByteArray fieldToJson(const Field &field);
+    // The parameters of the video and of the audio alone, with no fields (the first block of the metadata of an LDX stream
+    // whose fields come later, one block each): ld-decode metadata as JSON. Empty if it cannot be made.
+    QByteArray parametersJson() const;
     static bool fieldFromJson(const QByteArray &json, Field &field);
 
     // Read metadata; the format is detected from the file contents. CVBS core

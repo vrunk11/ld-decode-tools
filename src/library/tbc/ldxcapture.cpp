@@ -10,6 +10,7 @@
 
 #include "ldxcapture.h"
 #include "lddecodemetadata.h"
+#include "ldxstream.h"
 
 #include <QCoreApplication>
 #include <QDateTime>
@@ -83,6 +84,24 @@ QJsonObject LdxCapture::historyEntry(const QString &command, const QString &deta
     if (!arguments.isEmpty()) arguments.removeFirst();
     if (!arguments.isEmpty() && !entry.contains("arguments")) entry["arguments"] = QJsonArray::fromStringList(arguments);
     return entry;
+}
+
+QJsonArray LdxCapture::historyOf(const QString &name)
+{
+#ifdef LDDECODE_WITH_LDX
+    if (name == "-") return LdxStream::instance() ? LdxStream::instance()->history() : QJsonArray();
+    if (!isLdxName(name)) return QJsonArray();
+    QString path;
+    qint32 track;
+    split(name, path, track);
+    Ldx::Reader reader;
+    QString error;
+    if (!reader.open(path, error)) return QJsonArray();
+    return reader.history();
+#else
+    Q_UNUSED(name);
+    return QJsonArray();
+#endif
 }
 
 bool LdxCapture::isLdxName(const QString &name)

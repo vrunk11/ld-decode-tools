@@ -92,6 +92,8 @@ public:
     qint32 getSecondFieldAudioDataLength(qint32 frameNumber) const;
 
     bool saveTargetMetadata(QFileInfo outputFileInfo);
+    // The metadata of the mapped video (the same that saveTargetMetadata writes), for an output that sends them with the fields
+    bool buildTargetMetadata(LdDecodeMetaData &targetMetadata);
 
 private:
     // Miscellaneous

@@ -38,3 +38,5 @@ The input can be an LDX file (`capture.ldx`, or `capture.ldx#3` for one of its t
 ### LDX output
 
 The output can be an LDX file (`out.ldx`): the video is a track of it, with a track for the metadata (the tool adds them when it is done) and, for `ld-discmap`, one for the analogue audio instead of the `.pcm` file. The history of the file records the work, with the arguments of the tool (`ld-container history out.ldx`).
+
+With `-` as the output file (and no `--output-metadata`), the output is an LDX stream on the standard output, with the metadata of each field just before its video and the history of the source and of this tool, so that the next tool can read it (`ld-container pack capture.tbc -o - | ld-discmap ... - | ld-analyse -`). A raw TBC on the standard output is still written with `--output-metadata`. CVBS video cannot be sent as a stream yet.

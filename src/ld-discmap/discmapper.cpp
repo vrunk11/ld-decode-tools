@@ -648,7 +648,19 @@ bool DiscMapper::saveDiscMap(DiscMap &discMap)
 
     // Open the output video file (a CVBS output keeps the input's sample encoding)
     TargetVideo targetVideo;
-    const bool ldxOutput = LdxCapture::isLdxName(outputFileInfo.filePath());
+    const bool ldxStream = outputFileInfo.filePath() == "-";
+    const bool ldxOutput = ldxStream || LdxCapture::isLdxName(outputFileInfo.filePath());
+    LdDecodeMetaData streamMetadata;
+    QJsonArray streamHistory = LdxCapture::historyOf(inputFileInfo.filePath());
+    streamHistory.append(LdxCapture::historyEntry("process", "disc mapping"));
+    if (ldxStream) {
+        // The metadata of each field go with it, so they are made first
+        if (!discMap.buildTargetMetadata(streamMetadata)) {
+            sourceVideo.close();
+            return false;
+        }
+        targetVideo.setLdxStream(streamMetadata.parametersJson());
+    }
     if (ldxOutput) {
         // An LDX output holds the video, its metadata and its audio (the history says what was done)
         LdDecodeMetaData input;
@@ -658,7 +670,7 @@ bool DiscMapper::saveDiscMap(DiscMap &discMap)
         }
         const LdDecodeMetaData::VideoParameters &parameters = input.getVideoParameters();
         targetVideo.setLdxVideo(parameters.fieldWidth, parameters.fieldHeight, parameters.sampleRate, QString(),
-                                LdxCapture::historyEntry("process", "disc mapping"));
+                                streamHistory);
         if (!noAudio && !Cvbs::isDataFileName(inputFileInfo.filePath())) targetVideo.setLdxAudio(44100);
     }
     if (!targetVideo.open(outputFileInfo.filePath(), discMap.getVideoSystem(), discMap.getSampleEncoding())) {
@@ -718,6 +730,18 @@ bool DiscMapper::saveDiscMap(DiscMap &discMap)
         }
     }
 
+    // A field goes to the output, with its metadata when the output is a stream
+    qint32 fieldsPut = 0;
+    auto putField = [&](const SourceVideo::Data &field) {
+        if (ldxStream) {
+            const qint32 position = ++fieldsPut;
+            LdDecodeMetaData::Field metadata = streamMetadata.getField(position);
+            metadata.seqNo = position;
+            return targetVideo.writeField(field, LdDecodeMetaData::fieldToJson(metadata));
+        }
+        return targetVideo.writeField(field);
+    };
+
     // Audio goes to the .pcm file, or to the track of an LDX output
     auto putAudio = [&](const SourceAudio::Data &samples) {
         const qint64 bytes = static_cast<qint64>(samples.size()) * 2;
@@ -757,12 +781,12 @@ bool DiscMapper::saveDiscMap(DiscMap &discMap)
             // Write the fields into the output TBC file in the same order as the source file
             if (firstFieldNumber < secondFieldNumber) {
                 // Save the first field and then second field to the output file
-                if (!targetVideo.writeField(sourceFirstField)) writeFail = true;
-                if (!targetVideo.writeField(sourceSecondField)) writeFail = true;
+                if (!putField(sourceFirstField)) writeFail = true;
+                if (!putField(sourceSecondField)) writeFail = true;
             } else {
                 // Save the second field and then first field to the output file
-                if (!targetVideo.writeField(sourceSecondField)) writeFail = true;
-                if (!targetVideo.writeField(sourceFirstField)) writeFail = true;
+                if (!putField(sourceSecondField)) writeFail = true;
+                if (!putField(sourceFirstField)) writeFail = true;
             }
 
             // Save the audio (not field order dependent)
@@ -802,8 +826,8 @@ bool DiscMapper::saveDiscMap(DiscMap &discMap)
             }
         } else {
             // Padded frame - write two dummy fields
-            if (!targetVideo.writeField(missingFieldData)) writeFail = true;
-            if (!targetVideo.writeField(missingFieldData)) writeFail = true;
+            if (!putField(missingFieldData)) writeFail = true;
+            if (!putField(missingFieldData)) writeFail = true;
 
             if (cvbsAudio) {
                 // Silence of a field's length, twice
@@ -848,6 +872,12 @@ bool DiscMapper::saveDiscMap(DiscMap &discMap)
         qInfo() << "Target audio frames saved";
         targetAudio.close();
         sourceAudio.close();
+    }
+
+    // A stream has sent its metadata with the fields
+    if (ldxStream) {
+        qInfo() << "Target video metadata sent";
+        return true;
     }
 
     // Now save the metadata

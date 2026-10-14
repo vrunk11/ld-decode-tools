@@ -197,6 +197,7 @@ bool LdxStream::openStdin(QString &error)
 }
 
 bool LdxStream::isCvbs() const { return d->video.kind == Ldx::Kind::Cvbs; }
+QJsonArray LdxStream::history() const { return d->reader.history(); }
 
 VideoSystem LdxStream::system() const
 {
@@ -260,6 +261,7 @@ LdxStream::~LdxStream() = default;
 LdxStream *LdxStream::instance() { return nullptr; }
 bool LdxStream::openStdin(QString &error) { error = QObject::tr("This program was built without support for LDX files"); return false; }
 bool LdxStream::isCvbs() const { return false; }
+QJsonArray LdxStream::history() const { return QJsonArray(); }
 VideoSystem LdxStream::system() const { return NTSC; }
 QString LdxStream::videoName() const { return QString(); }
 QByteArray LdxStream::metadataJson() const { return QByteArray(); }

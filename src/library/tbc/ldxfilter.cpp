@@ -47,25 +47,6 @@ bool metadataFromJson(const QByteArray &json, LdDecodeMetaData &metadata)
     return metadata.read(file.fileName());
 }
 
-// The parameters of the video alone, as the first block of a stream whose metadata come field by field
-bool parametersJson(LdDecodeMetaData &metadata, QByteArray &json)
-{
-    LdDecodeMetaData parameters;
-    LdDecodeMetaData::VideoParameters video = metadata.getVideoParameters();
-    video.numberOfSequentialFields = 0;         // (the fields come later)
-    parameters.setVideoParameters(video);
-    parameters.setPcmAudioParameters(metadata.getPcmAudioParameters());
-    parameters.setIsFirstFieldFirst(metadata.getIsFirstFieldFirst());
-    QTemporaryDir directory;
-    if (!directory.isValid()) return false;
-    const QString path = directory.filePath("parameters.json");
-    if (!parameters.write(path)) return false;
-    QFile file(path);
-    if (!file.open(QIODevice::ReadOnly)) return false;
-    json = file.readAll();
-    return true;
-}
-
 // One item of the output, waiting its turn: a field being worked on, or a block that goes through as it is
 struct Item {
     Ldx::Block block;
@@ -189,8 +170,8 @@ bool LdxFieldFilter::run(const Options &options, const Process &process, QString
                 metadata.initialiseDefault(name == "PAL" ? PAL : (name == "NTSC" ? NTSC : PAL_M));
             }
             videoParameters = metadata.getVideoParameters();
-            QByteArray json;
-            if (!parametersJson(metadata, json)) {
+            const QByteArray json = metadata.parametersJson();
+            if (json.isEmpty()) {
                 error = QObject::tr("The parameters of the video could not be written");
                 return false;
             }
