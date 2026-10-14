@@ -1143,7 +1143,9 @@ int recompress(const QStringList &arguments)
         if (!error.isEmpty()) err << error << "\n";
         return 1;
     }
-    out << changed << " track(s) now " << parser.value("codec") << ", written to " << output << ": " << QFileInfo(output).size() << " bytes, from " << QFileInfo(source).size() << "\n";
+    out << changed << " track(s) now " << parser.value("codec") << ", written to " << output;
+    if (!isStdio(output) && !isStdio(source)) out << ": " << QFileInfo(output).size() << " bytes, from " << QFileInfo(source).size();
+    out << "\n";
     return 0;
 }
 

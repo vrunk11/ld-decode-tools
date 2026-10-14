@@ -9,6 +9,7 @@
  ******************************************************************************/
 
 #include "mainwindow.h"
+#include "ldxstream.h"
 #include <QApplication>
 #include <QDebug>
 #include <QtGlobal>
@@ -71,7 +72,7 @@ int main(int argc, char *argv[])
 
     // -- Input from a pipe: ld-analyse - (or a named pipe) shows video as it arrives --
     QCommandLineOption inputFormatOption(QStringList() << "input-format",
-                                         QCoreApplication::translate("main", "Piped input: tbc (fields, the default) or cvbs (frames, as decode-orc writes them)"),
+                                         QCoreApplication::translate("main", "Piped input: ldx (an LDX stream, which says what it holds: the default when no video system is said), tbc (fields) or cvbs (frames, as decode-orc writes them)"),
                                          QCoreApplication::translate("main", "format"));
     parser.addOption(inputFormatOption);
 
@@ -144,21 +145,36 @@ int main(int argc, char *argv[])
 
         if (parser.isSet(inputFormatOption)) {
             const QString format = parser.value(inputFormatOption).toLower();
-            if (format != "tbc" && format != "cvbs") {
-                qCritical().noquote() << "Unknown input format" << format << "- use tbc or cvbs";
+            if (format != "tbc" && format != "cvbs" && format != "ldx") {
+                qCritical().noquote() << "Unknown input format" << format << "- use ldx, tbc or cvbs";
                 return -1;
             }
             streamInput.cvbs = format == "cvbs";
         }
 
-        if (!parser.isSet(systemOption)) {
-            qCritical("Piped input has no metadata: say the video system with --system pal, ntsc or pal-m "
-                      "(and --input-format cvbs if it is CVBS rather than TBC)");
-            return -1;
-        }
-        if (!parseVideoSystemName(parser.value(systemOption).toUpper().replace('-', '_'), streamInput.system)) {
-            qCritical().noquote() << "Unknown video system" << parser.value(systemOption) << "- use pal, ntsc or pal-m";
-            return -1;
+        // An LDX stream says by itself what it holds (the video system, TBC or CVBS): it is what a pipe is when no format is asked
+        // for and no video system is said. Its video is shown as the video of any pipe is, as it arrives.
+        const bool formatGiven = parser.isSet(inputFormatOption);
+        const bool ldxInput = (formatGiven && parser.value(inputFormatOption).toLower() == "ldx") || (!formatGiven && !parser.isSet(systemOption));
+        if (ldxInput) {
+            QString streamError;
+            if (!LdxStream::openStdin(streamError)) {
+                qCritical().noquote() << streamError;
+                return -1;
+            }
+            streamInput.cvbs = LdxStream::instance()->isCvbs();
+            streamInput.system = LdxStream::instance()->system();
+            qInfo().noquote() << "The LDX stream holds" << Cvbs::presetName(streamInput.system) << (streamInput.cvbs ? "CVBS" : "TBC") << "video";
+        } else {
+            if (!parser.isSet(systemOption)) {
+                qCritical("Piped input has no metadata: say the video system with --system pal, ntsc or pal-m "
+                          "(and --input-format cvbs if it is CVBS rather than TBC), or pipe an LDX stream");
+                return -1;
+            }
+            if (!parseVideoSystemName(parser.value(systemOption).toUpper().replace('-', '_'), streamInput.system)) {
+                qCritical().noquote() << "Unknown video system" << parser.value(systemOption) << "- use pal, ntsc or pal-m";
+                return -1;
+            }
         }
 
         if (parser.isSet(sampleEncodingOption)) {

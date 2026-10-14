@@ -312,3 +312,7 @@ Arguments:
 ## LDX files
 
 An LDX file (see [the container format](../Specifications/container-format.md)) can be opened where a TBC file is: `capture.ldx` is the capture it holds (or the stack of the session it keeps), and `capture.ldx#3` is the track 3 of a file that holds several captures. The fields and the metadata are read from the file, and nothing is written to it.
+
+## LDX stream
+
+With `-` and no `--input-format`, `--system` or input metadata, the input is an LDX stream (`ld-container pack capture.tbc -o - | ld-chroma-decoder - out.rgb`): it says by itself what it holds, so the video system, TBC or CVBS and the metadata are taken from it. `--input-format ldx` says so. A stream that is not LDX is refused with a message that says how to read raw video.

@@ -521,3 +521,7 @@ Move the cursor over an analysis graph (SNR, dropouts) to read it: a dotted line
 ## LDX files
 
 An LDX file (see [the container format](../Specifications/container-format.md)) can be opened where a TBC file is: `capture.ldx` is the capture it holds (or the stack of the session it keeps), and `capture.ldx#3` is the track 3 of a file that holds several captures. The fields and the metadata are read from the file, and nothing is written to it.
+
+## LDX stream
+
+With `-` and no `--system`, the input is an LDX stream (`ld-container pack capture.tbc -o - | ld-analyse -`): the video system and TBC or CVBS come from it, and its video is shown as the video of any pipe is, as it arrives. `--input-format ldx` says so.
