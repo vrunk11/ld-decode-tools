@@ -181,7 +181,7 @@ void MainWindow::buildUi()
     sourceList->setDefaultDropAction(Qt::MoveAction);
     sourceList->setSelectionMode(QAbstractItemView::SingleSelection);
     sourceList->setContextMenuPolicy(Qt::CustomContextMenu);
-    sourceList->setSpacing(6);
+    sourceList->setSpacing(0);
     // The row picked shows it by its own frame: the list's highlight is made invisible (with its palette, not a
     // style sheet, which would keep the list from following the theme)
     {
@@ -709,24 +709,27 @@ void MainWindow::rebuildSourceList()
 
         QWidget *row = new QWidget;
 
-        // A frame round the row, and a faint tint of the colour of the source (a dark transparent one), which
-        // the View menu can turn off; the row picked has a frame of that colour
+        // A row of a list: a line under it, a bar of the colour of the source on its left, and a faint tint of that
+        // colour (a dark transparent one) across it, which the View menu can turn off; the row picked has more of it
         {
             const QColor sourceColor = colorFor(id);
             QColor line = palette().color(QPalette::Text);
-            line.setAlpha(110);
+            line.setAlpha(90);
             const bool picked = id == selected;
             QString fill = "transparent";
             if (tintRows) {
                 QColor tint = sourceColor;
-                tint.setAlphaF(source.enabled ? 0.22 : 0.08);
+                tint.setAlphaF(source.enabled ? (picked ? 0.40 : 0.20) : 0.07);
                 fill = QString("rgba(%1, %2, %3, %4)").arg(tint.red()).arg(tint.green()).arg(tint.blue()).arg(tint.alpha());
+            } else if (picked) {
+                QColor mark = palette().color(QPalette::Text);
+                mark.setAlpha(40);
+                fill = QString("rgba(%1, %2, %3, %4)").arg(mark.red()).arg(mark.green()).arg(mark.blue()).arg(mark.alpha());
             }
-            const QString border = picked ? sourceColor.name() : QString("rgba(%1, %2, %3, %4)").arg(line.red()).arg(line.green()).arg(line.blue()).arg(line.alpha());
             row->setObjectName("sourceRow");
             row->setAttribute(Qt::WA_StyledBackground, true);
-            row->setStyleSheet(QString("#sourceRow { border: %1px solid %2; border-radius: 6px; background-color: %3; }")
-                               .arg(picked ? 2 : 1).arg(border).arg(fill));
+            row->setStyleSheet(QString("#sourceRow { border: none; border-left: %1px solid %2; border-bottom: 1px solid rgba(%3, %4, %5, %6); background-color: %7; }")
+                               .arg(picked ? 6 : 4).arg(sourceColor.name()).arg(line.red()).arg(line.green()).arg(line.blue()).arg(line.alpha()).arg(fill));
         }
         QVBoxLayout *layout = new QVBoxLayout(row);
         layout->setContentsMargins(6, 4, 6, 4);
@@ -1092,6 +1095,7 @@ void MainWindow::updateSnrWindow()
             continue;
         }
         const StackSource &source = project.sources[index];
+        window->setAccent(colorFor(source.id));
         window->setContent(tr("SNR - source %1 (%2)").arg(index + 1).arg(sourceTitle(source)), sourceCurve(index, true),
                            sourceCurve(index, false), stackWhite, stackBlack, frame);
     }

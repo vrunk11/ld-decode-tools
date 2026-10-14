@@ -11,6 +11,8 @@
 #include "toolwindows.h"
 
 #include <QCloseEvent>
+#include <QIcon>
+#include <QPainter>
 #include <QPixmap>
 #include <QVBoxLayout>
 
@@ -22,12 +24,29 @@ SnrWindow::SnrWindow(QWidget *parent)
     resize(640, 260);
 
     QVBoxLayout *layout = new QVBoxLayout(this);
-    layout->setContentsMargins(6, 6, 6, 6);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(0);
+    accentBar = new QFrame;
+    accentBar->setFixedHeight(8);
+    layout->addWidget(accentBar);
     graph = new SnrGraph(true);
     graph->setMinimumHeight(180);
     layout->addWidget(graph, 1);
     connect(graph, &SnrGraph::frameRequested, this, &SnrWindow::frameRequested);
 }
+
+void SnrWindow::setAccent(const QColor &color)
+{
+    accentBar->setStyleSheet(QString("background-color: %1;").arg(color.name()));
+    QPixmap pixmap(16, 16);
+    pixmap.fill(Qt::transparent);
+    QPainter painter(&pixmap);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    painter.setBrush(color);
+    painter.setPen(Qt::NoPen);
+    painter.drawEllipse(QRectF(1, 1, 14, 14));
+    painter.end();
+    setWindowIcon(QIcon(pixmap));}
 
 void SnrWindow::setContent(const QString &title, const QVector<float> &white, const QVector<float> &black,
                            const QVector<float> &stackWhite, const QVector<float> &stackBlack, qint32 marker)

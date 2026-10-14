@@ -12,6 +12,7 @@
 #define TOOLWINDOWS_H
 
 #include <QDialog>
+#include <QFrame>
 #include <QImage>
 #include <QLabel>
 #include <QMap>
@@ -30,6 +31,8 @@ public:
     // The SNR of a source, a value per frame of the timeline (NaN where it has none), with the stack's behind
     void setContent(const QString &title, const QVector<float> &white, const QVector<float> &black,
                     const QVector<float> &stackWhite, const QVector<float> &stackBlack, qint32 marker);
+    // The colour of the source, which tells its window from the others: a bar at the top, and the window's icon
+    void setAccent(const QColor &color);
     void setMarker(qint32 frame);
 
 signals:
@@ -37,6 +40,7 @@ signals:
 
 private:
     SnrGraph *graph = nullptr;
+    QFrame *accentBar = nullptr;
 };
 
 // The final stack in a window of its own, so that it stays in view while the main window shows a source
