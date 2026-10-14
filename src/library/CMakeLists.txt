@@ -34,3 +34,12 @@ target_include_directories(lddecode-library PUBLIC filter tbc)
 target_include_directories(lddecode-library PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
 target_link_libraries(lddecode-library PRIVATE Qt::Core Qt::Sql)
+
+# The LDX container (docs/Specifications/container-format.md), when libebml and libmatroska are there
+if(LDDECODE_LDX_AVAILABLE)
+    add_library(lddecode-ldx STATIC
+        ldx/ldx.cpp
+    )
+    target_include_directories(lddecode-ldx PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/ldx)
+    target_link_libraries(lddecode-ldx PUBLIC Qt::Core EBML::ebml Matroska::matroska)
+endif()

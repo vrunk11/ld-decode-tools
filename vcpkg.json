@@ -7,6 +7,8 @@
   "dependencies": [
     "fftw3",
     "pkgconf",
+    "ebml",
+    "matroska",
     {
       "name": "getopt",
       "platform": "windows & !mingw"

@@ -52,6 +52,14 @@ Each stream is a **Matroska track**. A track has a *kind*, a *bit depth* (the us
 
 A block carries the data of one unit and is stamped with the time of the unit (the field rate for fields, in nanoseconds). Fields of a frame follow each other, first field first. A kind that is not in this table is ignored by a reader that does not know it, and must be copied on (section 8).
 
+**Several streams of the same kind.** A file can hold any number of tracks of one kind, for example the captures of the same VHS tape or the sources of a stack, each a `tbc` or `cvbs` track with its own parameters. A track is identified by its **id**, which is its Matroska track number: it is never reused in a file, and everything that refers to a stream (a `.stack` session, a metadata block, an annotation) refers to it by that id. A track has a `name` for people (for example `capture 1`).
+
+**Adding and removing a stream.** A tool can add a stream to a file, or remove the stream with the id *x*:
+
+- *Adding* gives the new track the next free id. In a file that is already written the list of tracks has free space (padding) reserved after it so that a track can be added without moving the data.
+- *Removing* leaves the id unused. A removed track is first only disabled (its blocks stay in the file and readers skip it). Its space is given back when the file is compacted, by writing the file again without it.
+- A `.stack` session, a metadata block or an annotation that refers to a removed id is not valid, and the tool that removes the stream must say so (or remove them with it).
+
 The parameters of a track are those the tools already use: video system, sample rate, field width and height, the position of the active region, the black, white and blanking levels, the order of the fields. They are the fields of the existing `videoParameters` where they exist.
 
 ## 4. Codecs
@@ -75,7 +83,7 @@ Measured on 40 fields of an NTSC capture (910 x 263, size as a share of the raw 
 
 ## 5. Time
 
-All blocks have a timestamp. The timeline is the one of the first field of the first frame, in nanoseconds. Tracks of unequal unit (fields, audio blocks) are aligned by their timestamps and not by a count.
+All blocks have a timestamp. The resolution of a timestamp in the file is **one microsecond** (the Matroska timestamp scale is 1000 ns), so a time given in nanoseconds is rounded to a microsecond. The timeline is the one of the first field of the first frame, in nanoseconds. Tracks of unequal unit (fields, audio blocks) are aligned by their timestamps and not by a count.
 
 ## 6. Metadata and annotations
 
