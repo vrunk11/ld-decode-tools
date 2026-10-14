@@ -106,6 +106,17 @@ public:
     // The next block of the file, in the order it was written. False at the end.
     bool nextBlock(Block &block);
 
+    // Random access to the blocks of a track, for the tools that jump about in a capture (the field of a
+    // TBC, by its number). The index is read from the cues at the end of the file; it is built by the first
+    // call. Do not mix this with nextBlock on one reader: both move in the file.
+    bool buildIndex(QString &error);
+    qint64 blockCount(quint32 track) const;              // 0 for a track that has no blocks
+    qint64 blockTimeNs(quint32 track, qint64 index) const;
+    bool readBlock(quint32 track, qint64 index, Block &block);
+
+    // The attachment with a name, if the file has it
+    bool attachment(const QString &name, QByteArray &data) const;
+
 private:
     struct Private;
     std::unique_ptr<Private> d;

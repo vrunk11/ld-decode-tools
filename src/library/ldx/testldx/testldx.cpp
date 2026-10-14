@@ -115,6 +115,24 @@ static void testRoundTrip(const QString &path)
         index++;
     }
     CHECK(index == written.size());
+
+    // Random access: the Nth block of a track, from the cues, in any order
+    Ldx::Reader random;
+    CHECK(random.open(path, error));
+    CHECK(random.buildIndex(error));
+    CHECK(random.blockCount(1) == 12 && random.blockCount(2) == 12 && random.blockCount(3) == 6 && random.blockCount(4) == 4);
+    CHECK(random.blockCount(99) == 0);
+    for (const int wanted: { 7, 0, 11, 3, 3 }) {
+        Ldx::Block found;
+        CHECK(random.readBlock(2, wanted, found));
+        CHECK(found.track == 2 && found.timeNs == wanted * 16683000LL && found.data == pattern(478660, wanted + 100));
+        CHECK(random.blockTimeNs(2, wanted) == found.timeNs);
+    }
+    Ldx::Block audioBlock;
+    CHECK(random.readBlock(3, 5, audioBlock) && audioBlock.data == pattern(5880, 10 + 200));
+    CHECK(!random.readBlock(3, 6, audioBlock));
+    Ldx::Block metadataBlock;
+    CHECK(random.readBlock(4, 0, metadataBlock) && metadataBlock.data.size() == 1483317);
 }
 
 // One block of each size in a file of its own, on a track of samples and on a track of metadata

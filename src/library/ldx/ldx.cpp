@@ -13,6 +13,7 @@
 #include <QJsonDocument>
 #include <QRandomGenerator>
 
+#include <algorithm>
 #include <deque>
 #include <map>
 #include <vector>
@@ -27,6 +28,7 @@
 #include <matroska/KaxBlock.h>
 #include <matroska/KaxCluster.h>
 #include <matroska/KaxCues.h>
+#include <matroska/KaxCuesData.h>
 #include <matroska/KaxInfo.h>
 #include <matroska/KaxInfoData.h>
 #include <matroska/KaxSegment.h>
@@ -144,6 +146,17 @@ struct Writer::Private
     KaxCluster *cluster = nullptr;
     qint64 clusterStartNs = 0;
     std::vector<QByteArray> held;                          // the data of the blocks of the cluster, until it is written
+    struct BlockCue {
+        qint64 timeNs;
+        quint32 track;
+    };
+    struct CueRecord {
+        qint64 timeNs;
+        quint32 track;
+        quint64 clusterPosition;        // from the start of the data of the segment
+    };
+    std::vector<BlockCue> clusterBlocks;       // the blocks of the cluster being written
+    std::vector<CueRecord> cueRecords;         // of all the blocks written, for the cues at the end
     bool finished = false;
     QString error;
 
@@ -151,6 +164,9 @@ struct Writer::Private
     {
         if (!cluster) return;
         cluster->Render(*output, cues);
+        const quint64 position = cluster->GetElementPosition() - (segment->GetElementPosition() + segment->HeadSize());
+        for (const BlockCue &block: clusterBlocks) cueRecords.push_back({ block.timeNs, block.track, position });
+        clusterBlocks.clear();
         cluster->ReleaseFrames();
         delete cluster;
         cluster = nullptr;
@@ -310,6 +326,7 @@ bool Writer::writeBlock(quint32 track, qint64 timeNs, const QByteArray &data)
         KaxBlockGroup *block = nullptr;
         // Without lacing the block takes the one frame and says that it is full (false), which is not a failure
         d->cluster->AddFrame(*d->entries[track], static_cast<uint64>(timeNs), *buffer, block, LACING_NONE);
+        d->clusterBlocks.push_back({ timeNs, track });
         return true;
     } catch (const std::exception &exception) {
         d->error = QString::fromLocal8Bit(exception.what());
@@ -327,6 +344,19 @@ bool Writer::finish(QString &error)
     if (!d->output || d->finished) return true;
     try {
         d->flushCluster();
+        // The cues, at the end: where the blocks of each track are
+        if (!d->cueRecords.empty()) {
+            KaxCues cues;
+            cues.SetGlobalTimecodeScale(TimecodeScaleNs);
+            for (const Private::CueRecord &record: d->cueRecords) {
+                auto *point = static_cast<KaxCuePoint *>(cues.AddNewElt(EBML_INFO(KaxCuePoint)));
+                GetChild<KaxCueTime>(*point).SetValue(static_cast<uint64>(record.timeNs / TimecodeScaleNs));
+                KaxCueTrackPositions &positions = GetChild<KaxCueTrackPositions>(*point);
+                GetChild<KaxCueTrack>(positions).SetValue(record.track);
+                GetChild<KaxCueClusterPosition>(positions).SetValue(record.clusterPosition);
+            }
+            cues.Render(*d->output, false);
+        }
         // The size of the segment is known now
         const uint64 end = d->output->getFilePointer();
         d->segment->ForceSize(end - d->segment->GetElementPosition() - d->segment->HeadSize());
@@ -358,6 +388,14 @@ struct Reader::Private
     QVector<Attachment> attachmentList;
     uint64 timecodeScale = 1000000;            // Matroska default
     std::deque<Block> queue;
+
+    // The index of the blocks of each track, from the cues
+    struct IndexEntry {
+        qint64 timeNs;
+        quint64 clusterPosition;        // from the start of the data of the segment
+    };
+    std::map<quint32, std::vector<IndexEntry>> index;
+    bool indexed = false;
 
     ~Private()
     {
@@ -427,7 +465,68 @@ struct Reader::Private
         return stream->FindNextElement(segmentElement->Generic().Context, upperLevel, 0xFFFFFFFFL, true, 1);
     }
 
-    void readCluster(KaxCluster &cluster)
+    // Read the cues, which are after the clusters: the top-level elements are passed over until they are found
+    bool readCues(QString &error)
+    {
+        input->setFilePointer(static_cast<int64>(segmentElement->GetElementPosition() + segmentElement->HeadSize()));
+        EbmlStream scan(*input);
+        int upper = 0;
+        bool found = false;
+        EbmlElement *element = nullptr;
+        while ((element = scan.FindNextElement(segmentElement->Generic().Context, upper, 0xFFFFFFFFL, true, 1)) != nullptr && upper <= 0) {
+            std::unique_ptr<EbmlElement> owned(element);
+            if (EbmlId(*element) == EBML_ID(KaxCues)) {
+                int up = 0;
+                EbmlElement *dummy = nullptr;
+                element->Read(scan, EBML_CONTEXT(element), up, dummy, true);
+                for (EbmlElement *child: static_cast<KaxCues *>(element)->GetElementList()) {
+                    if (EbmlId(*child) != EBML_ID(KaxCuePoint)) continue;
+                    auto &point = *static_cast<KaxCuePoint *>(child);
+                    auto *time = FindChild<KaxCueTime>(point);
+                    if (!time) continue;
+                    for (EbmlElement *positions: point.GetElementList()) {
+                        if (EbmlId(*positions) != EBML_ID(KaxCueTrackPositions)) continue;
+                        auto &trackPositions = *static_cast<KaxCueTrackPositions *>(positions);
+                        auto *track = FindChild<KaxCueTrack>(trackPositions);
+                        auto *cluster = FindChild<KaxCueClusterPosition>(trackPositions);
+                        if (!track || !cluster) continue;
+                        index[static_cast<quint32>(track->GetValue())].push_back({ static_cast<qint64>(time->GetValue() * timecodeScale), cluster->GetValue() });
+                    }
+                }
+                found = true;
+            } else {
+                element->SkipData(scan, EBML_CONTEXT(element));
+            }
+        }
+        if (!found) {
+            error = QObject::tr("The file has no cues, which are its index");
+            return false;
+        }
+        // In the order of time, one entry for each block
+        for (auto &entry: index) {
+            std::stable_sort(entry.second.begin(), entry.second.end(), [](const IndexEntry &a, const IndexEntry &b) { return a.timeNs < b.timeNs; });
+            entry.second.erase(std::unique(entry.second.begin(), entry.second.end(), [](const IndexEntry &a, const IndexEntry &b) {
+                return a.timeNs == b.timeNs && a.clusterPosition == b.clusterPosition; }), entry.second.end());
+        }
+        return true;
+    }
+
+    // The blocks of the cluster at a position
+    bool readClusterAt(quint64 position, std::deque<Block> &target)
+    {
+        input->setFilePointer(static_cast<int64>(segmentElement->GetElementPosition() + segmentElement->HeadSize() + position));
+        EbmlStream scan(*input);
+        EbmlElement *element = scan.FindNextID(KaxCluster::ClassInfos, 0xFFFFFFFFL);
+        if (!element) return false;
+        std::unique_ptr<EbmlElement> owned(element);
+        int up = 0;
+        EbmlElement *dummy = nullptr;
+        element->Read(scan, EBML_CONTEXT(element), up, dummy, true);
+        readCluster(*static_cast<KaxCluster *>(element), target);
+        return true;
+    }
+
+    void readCluster(KaxCluster &cluster, std::deque<Block> &target)
     {
         cluster.SetParent(*static_cast<KaxSegment *>(segmentElement));
         auto *time = FindChild<KaxClusterTimecode>(cluster);
@@ -437,15 +536,15 @@ struct Reader::Private
         for (EbmlElement *element: cluster.GetElementList()) {
             if (EbmlId(*element) == EBML_ID(KaxBlockGroup)) {
                 auto *block = FindChild<KaxBlock>(*static_cast<KaxBlockGroup *>(element));
-                if (block) pushBlock(*block, cluster, clusterNs);
+                if (block) pushBlock(*block, cluster, clusterNs, target);
             } else if (EbmlId(*element) == EBML_ID(KaxSimpleBlock)) {
-                pushBlock(*static_cast<KaxSimpleBlock *>(element), cluster, clusterNs);
+                pushBlock(*static_cast<KaxSimpleBlock *>(element), cluster, clusterNs, target);
             }
         }
     }
 
     template <class BlockType>
-    void pushBlock(BlockType &block, KaxCluster &cluster, qint64 clusterNs)
+    void pushBlock(BlockType &block, KaxCluster &cluster, qint64 clusterNs, std::deque<Block> &target)
     {
         block.SetParent(cluster);
         for (unsigned int i = 0; i < block.NumberFrames(); i++) {
@@ -454,7 +553,7 @@ struct Reader::Private
             out.track = block.TrackNum();
             out.timeNs = clusterNs + static_cast<qint64>(block.GetRelativeTimestamp()) * static_cast<qint64>(timecodeScale);
             out.data = QByteArray(reinterpret_cast<const char *>(frame.Buffer()), static_cast<int>(frame.Size()));
-            queue.push_back(std::move(out));
+            target.push_back(std::move(out));
         }
     }
 };
@@ -542,7 +641,7 @@ bool Reader::nextBlock(Block &block)
             EbmlElement *dummy = nullptr;
             if (EbmlId(*element) == EBML_ID(KaxCluster)) {
                 element->Read(*d->stream, EBML_CONTEXT(element), up, dummy, true);
-                d->readCluster(*static_cast<KaxCluster *>(element));
+                d->readCluster(*static_cast<KaxCluster *>(element), d->queue);
             } else if (EbmlId(*element) == EBML_ID(KaxTags)) {
                 element->Read(*d->stream, EBML_CONTEXT(element), up, dummy, true);
                 d->readTags(*static_cast<KaxTags *>(element));
@@ -560,6 +659,62 @@ bool Reader::nextBlock(Block &block)
     block = std::move(d->queue.front());
     d->queue.pop_front();
     return true;
+}
+
+bool Reader::buildIndex(QString &error)
+{
+    if (d->indexed) return true;
+    try {
+        if (!d->readCues(error)) return false;
+    } catch (const std::exception &exception) {
+        error = QObject::tr("Could not read the index: %1").arg(QString::fromLocal8Bit(exception.what()));
+        return false;
+    }
+    d->indexed = true;
+    return true;
+}
+
+qint64 Reader::blockCount(quint32 track) const
+{
+    const auto found = d->index.find(track);
+    return found == d->index.end() ? 0 : static_cast<qint64>(found->second.size());
+}
+
+qint64 Reader::blockTimeNs(quint32 track, qint64 index) const
+{
+    const auto found = d->index.find(track);
+    if (found == d->index.end() || index < 0 || index >= static_cast<qint64>(found->second.size())) return -1;
+    return found->second[static_cast<size_t>(index)].timeNs;
+}
+
+bool Reader::readBlock(quint32 track, qint64 index, Block &block)
+{
+    const auto found = d->index.find(track);
+    if (found == d->index.end() || index < 0 || index >= static_cast<qint64>(found->second.size())) return false;
+    const Private::IndexEntry entry = found->second[static_cast<size_t>(index)];
+    try {
+        std::deque<Block> blocks;
+        if (!d->readClusterAt(entry.clusterPosition, blocks)) return false;
+        for (Block &candidate: blocks) {
+            if (candidate.track == track && candidate.timeNs == entry.timeNs) {
+                block = std::move(candidate);
+                return true;
+            }
+        }
+    } catch (const std::exception &) {
+    }
+    return false;
+}
+
+bool Reader::attachment(const QString &name, QByteArray &data) const
+{
+    for (const Attachment &candidate: d->attachmentList) {
+        if (candidate.name == name) {
+            data = candidate.data;
+            return true;
+        }
+    }
+    return false;
 }
 
 } // namespace Ldx
