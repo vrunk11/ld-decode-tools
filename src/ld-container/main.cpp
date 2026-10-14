@@ -438,7 +438,9 @@ bool readCapture(const CaptureOptions &options, const QString &input, Capture &c
     LdDecodeMetaData parameters;
     if (options.live) {
         // The parameters of the video now, the fields as they come
-        parameters.setVideoParameters(video);
+        LdDecodeMetaData::VideoParameters noFields = video;
+        noFields.numberOfSequentialFields = 0;      // (the fields come later)
+        parameters.setVideoParameters(noFields);
         parameters.setPcmAudioParameters(metadata.getPcmAudioParameters());
         parameters.setIsFirstFieldFirst(metadata.getIsFirstFieldFirst());
         for (qint64 number = 1; number <= capture.fields; number++) {

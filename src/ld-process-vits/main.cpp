@@ -31,6 +31,8 @@
 #include <QFileInfo>
 
 #include "tbc/logging.h"
+#include "ldxfilter.h"
+#include "vitsmetrics.h"
 #include "tbc/metadataoptions.h"
 #include "lddecodemetadata.h"
 #include "sourcevideo.h"
@@ -113,6 +115,26 @@ int main(int argc, char *argv[])
         // Quit with error
         qCritical("You must specify an input TBC file");
         return -1;
+    }
+
+    // An LDX stream on the standard input: the metadata of each field are made as the field goes by, and the stream
+    // goes on down the pipe
+    if (inputFilename == "-") {
+        LdxFieldFilter::Options options;
+        options.tool = "ld-process-vits";
+        options.version = APP_COMMIT;
+        options.detail = "VITS metrics";
+        options.threads = maxThreads;
+        QString streamError;
+        if (!LdxFieldFilter::run(options, [](qint32, const SourceVideo::Data &data, const LdDecodeMetaData::VideoParameters &videoParameters,
+                                              LdDecodeMetaData::Field &field) {
+            computeVitsMetrics(data, 1, videoParameters, field);
+            field.vitsMetrics.inUse = true;     // (it is written to the metadata that goes on)
+        }, streamError)) {
+            qCritical().noquote() << streamError;
+            return 1;
+        }
+        return 0;
     }
 
     // Work out the metadata filenames

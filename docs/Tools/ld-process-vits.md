@@ -32,3 +32,13 @@ Arguments:
 ## LDX files
 
 The input can be an LDX file (`capture.ldx`, or `capture.ldx#3` for one of its tracks). The new metadata are not written beside the file: they are added to the LDX file as the current metadata of the capture (a block added at the end, which supersedes the one that was there), and the history of the file records it. If they cannot be written the tool says so and ends with an error.
+
+### In a pipe
+
+`-` as the input is an LDX stream on the standard input, and the LDX stream goes out on the standard output with the VITS metrics of each field added to its metadata, each field sent as soon as it is done (the metadata of a field in a block of its own just before its video), so that tools can follow one another:
+
+```
+ld-container pack capture.tbc -o - | ld-process-vbi - | ld-process-vits - | ld-analyse -
+```
+
+A stream without metadata gets the defaults of its video system. The history of the stream records the tool. See the specification of the container format (section 19).
