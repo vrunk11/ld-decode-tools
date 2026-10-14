@@ -512,4 +512,8 @@ The help menu contains an about option that displays information about the appli
 
 ## Opening a stacking session
 
-A `.stack` stacking session (see [ld-stacker-gui](ld-stacker-gui.md) and [ld-disc-stacker](ld-disc-stacker.md)) can be opened in its place: the stack of its sources is made as the frames are asked for, so it is shown, played and decoded without being written to a file first. It is the same stack that ld-disc-stacker writes for the session, and decoding it gives the same picture as decoding the file. The metadata is that of the first source that is on, with no dropouts (the stack has filled them) and no VITS measurements (use the SNR measure from the video for the SNR); the metadata of a session cannot be saved.
+A `.stack` stacking session (see [ld-stacker-gui](ld-stacker-gui.md) and [ld-disc-stacker](ld-disc-stacker.md)) can be opened in its place: the stack of its sources is made as the frames are asked for, so it is shown, played and decoded without being written to a file first. It is the same stack that ld-disc-stacker writes for the session, and decoding it gives the same picture as decoding the file. The metadata is that of the first source that is on, with no dropouts (the stack has filled them) and no VITS measurements. The SNR of the stack is therefore measured from the video as soon as the session is opened (Measure from the video is ticked, and the graphs fill as it goes), and gives the values ld-stacker-gui shows for the stack. The metadata of a session cannot be saved.
+
+## Reading the graphs
+
+Move the cursor over an analysis graph (SNR, dropouts) to read it: a dotted line follows it, and a box gives the frame number and the value of each curve at that frame, in dB for the SNR graphs.

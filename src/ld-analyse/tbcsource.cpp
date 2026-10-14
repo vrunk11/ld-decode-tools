@@ -85,6 +85,12 @@ bool TbcSource::getIsSourceLoaded()
     return sourceReady;
 }
 
+// Method returns true if the source is a stacking session
+bool TbcSource::getIsStack()
+{
+    return sourceReady && currentMetadataFilename.endsWith(".stack", Qt::CaseInsensitive);
+}
+
 // Method returns the filename of the current TBC source
 QString TbcSource::getCurrentSourceFilename()
 {

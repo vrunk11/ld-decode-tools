@@ -124,6 +124,8 @@ public:
     qint32 getLookBehindFrames();
     void unloadSource();
     bool getIsSourceLoaded();
+    // A stacking session (.stack): the stack of its sources, whose metadata has no SNR
+    bool getIsStack();
     void saveSourceMetadata();
     QString getCurrentSourceFilename();
     QString getCurrentMetadataFilename();

@@ -2700,6 +2700,10 @@ void MainWindow::on_finishedLoading(bool success)
         resetGui();
         updateGuiLoaded();
 
+        // A stack has no SNR in its metadata (that of its first source is not the stack's), so it is
+        // measured from the video, as with Measure ticked
+        if (tbcSource.getIsStack()) setFileSnrMeasuring(true);
+
         ui->actionOpen_TBC_file->setEnabled(!tbcSource.getIsLive());
         // Set the main window title
         this->setWindowTitle(tbcSource.getIsLive() ? tr("ld-analyse - Live input")

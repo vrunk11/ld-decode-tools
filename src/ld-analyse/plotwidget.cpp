@@ -71,6 +71,19 @@ void PlotWidget::setupView()
     m_axisLabels = new PlotAxisLabels(this);
     m_scene->addItem(m_axisLabels);
     
+    // What reads the values under the cursor: a line, and a box with the text (hidden until the cursor is on the plot)
+    m_hoverLine = new QGraphicsLineItem;
+    m_hoverLine->setZValue(900);
+    m_hoverLine->setVisible(false);
+    m_scene->addItem(m_hoverLine);
+    m_hoverBox = new QGraphicsRectItem;
+    m_hoverBox->setZValue(901);
+    m_hoverBox->setVisible(false);
+    m_scene->addItem(m_hoverBox);
+    m_hoverText = new QGraphicsSimpleTextItem(m_hoverBox);
+    m_view->viewport()->setMouseTracking(true);
+    m_view->viewport()->installEventFilter(this);
+
     // Detect and apply theme
     updateTheme();
     
@@ -812,4 +825,76 @@ void PlotAxisLabels::paint(QPainter *painter, const QStyleOptionGraphicsItem *op
     // Draw plot border
     painter->setPen(QPen(axisColor, 1));
     painter->drawRect(m_plotRect);
+}
+bool PlotWidget::eventFilter(QObject *watched, QEvent *event)
+{
+    if (m_view && watched == m_view->viewport()) {
+        if (event->type() == QEvent::MouseMove) {
+            const QMouseEvent *mouse = static_cast<QMouseEvent *>(event);
+            if (mouse->buttons() == Qt::NoButton) updateHover(mouse->position().toPoint()); else hideHover();
+        } else if (event->type() == QEvent::Leave) {
+            hideHover();
+        }
+    }
+    return QWidget::eventFilter(watched, event);
+}
+
+void PlotWidget::hideHover()
+{
+    if (m_hoverLine) m_hoverLine->setVisible(false);
+    if (m_hoverBox) m_hoverBox->setVisible(false);
+}
+
+// Read the series at the cursor: the point of each that is nearest to it along the x axis
+void PlotWidget::updateHover(const QPoint &viewportPosition)
+{
+    const QPointF scenePosition = m_view->mapToScene(viewportPosition);
+    if (!m_plotRect.contains(scenePosition)) {
+        hideHover();
+        return;
+    }
+
+    const QPointF at = mapToData(scenePosition);
+    QString unit;
+    const qsizetype open = m_yAxisTitle.indexOf("(in ");
+    if (open >= 0) unit = " " + m_yAxisTitle.mid(open + 4).remove(')');
+
+    QStringList lines;
+    lines << QString("%1: %2").arg(m_xAxisTitle.isEmpty() ? QString("x") : m_xAxisTitle).arg(qRound(at.x()));
+    for (PlotSeries *series: m_series) {
+        if (!series->isVisible() || series->title().isEmpty()) continue;
+        const QVector<QPointF> data = series->data();
+        if (data.isEmpty()) continue;
+
+        // The points are in order along x
+        qsizetype low = 0, high = data.size() - 1;
+        while (low < high) {
+            const qsizetype middle = (low + high) / 2;
+            if (data[middle].x() < at.x()) low = middle + 1; else high = middle;
+        }
+        if (low > 0 && qAbs(data[low - 1].x() - at.x()) < qAbs(data[low].x() - at.x())) low--;
+        lines << QString("%1: %2%3").arg(series->title()).arg(data[low].y(), 0, 'f', 2).arg(unit);
+    }
+
+    const QPalette palette = QApplication::palette();
+    QColor line = palette.color(QPalette::Text);
+    line.setAlpha(140);
+    m_hoverLine->setPen(QPen(line, 1, Qt::DashLine));
+    m_hoverLine->setLine(scenePosition.x(), m_plotRect.top(), scenePosition.x(), m_plotRect.bottom());
+    m_hoverLine->setVisible(true);
+
+    m_hoverText->setBrush(palette.color(QPalette::Text));
+    m_hoverText->setText(lines.join('\n'));
+    const QRectF text = m_hoverText->boundingRect();
+    m_hoverText->setPos(6, 4);
+    QColor fill = palette.color(QPalette::Window);
+    fill.setAlpha(230);
+    m_hoverBox->setBrush(fill);
+    m_hoverBox->setPen(QPen(palette.color(QPalette::Text), 1));
+    m_hoverBox->setRect(0, 0, text.width() + 12, text.height() + 8);
+    // On the side of the cursor that has the room
+    const qreal boxX = scenePosition.x() + 12 + m_hoverBox->rect().width() < m_plotRect.right()
+                           ? scenePosition.x() + 12 : scenePosition.x() - 12 - m_hoverBox->rect().width();
+    m_hoverBox->setPos(boxX, m_plotRect.top() + 4);
+    m_hoverBox->setVisible(true);
 }

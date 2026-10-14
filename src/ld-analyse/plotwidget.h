@@ -92,6 +92,8 @@ signals:
 
 protected:
     void resizeEvent(QResizeEvent *event) override;
+    // The values of the series under the cursor are read in a box that follows it
+    bool eventFilter(QObject *watched, QEvent *event) override;
 
 private slots:
     void onSceneSelectionChanged();
@@ -121,6 +123,9 @@ private:
     PlotAxisLabels *m_axisLabels;
     QList<PlotSeries*> m_series;
     QList<PlotMarker*> m_markers;
+    QGraphicsLineItem *m_hoverLine = nullptr;
+    QGraphicsRectItem *m_hoverBox = nullptr;
+    QGraphicsSimpleTextItem *m_hoverText = nullptr;
     
     // Settings
     bool m_gridEnabled;
@@ -139,6 +144,8 @@ private:
     void setupView();
     void updatePlotArea();
     void updateAxisLabels();
+    void updateHover(const QPoint &viewportPosition);
+    void hideHover();
     void calculateDataRange();
 };
 
