@@ -100,8 +100,14 @@ void FrameBackend::addSource(const QString &id, const QString &file, bool revers
     info.whiteSnr.resize(info.frames);
     info.blackSnr.resize(info.frames);
     for (qint32 frame = 1; frame <= info.frames; frame++) {
-        const LdDecodeMetaData::Field &first = loaded->metadata.getField(loaded->metadata.getFirstFieldNumber(frame));
-        const LdDecodeMetaData::Field &second = loaded->metadata.getField(loaded->metadata.getSecondFieldNumber(frame));
+        const qint32 firstNumber = loaded->metadata.getFirstFieldNumber(frame);
+        const qint32 secondNumber = loaded->metadata.getSecondFieldNumber(frame);
+        info.whiteSnr[frame - 1] = std::nanf("");
+        info.blackSnr[frame - 1] = std::nanf("");
+        // (a frame whose fields cannot be found has no SNR)
+        if (firstNumber < 1 || secondNumber < 1) continue;
+        const LdDecodeMetaData::Field &first = loaded->metadata.getField(firstNumber);
+        const LdDecodeMetaData::Field &second = loaded->metadata.getField(secondNumber);
         info.whiteSnr[frame - 1] = frameSnr(first, second, true);
         info.blackSnr[frame - 1] = frameSnr(first, second, false);
     }
@@ -368,10 +374,15 @@ bool FrameBackend::stackFrame(const FrameRequest &request, qint32 frame, qint32 
 
     QVector<SourceVideo::Data> firstData(total), secondData(total);
     QVector<LdDecodeMetaData::Field> firstMetadata(total), secondMetadata(total);
+    const qint32 expectedSize = videoParameters.fieldWidth * (readLines > 0 ? readLines : videoParameters.fieldHeight);
+    QVector<qint32> good;
     for (qint32 i: usable) {
         Loaded &source = *sources.value(request.entries[i].id);
         const qint32 first = source.metadata.getFirstFieldNumber(frames[i]);
         const qint32 second = source.metadata.getSecondFieldNumber(frames[i]);
+        const qint32 available = source.video.getNumberOfAvailableFields();
+        // The metadata can name fields that the file does not hold
+        if (first < 1 || second < 1 || first > available || second > available) continue;
         // In the order of the file, to save seeking
         if (first < second) {
             firstData[i] = readField(source, first);
@@ -380,9 +391,13 @@ bool FrameBackend::stackFrame(const FrameRequest &request, qint32 frame, qint32 
             secondData[i] = readField(source, second);
             firstData[i] = readField(source, first);
         }
+        if (firstData[i].size() != expectedSize || secondData[i].size() != expectedSize) continue;
         firstMetadata[i] = source.metadata.getField(first);
         secondMetadata[i] = source.metadata.getField(second);
+        good.append(i);
     }
+    usable = good;
+    if (usable.isEmpty()) return false;
 
     // The mode: as ld-disc-stacker, auto goes by how many sources there are
     qint32 mode = request.settings.mode;
