@@ -466,6 +466,34 @@ static void testFlacTracks(const QString &path)
     CHECK(after.readBlock(1, 1, found) && found.data == wave(239330, 1));
 }
 
+// The samples of a TBC are unsigned: they are made signed for FLAC, so the same wave is smaller as a TBC than as RF samples
+static void testUnsignedSamples(const QString &directory)
+{
+    if (!Ldx::flacAvailable()) return;
+    std::cerr << "Testing the unsigned samples of a TBC\n";
+    qint64 sizes[2] = { 0, 0 };
+    int which = 0;
+    for (const Ldx::Kind kind: { Ldx::Kind::Tbc, Ldx::Kind::Rf }) {
+        const QString path = directory + (which ? "/rf.ldx" : "/tbc.ldx");
+        Ldx::Writer writer;
+        Ldx::Track track;
+        track.kind = kind;
+        track.codec = Ldx::Codec::Flac;
+        writer.addTrack(track);
+        QString error;
+        CHECK(writer.open(path, error));
+        CHECK(writer.writeBlock(1, 0, wave(239330, 3)));
+        CHECK(writer.finish(error));
+        sizes[which++] = QFileInfo(path).size();
+
+        Ldx::Reader reader;
+        CHECK(reader.open(path, error));
+        Ldx::Block block;
+        CHECK(reader.nextBlock(block) && block.data == wave(239330, 3));
+    }
+    CHECK(sizes[0] < sizes[1]);
+}
+
 static void testNotAnLdxFile(const QString &path)
 {
     std::cerr << "Testing a file that is not an LDX file\n";
@@ -492,6 +520,7 @@ int main(int argc, char *argv[])
     testAppend(directory.filePath("append.ldx"));
     testFlac(directory.path());
     testFlacTracks(directory.filePath("flac.ldx"));
+    testUnsignedSamples(directory.path());
     testNotAnLdxFile(directory.filePath("garbage.ldx"));
 
     std::cerr << "All tests passed\n";

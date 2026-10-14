@@ -19,6 +19,7 @@
 
 #ifdef LDDECODE_WITH_LDX
 #include "ldx.h"
+#include "ldxcodec.h"
 #endif
 
 namespace {
@@ -172,9 +173,13 @@ bool LdxCapture::open(const QString &name, QString &error)
                     .arg(chosen->number).arg(path, Ldx::kindName(chosen->kind));
         return false;
     }
-    if (chosen->codec != Ldx::Codec::Raw) {
+    if (chosen->codec != Ldx::Codec::Raw && chosen->codec != Ldx::Codec::Flac) {
         error = QObject::tr("Track %1 of %2 is %3 coded, which this build does not read yet")
                     .arg(chosen->number).arg(path, Ldx::codecName(chosen->codec));
+        return false;
+    }
+    if (chosen->codec == Ldx::Codec::Flac && !Ldx::flacAvailable()) {
+        error = QObject::tr("Track %1 of %2 is FLAC, and this program was built without ffmpeg, which reads it").arg(chosen->number).arg(path);
         return false;
     }
     if (!d->reader.buildIndex(error)) return false;

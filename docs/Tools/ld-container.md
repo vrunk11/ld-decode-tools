@@ -7,11 +7,12 @@ This is a first slice: the tracks are raw (no FLAC or FFV1 yet), and the tool re
 ## Usage
 
 ```
-ld-container pack input.tbc -o file.ldx [--pcm file.pcm] [--efm file.efm] [--ac3 file.ac3] [--pcm-rate 44100] [--start field] [--fields count] [--name name]
+ld-container pack input.tbc -o file.ldx [--pcm file.pcm] [--codec flac] [--efm file.efm] [--ac3 file.ac3] [--pcm-rate 44100] [--start field] [--fields count] [--name name]
 ld-container add file.ldx input.tbc -o new.ldx [same options]
 ld-container remove file.ldx --id 3 -o new.ldx
 ld-container stack file.ldx session.stack -o new.ldx [--embed]
 ld-container info file.ldx
+ld-container recompress file.ldx --codec flac [--id 1] -o new.ldx
 ld-container verify file.ldx
 ld-container extract file.ldx --id 4 [-o file]
 ld-container unpack file.ldx -o directory
@@ -31,7 +32,11 @@ An LDX file is a Matroska file: `ffprobe` lists its tracks, and `ffmpeg -i file.
 
 ## Limits of this version
 
-- Only raw tracks are written; FLAC and FFV1 come with the codec back end.
+- FLAC is written and read; FFV1 and the `cvbs` tracks it is for are still to come.
 - The time stamps have a resolution of one microsecond.
 - `add`, `remove` and `stack` write the file again, to another file.
-- ld-analyse, ld-chroma-decoder, ld-disc-stacker, ld-dropout-correct, ld-discmap, ld-export-metadata, ld-tbc-to-cvbs and ld-stacker-gui open an LDX file, or a track of it (`file.ldx#3`), and the session it keeps; ld-process-vbi and ld-process-vits save their metadata into it, as a block added at the end. The audio is not read by the graphical programs yet, a `cvbs` track, the FLAC and FFV1 codecs and the pipe are still to come, and the EFM tools read the track through `extract`.
+- ld-analyse, ld-chroma-decoder, ld-disc-stacker, ld-dropout-correct, ld-discmap, ld-export-metadata, ld-tbc-to-cvbs and ld-stacker-gui open an LDX file, or a track of it (`file.ldx#3`), and the session it keeps; ld-process-vbi and ld-process-vits save their metadata into it, as a block added at the end. The audio is not read by the graphical programs yet, a `cvbs` track, the FFV1 codec and the pipe are still to come, and the EFM tools read the track through `extract`.
+
+## Compression
+
+`--codec flac` (on `pack`, `add` and `stack --embed`) keeps the TBC and the audio as FLAC, which is about 69 to 71 % of their size as raw samples. `ld-container recompress file.ldx --codec flac -o new.ldx` changes a file that is already written, and `--codec raw` brings it back; `--id 1` changes one track only. The samples that come out are the ones that went in, whatever the codec. `info` shows the size of the file against what it holds. The tools that open an LDX file need ffmpeg in their build to read a FLAC track.
