@@ -54,3 +54,17 @@ Arguments:
   output                               Specify output TBC file (omit or - for
                                        piped output)
 ```
+
+## Stacking a session file
+
+Instead of the list of inputs, one `.stack` session file can be given, as saved by [ld-stacker-gui](ld-stacker-gui.md):
+
+```
+ld-disc-stacker session.stack [output.tbc]
+```
+
+The sources that are switched on in the session are stacked, with the stacking options and the output file of the session; what is given on the command line (such as `--mode` or `--smart-threshold`) takes precedence, and an output file after the session replaces the one in it. At least 2 sources must be on.
+
+The sources are not matched by their VBI frame numbers but lined up by an offset in frames each. The first source that is on is the reference: the stack has its frames, and its offset means nothing. The frame `f` of the stack is made from the frame `f - offset` of every other source, which has no frame there if that falls outside it. This is for captures that cannot be mapped; it needs no VBI data and no mapping with ld-discmap.
+
+With no offsets, a session gives the same stack as the usual way with `--no-map` when the sources are in step.
