@@ -97,6 +97,12 @@ private:
     void sourcesChanged();      // what is stacked changed: the stack must be worked out again
 
     void setFrame(qint32 frame);
+    void setPosition(qint32 position);
+    bool fieldUnit() const { return fieldView && !fieldSplit; }   // the controls count fields
+    qint32 positionOf(qint32 atFrame, qint32 atField) const { return fieldUnit() ? 2 * (atFrame - 1) + 1 + atField : atFrame; }
+    qint32 currentPosition() const { return positionOf(frame, fieldIndex); }
+    void updateViewButtons();
+    void viewModeChanged();
     void requestFrame();
     void applyZoom();
     void setZoom(double zoom);
@@ -153,7 +159,12 @@ private:
     QPushButton *chromaButton = nullptr;
     QToolButton *originalSizeButton = nullptr;
     QPushButton *aspectButton = nullptr;
+    QPushButton *viewButton = nullptr;
+    QPushButton *fieldModeButton = nullptr;
     bool displayAspect = true;
+    bool fieldView = false;         // one field of the frame, not the frame
+    bool fieldSplit = false;        // in field view: both fields one above the other
+    qint32 fieldIndex = 0;          // in field view, which field of the frame: 0 the first, 1 the second
     bool fitFirstSource = false;    // the next source to be loaded is the first one imported
     bool fitPicture = false;        // and its first picture is to be shown at its original size
     QLabel *statusSources = nullptr;

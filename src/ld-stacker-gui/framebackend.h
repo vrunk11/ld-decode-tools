@@ -57,6 +57,8 @@ struct FrameRequest {
     qint32 frame = 1;
     QString view = "stack";       // "stack" or the id of a source
     bool chroma = false;          // the picture is chroma decoded
+    qint32 viewMode = 0;          // 0 the frame, 1 one field with its lines doubled, 2 both fields, one above the other
+    qint32 fieldIndex = 0;        // in mode 1, which field: 0 the first of the frame, 1 the second
     QVector<Entry> entries;       // in the order of the list
     StackSettings settings;
 };
@@ -129,6 +131,8 @@ private:
     // Frame number of a source for a frame of the stack, or -1 if the source has none there
     qint32 sourceFrame(Loaded &source, qint32 frame, qint32 offset);
     bool isPadded(Loaded &source, qint32 ownFrame);
+    // A picture of a frame as one of its fields (lines doubled), or as both of them, one above the other
+    static QImage applyView(const QImage &frame, qint32 viewMode, qint32 fieldIndex);
     static QImage weave(const SourceVideo::Data &first, const SourceVideo::Data &second, qint32 width, qint32 fieldHeight);
     // The picture of a frame decoded to colour. For the stack, the two fields stacked are given and
     // replace those of the source the frame is read from.

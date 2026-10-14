@@ -49,6 +49,8 @@ public:
     bool chroma = false;
     double zoom = 1.0;
     bool aspect = true;                    // shown at the display aspect ratio (4:3 or 16:9), not as square pixels
+    bool fieldView = false;                // one field of the frame, not the frame
+    bool fieldSplit = false;               // in field view: both fields, one above the other, not one field with its lines doubled
     QString selected;                      // the id of the source whose tab is chosen
     bool showStack = true;                 // the picture is the stack, or (off) the source chosen
 

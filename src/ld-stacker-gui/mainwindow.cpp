@@ -137,6 +137,7 @@ MainWindow::MainWindow(const QStringList &arguments, QWidget *parent)
 
     zoom = 1.0;
     setZoom(zoom);
+    updateViewButtons();
 
     // A session file, or the sources to start with
     QStringList files;
@@ -313,6 +314,10 @@ void MainWindow::buildUi()
     optionsLayout->addWidget(chromaButton);
     aspectButton = new QPushButton;
     optionsLayout->addWidget(aspectButton);
+    viewButton = new QPushButton;
+    optionsLayout->addWidget(viewButton);
+    fieldModeButton = new QPushButton;
+    optionsLayout->addWidget(fieldModeButton);
     optionsLayout->addStretch(1);
     QToolButton *zoomOut = makeButton(":/icons/zoom-out.svg", tr("Zoom out"), true);
     QToolButton *zoomIn = makeButton(":/icons/zoom-in.svg", tr("Zoom in"), true);
@@ -368,12 +373,12 @@ void MainWindow::buildUi()
         project.showStack = on;
         viewChanged();
     });
-    connect(frameSpin, &QSpinBox::valueChanged, this, &MainWindow::setFrame);
-    connect(frameSlider, &QSlider::valueChanged, this, &MainWindow::setFrame);
-    connect(firstButton, &QToolButton::clicked, this, [this]() { setFrame(1); });
-    connect(previousButton, &QToolButton::clicked, this, [this]() { setFrame(frame - 1); });
-    connect(nextButton, &QToolButton::clicked, this, [this]() { setFrame(frame + 1); });
-    connect(lastButton, &QToolButton::clicked, this, [this]() { setFrame(totalFrames); });
+    connect(frameSpin, &QSpinBox::valueChanged, this, &MainWindow::setPosition);
+    connect(frameSlider, &QSlider::valueChanged, this, &MainWindow::setPosition);
+    connect(firstButton, &QToolButton::clicked, this, [this]() { setPosition(1); });
+    connect(previousButton, &QToolButton::clicked, this, [this]() { setPosition(currentPosition() - 1); });
+    connect(nextButton, &QToolButton::clicked, this, [this]() { setPosition(currentPosition() + 1); });
+    connect(lastButton, &QToolButton::clicked, this, [this]() { setPosition(positionOf(totalFrames, 1)); });
     connect(snrPlot, &SnrGraph::frameRequested, this, &MainWindow::setFrame);
     connect(modeCombo, &QComboBox::currentIndexChanged, this, [this](qint32 index) {
         project.stacking.mode = index - 1;
@@ -385,9 +390,21 @@ void MainWindow::buildUi()
     });
     connect(zoomIn, &QToolButton::clicked, this, [this]() { stepZoom(1); });
     connect(zoomOut, &QToolButton::clicked, this, [this]() { stepZoom(-1); });
+    connect(viewButton, &QPushButton::clicked, this, [this]() {
+        fieldView = !fieldView;
+        project.fieldView = fieldView;
+        viewModeChanged();
+    });
+    connect(fieldModeButton, &QPushButton::clicked, this, [this]() {
+        fieldSplit = !fieldSplit;
+        project.fieldSplit = fieldSplit;
+        viewModeChanged();
+    });
     connect(aspectButton, &QPushButton::clicked, this, [this]() {
         displayAspect = !displayAspect;
         project.aspect = displayAspect;
+    project.fieldView = fieldView;
+    project.fieldSplit = fieldSplit;
         updateAspectButton();
         applyZoom();
         if (stackWindow->isVisible() && lastStackResult.view == "stack") showStackPicture(lastStackResult);
@@ -398,8 +415,9 @@ void MainWindow::buildUi()
     });
     connect(zoomSpin, &QSpinBox::valueChanged, this, [this](qint32 percent) { setZoom(percent / 100.0); });
 
-    new QShortcut(Qt::Key_Left, this, [this]() { setFrame(frame - 1); });
-    new QShortcut(Qt::Key_Right, this, [this]() { setFrame(frame + 1); });
+    new QShortcut(Qt::Key_F, this, [this]() { viewButton->click(); });
+    new QShortcut(Qt::Key_Left, this, [this]() { setPosition(currentPosition() - 1); });
+    new QShortcut(Qt::Key_Right, this, [this]() { setPosition(currentPosition() + 1); });
     // 1 to 9 pick a source, 0 (or S) switches the stack
     for (qint32 digit = 1; digit <= 9; digit++) {
         new QShortcut(QKeySequence(Qt::Key_0 + digit), this, [this, digit]() {
@@ -558,6 +576,9 @@ void MainWindow::loadSession(const QString &fileName)
     setZoom(project.zoom);
     displayAspect = project.aspect;
     updateAspectButton();
+    fieldView = project.fieldView;
+    fieldSplit = project.fieldSplit;
+    updateViewButtons();
     syncDialogs();
     {
         const QSignalBlocker blocker(chromaButton);
@@ -846,12 +867,14 @@ void MainWindow::updateTimeline()
 
     const QSignalBlocker spinBlocker(frameSpin);
     const QSignalBlocker sliderBlocker(frameSlider);
-    frameSpin->setRange(1, qMax(1, total));
-    frameSlider->setRange(1, qMax(1, total));
+    const qint32 positions = qMax(1, total) * (fieldUnit() ? 2 : 1);
+    frameSpin->setRange(1, positions);
+    frameSlider->setRange(1, positions);
     frame = qBound(1, frame, qMax(1, total));
-    frameSpin->setValue(frame);
-    frameSlider->setValue(frame);
-    totalLabel->setText(tr("of %1").arg(total));
+    frameSpin->setValue(currentPosition());
+    frameSlider->setValue(currentPosition());
+    frameSpin->setPrefix(fieldUnit() ? tr("Field ") : tr("Frame "));
+    totalLabel->setText(tr("of %1").arg(total * (fieldUnit() ? 2 : 1)));
 
     const bool enabled = total > 0;
     for (QWidget *widget: { static_cast<QWidget *>(firstButton), static_cast<QWidget *>(previousButton),
@@ -881,21 +904,54 @@ QString MainWindow::currentView() const
     return project.selected;
 }
 
+// To a frame (of the SNR graphs, say): the field being looked at stays what it was
 void MainWindow::setFrame(qint32 newFrame)
 {
+    setPosition(positionOf(qBound(1, newFrame, qMax(1, totalFrames)), fieldIndex));
+}
+
+// To a place of the controls: a frame, or a field when the field view goes field by field
+void MainWindow::setPosition(qint32 position)
+{
     if (totalFrames < 1) return;
-    newFrame = qBound(1, newFrame, totalFrames);
-    if (newFrame == frame && frameSpin->value() == frame && frameSlider->value() == frame) return;
+    const qint32 last = totalFrames * (fieldUnit() ? 2 : 1);
+    position = qBound(1, position, last);
+    qint32 newFrame = position, newField = fieldIndex;
+    if (fieldUnit()) {
+        newFrame = (position + 1) / 2;
+        newField = (position + 1) % 2;
+    }
+    if (newFrame == frame && newField == fieldIndex && frameSpin->value() == position && frameSlider->value() == position) return;
     frame = newFrame;
+    fieldIndex = newField;
 
     {
         const QSignalBlocker spinBlocker(frameSpin);
         const QSignalBlocker sliderBlocker(frameSlider);
-        frameSpin->setValue(frame);
-        frameSlider->setValue(frame);
+        frameSpin->setValue(position);
+        frameSlider->setValue(position);
     }
     snrPlot->setMarker(frame);
     updateTabTexts();
+    updateStatus();
+    requestFrame();
+}
+
+// What the buttons for the frame and the field say, and which are there
+void MainWindow::updateViewButtons()
+{
+    viewButton->setText(fieldView ? tr("Field") : tr("Frame"));
+    viewButton->setToolTip(tr("What the picture is: a frame, or one field of it (key F)"));
+    fieldModeButton->setVisible(fieldView);
+    fieldModeButton->setText(fieldSplit ? tr("Split") : tr("Doubled"));
+    fieldModeButton->setToolTip(tr("Field view: one field with its lines doubled, or both fields, one above the other"));
+}
+
+// The frame or field view was switched: the controls count frames or fields, and the picture is made again
+void MainWindow::viewModeChanged()
+{
+    updateViewButtons();
+    updateTimeline();
     updateStatus();
     requestFrame();
 }
@@ -923,6 +979,8 @@ void MainWindow::sendRequest(const QString &view, qint32 channel)
     request.frame = frame;
     request.view = view;
     request.chroma = project.chroma;
+    request.viewMode = fieldView ? (fieldSplit ? 2 : 1) : 0;
+    request.fieldIndex = fieldIndex;
     request.settings = project.stacking;
     for (const StackSource &source: project.sources) {
         FrameRequest::Entry entry;
@@ -1133,7 +1191,8 @@ void MainWindow::updateStatus()
     statusMode->setText(tr("Mode: %1").arg(modeText));
 
     const qint32 viewIndex = project.indexOfSource(currentView());
-    statusShowing->setText(tr("Showing: %1 - frame %2").arg(isStack ? tr("stack") : tr("source %1").arg(viewIndex + 1)).arg(frame));
+    const QString where = fieldView && !fieldSplit ? tr("frame %1, field %2").arg(frame).arg(fieldIndex + 1) : tr("frame %1").arg(frame);
+    statusShowing->setText(tr("Showing: %1 - %2").arg(isStack ? tr("stack") : tr("source %1").arg(viewIndex + 1)).arg(where));
 }
 
 // ---------------------------------------------------------------------------------------------

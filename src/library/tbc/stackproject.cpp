@@ -113,6 +113,8 @@ bool StackProject::load(const QString &fileName, QString &error)
     loaded.chroma = view.value("chroma").toBool(false);
     loaded.zoom = view.value("zoom").toDouble(1.0);
     loaded.aspect = view.value("aspect").toBool(true);
+    loaded.fieldView = view.value("fieldView").toBool(false);
+    loaded.fieldSplit = view.value("fieldSplit").toBool(false);
     loaded.selected = view.value("selected").toString();
     // (an earlier form had "stack" as the thing selected)
     loaded.showStack = view.contains("stack") ? view.value("stack").toBool(true) : (loaded.selected.isEmpty() || loaded.selected == "stack");
@@ -154,6 +156,8 @@ bool StackProject::save(const QString &fileName, QString &error) const
     viewObject["chroma"] = chroma;
     viewObject["zoom"] = zoom;
     viewObject["aspect"] = aspect;
+    viewObject["fieldView"] = fieldView;
+    viewObject["fieldSplit"] = fieldSplit;
     viewObject["selected"] = selected;
     viewObject["stack"] = showStack;
 

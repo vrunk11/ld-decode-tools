@@ -144,6 +144,28 @@ bool FrameBackend::isPadded(Loaded &source, qint32 ownFrame)
     return source.metadata.getField(first).pad || source.metadata.getField(second).pad;
 }
 
+// The picture of a frame as ld-analyse shows a field (its lines doubled) or both fields (split: the first above
+// the second): the rows of the first field are the even ones of the frame, those of the second the odd ones
+QImage FrameBackend::applyView(const QImage &frame, qint32 viewMode, qint32 fieldIndex)
+{
+    if (viewMode == 0 || frame.isNull()) return frame;
+
+    const qint32 height = frame.height();
+    QImage result(frame.width(), height, frame.format());
+    for (qint32 y = 0; y < height; y++) {
+        qint32 source;
+        if (viewMode == 1) {
+            source = (y / 2) * 2 + (fieldIndex ? 1 : 0);
+        } else {
+            const qint32 top = (height + 1) / 2;      // the rows of the first field
+            source = y < top ? 2 * y : 2 * (y - top) + 1;
+        }
+        source = qBound(0, source, height - 1);
+        memcpy(result.scanLine(y), frame.constScanLine(source), static_cast<size_t>(frame.bytesPerLine()));
+    }
+    return result;
+}
+
 // The two fields of a frame as a grey picture, as ld-analyse shows a source
 QImage FrameBackend::weave(const SourceVideo::Data &first, const SourceVideo::Data &second, qint32 width, qint32 fieldHeight)
 {
@@ -298,6 +320,7 @@ void FrameBackend::render(const FrameRequest &request)
                 }
                 result.image = request.chroma ? chromaPicture(source, frames[i], nullptr, 0)
                                               : weave(firstData, secondData, videoParameters.fieldWidth, videoParameters.fieldHeight);
+                result.image = applyView(result.image, request.viewMode, request.fieldIndex);
             }
         }
         emit frameReady(result);
@@ -331,6 +354,7 @@ void FrameBackend::render(const FrameRequest &request)
     } else {
         result.image = weave(main.first, main.second, main.videoParameters.fieldWidth, main.videoParameters.fieldHeight);
     }
+    result.image = applyView(result.image, request.viewMode, request.fieldIndex);
 
     // The SNR of the stack is not in any metadata: it is measured from the stacked fields
     double whiteTotal = 0, blackTotal = 0;
