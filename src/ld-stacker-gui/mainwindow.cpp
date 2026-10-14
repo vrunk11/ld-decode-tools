@@ -323,14 +323,14 @@ void MainWindow::buildUi()
     zoomSpin->setSuffix("%");
     zoomSpin->setKeyboardTracking(false);
     zoomSpin->setToolTip(tr("Zoom: type a value, or use the + and - buttons"));
+    // As tall as the zoom buttons beside it
+    zoomSpin->setFixedHeight(zoomOut->sizeHint().height());
     optionsLayout->addWidget(zoomOut);
     optionsLayout->addWidget(zoomSpin);
     optionsLayout->addWidget(zoomIn);
     aspectButton = new QPushButton;
     optionsLayout->addWidget(aspectButton);
-    originalSizeButton = new QPushButton(tr("Original size"));
-    originalSizeButton->setIcon(QIcon(":/icons/zoom-original.svg"));
-    originalSizeButton->setToolTip(tr("Zoom to 100% and resize the window to show the whole picture"));
+    originalSizeButton = makeButton(":/icons/zoom-original.svg", tr("Original size: zoom to 100% and resize the window to show the whole picture"), false);
     optionsLayout->addWidget(originalSizeButton);
     mainLayout->addWidget(options);
 
@@ -395,7 +395,7 @@ void MainWindow::buildUi()
         applyZoom();
         if (stackWindow->isVisible() && lastStackResult.view == "stack") showStackPicture(lastStackResult);
     });
-    connect(originalSizeButton, &QPushButton::clicked, this, [this]() {
+    connect(originalSizeButton, &QToolButton::clicked, this, [this]() {
         setZoom(1.0);
         resizeToImage();
     });

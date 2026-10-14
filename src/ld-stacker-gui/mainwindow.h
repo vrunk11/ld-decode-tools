@@ -152,7 +152,7 @@ private:
     qint32 zoomMethod = 0;          // 0 line doubling, 1 smooth
     QSpinBox *zoomSpin = nullptr;
     QPushButton *chromaButton = nullptr;
-    QPushButton *originalSizeButton = nullptr;
+    QToolButton *originalSizeButton = nullptr;
     QPushButton *aspectButton = nullptr;
     bool displayAspect = true;
     bool fitFirstSource = false;    // the next source to be loaded is the first one imported
