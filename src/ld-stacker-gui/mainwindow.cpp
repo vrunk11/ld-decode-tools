@@ -569,6 +569,8 @@ void MainWindow::loadSession(const QString &fileName)
         return;
     }
     fitFirstSource = false;   // a session has its own zoom
+    fitPicture = false;
+    fitWindow = true;
 
     // What was loaded is let go of
     for (const StackSource &source: project.sources) {
@@ -1046,6 +1048,9 @@ void MainWindow::on_frameReady(const FrameResult &result)
             if (fitPicture) {
                 fitPicture = false;
                 setZoom(1.0);
+                resizeToImage();
+            } else if (fitWindow) {
+                fitWindow = false;
                 resizeToImage();
             }
         }
