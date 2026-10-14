@@ -19,6 +19,7 @@ extern "C" {
 #include <libavutil/channel_layout.h>
 #include <libavutil/frame.h>
 #include <libavutil/mem.h>
+#include <libavutil/samplefmt.h>
 }
 #endif
 
@@ -37,7 +38,7 @@ using FramePtr = std::unique_ptr<AVFrame, FrameDeleter>;
 using ContextPtr = std::unique_ptr<AVCodecContext, ContextDeleter>;
 
 // An encoder for one block: it is made for each, because it takes a frame that is shorter than the others only as the last
-ContextPtr openEncoder(QString &error)
+ContextPtr openEncoder(int channels, QString &error)
 {
     const AVCodec *codec = avcodec_find_encoder(AV_CODEC_ID_FLAC);
     if (!codec) {
@@ -51,7 +52,7 @@ ContextPtr openEncoder(QString &error)
     }
     context->sample_fmt = AV_SAMPLE_FMT_S16;
     context->sample_rate = FlacStandInRate;
-    av_channel_layout_default(&context->ch_layout, 1);
+    av_channel_layout_default(&context->ch_layout, channels);
     context->compression_level = FlacCompressionLevel;
     context->frame_size = FlacFrameSamples;
     if (avcodec_open2(context.get(), codec, nullptr) < 0) {
@@ -68,9 +69,9 @@ bool flacAvailable()
     return avcodec_find_encoder(AV_CODEC_ID_FLAC) && avcodec_find_decoder(AV_CODEC_ID_FLAC);
 }
 
-QByteArray flacCodecPrivate(QString &error)
+QByteArray flacCodecPrivate(int channels, QString &error)
 {
-    ContextPtr context = openEncoder(error);
+    ContextPtr context = openEncoder(channels, error);
     if (!context) return QByteArray();
     if (context->extradata_size < 34) {
         error = QObject::tr("The FLAC encoder gave no STREAMINFO");
@@ -86,11 +87,11 @@ QByteArray flacCodecPrivate(QString &error)
     return header;
 }
 
-bool flacEncode(const QByteArray &samples, bool unsignedSamples, std::vector<QByteArray> &frames, QString &error)
+bool flacEncode(const QByteArray &samples, int channels, bool unsignedSamples, std::vector<QByteArray> &frames, QString &error)
 {
     frames.clear();
-    const int count = samples.size() / 2;
-    if (count < 1 || samples.size() % 2 != 0) {
+    const int count = samples.size() / (2 * channels);        // per channel
+    if (count < 1 || samples.size() % (2 * channels) != 0) {
         error = QObject::tr("A block of FLAC samples is of 16-bit samples, and not empty");
         return false;
     }
@@ -98,7 +99,7 @@ bool flacEncode(const QByteArray &samples, bool unsignedSamples, std::vector<QBy
         error = QObject::tr("A block of %1 samples is too long for FLAC (%2 at most)").arg(count).arg(FlacFrameSamples * FlacMaxFrames);
         return false;
     }
-    ContextPtr context = openEncoder(error);
+    ContextPtr context = openEncoder(channels, error);
     if (!context) return false;
     PacketPtr packet(av_packet_alloc());
 
@@ -126,8 +127,8 @@ bool flacEncode(const QByteArray &samples, bool unsignedSamples, std::vector<QBy
             return false;
         }
         qint16 *target = reinterpret_cast<qint16 *>(frame->data[0]);
-        for (int i = 0; i < n; i++) {
-            const quint16 value = source[done + i];
+        for (int i = 0; i < n * channels; i++) {
+            const quint16 value = source[done * channels + i];
             target[i] = static_cast<qint16>(unsignedSamples ? static_cast<quint16>(value ^ 0x8000u) : value);
         }
         if (avcodec_send_frame(context.get(), frame.get()) < 0 || !drain()) {
@@ -198,13 +199,17 @@ bool FlacDecoder::decode(const std::vector<QByteArray> &frames, bool unsignedSam
             if (result == AVERROR(EAGAIN) || result == AVERROR_EOF) return true;
             if (result < 0) return false;
             const int n = frame->nb_samples;
-            const qint16 *source = reinterpret_cast<const qint16 *>(frame->data[0]);
+            const int channels = frame->ch_layout.nb_channels;
             const int old = samples.size();
-            samples.resize(old + n * 2);
+            samples.resize(old + n * channels * 2);
             quint16 *target = reinterpret_cast<quint16 *>(samples.data() + old);
+            const bool planar = av_sample_fmt_is_planar(static_cast<AVSampleFormat>(frame->format)) != 0;
             for (int i = 0; i < n; i++) {
-                const quint16 value = static_cast<quint16>(source[i]);
-                target[i] = unsignedSamples ? static_cast<quint16>(value ^ 0x8000u) : value;
+                for (int channel = 0; channel < channels; channel++) {
+                    const qint16 *source = reinterpret_cast<const qint16 *>(planar ? frame->data[channel] : frame->data[0]);
+                    const quint16 value = static_cast<quint16>(planar ? source[i] : source[i * channels + channel]);
+                    target[i * channels + channel] = unsignedSamples ? static_cast<quint16>(value ^ 0x8000u) : value;
+                }
             }
             av_frame_unref(frame.get());
         }
@@ -243,13 +248,13 @@ bool flacAvailable()
     return false;
 }
 
-QByteArray flacCodecPrivate(QString &error)
+QByteArray flacCodecPrivate(int, QString &error)
 {
     error = QObject::tr("This build has no FLAC: it was built without ffmpeg");
     return QByteArray();
 }
 
-bool flacEncode(const QByteArray &, bool, std::vector<QByteArray> &, QString &error)
+bool flacEncode(const QByteArray &, int, bool, std::vector<QByteArray> &, QString &error)
 {
     error = QObject::tr("This build has no FLAC: it was built without ffmpeg");
     return false;
