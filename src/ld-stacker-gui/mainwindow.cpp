@@ -335,6 +335,8 @@ void MainWindow::buildUi()
     optionsLayout->addWidget(zoomSpin);
     optionsLayout->addWidget(zoomIn);
     optionsLayout->addWidget(zoomMethodCombo);
+    aspectButton = new QPushButton;
+    optionsLayout->addWidget(aspectButton);
     originalSizeButton = new QPushButton(tr("Original size"));
     originalSizeButton->setToolTip(tr("Zoom to 100% and resize the window to show the whole picture"));
     optionsLayout->addWidget(originalSizeButton);
@@ -396,6 +398,13 @@ void MainWindow::buildUi()
     });
     connect(zoomIn, &QToolButton::clicked, this, [this]() { stepZoom(1); });
     connect(zoomOut, &QToolButton::clicked, this, [this]() { stepZoom(-1); });
+    connect(aspectButton, &QPushButton::clicked, this, [this]() {
+        displayAspect = !displayAspect;
+        project.aspect = displayAspect;
+        updateAspectButton();
+        applyZoom();
+        if (stackWindow->isVisible() && lastStackResult.view == "stack") showStackPicture(lastStackResult);
+    });
     connect(originalSizeButton, &QPushButton::clicked, this, [this]() {
         setZoom(1.0);
         resizeToImage();
@@ -539,6 +548,8 @@ void MainWindow::loadSession(const QString &fileName)
         modeCombo->setCurrentIndex(qBound(0, project.stacking.mode + 1, modeCombo->count() - 1));
     }
     setZoom(project.zoom);
+    displayAspect = project.aspect;
+    updateAspectButton();
     syncDialogs();
     {
         const QSignalBlocker blocker(chromaButton);
@@ -582,6 +593,7 @@ void MainWindow::exportSession()
     settings.setValue("sessionDirectory", QFileInfo(fileName).absolutePath());
 
     project.zoom = zoom;
+    project.aspect = displayAspect;
     if (project.outputFile.isEmpty() && !project.sources.isEmpty()) {
         // Where the stack would go: beside the session, named after it
         project.outputFile = QFileInfo(fileName).absoluteDir().absoluteFilePath(QFileInfo(fileName).completeBaseName() + ".tbc");
@@ -625,6 +637,7 @@ void MainWindow::on_sourceLoaded(const SourceInfo &info)
     state.failed = !info.ok;
     if (!info.ok) statusBar()->showMessage(info.error, 10000);
 
+    updateAspectButton();
     rebuildSourceList();
     updateTabTexts();
     sourcesChanged();
@@ -946,7 +959,7 @@ void MainWindow::showStackPicture(const FrameResult &result)
         return;
     }
     const QString snr = std::isfinite(result.stackWhiteSnr) ? tr("  -  %1 dB").arg(result.stackWhiteSnr, 0, 'f', 1) : QString();
-    stackWindow->setPicture(enhanceDialog->apply(result.image), tr("Stack, frame %1%2").arg(result.frame).arg(snr));
+    stackWindow->setPicture(shownImage(result.image), tr("Stack, frame %1%2").arg(result.frame).arg(snr));
 }
 
 // The dialogs show what the session holds
@@ -1124,7 +1137,7 @@ void MainWindow::stepZoom(qint32 direction)
 void MainWindow::applyZoom()
 {
     if (currentImage.isNull()) return;
-    const QSize size(qRound(currentImage.width() * zoom), qRound(currentImage.height() * zoom));
+    const QSize size(qRound((currentImage.width() + aspectAdjustment()) * zoom), qRound(currentImage.height() * zoom));
     const Qt::TransformationMode mode = zoomMethodCombo->currentIndex() == 0 ? Qt::FastTransformation : Qt::SmoothTransformation;
     imageLabel->setPixmap(QPixmap::fromImage(enhanceDialog->apply(currentImage)).scaled(size, Qt::IgnoreAspectRatio, mode));
     imageLabel->setMinimumSize(size);
@@ -1327,4 +1340,43 @@ void MainWindow::customizeTheme()
     }
 
     updateAppearance();
+}
+
+// How much wider (or narrower) than its samples a picture is shown, as ld-analyse does: the 4:3 or 16:9 of the
+// video system and the first source that is loaded, or none with square pixels
+qint32 MainWindow::aspectAdjustment() const
+{
+    if (!displayAspect) return 0;
+    for (const StackSource &source: project.sources) {
+        const SourceState state = states.value(source.id);
+        if (!state.loaded) continue;
+        if (state.info.system == PAL) return state.info.widescreen ? 103 : -196;   // 625 lines
+        return state.info.widescreen ? 122 : -150;                                // 525 lines
+    }
+    return 0;
+}
+
+void MainWindow::updateAspectButton()
+{
+    QString text = tr("SAR 1:1");
+    if (displayAspect) {
+        bool widescreen = false;
+        for (const StackSource &source: project.sources) {
+            const SourceState state = states.value(source.id);
+            if (state.loaded) { widescreen = state.info.widescreen; break; }
+        }
+        text = widescreen ? tr("DAR 16:9") : tr("DAR 4:3");
+    }
+    aspectButton->setText(text);
+    aspectButton->setToolTip(tr("Aspect ratio of the picture: the display aspect ratio of the video, or square pixels (SAR 1:1)"));
+}
+
+// A picture as it is shown: at the display aspect ratio, for the windows that scale it themselves
+QImage MainWindow::shownImage(const QImage &image) const
+{
+    const qint32 adjustment = aspectAdjustment();
+    QImage shown = enhanceDialog->apply(image);
+    if (adjustment == 0 || shown.isNull()) return shown;
+    return shown.scaled(shown.width() + adjustment, shown.height(), Qt::IgnoreAspectRatio,
+                        zoomMethodCombo->currentIndex() == 0 ? Qt::FastTransformation : Qt::SmoothTransformation);
 }

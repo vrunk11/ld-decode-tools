@@ -94,6 +94,7 @@ void FrameBackend::addSource(const QString &id, const QString &file, bool revers
 
     info.ok = true;
     info.system = videoParameters.system;
+    info.widescreen = videoParameters.isWidescreen;
     info.fieldWidth = videoParameters.fieldWidth;
     info.fieldHeight = videoParameters.fieldHeight;
     info.frames = loaded->metadata.getNumberOfFrames();

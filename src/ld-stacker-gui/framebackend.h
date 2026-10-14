@@ -36,6 +36,7 @@ struct SourceInfo {
     QString metadataFile;
     qint32 frames = 0;
     VideoSystem system = NTSC;
+    bool widescreen = false;
     qint32 fieldWidth = 0;
     qint32 fieldHeight = 0;
     // Per frame (index 0 is frame 1): the SNR of the metadata, NaN where there is none

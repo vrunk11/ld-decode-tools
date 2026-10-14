@@ -82,6 +82,17 @@ void SnrPlot::paintEvent(QPaintEvent *)
         lo -= span * 0.05;   // a little room above and below
         span *= 1.1;
 
+        // What the lines are worth, in dB
+        QFont small = font();
+        small.setPointSizeF(qMax(7.0, small.pointSizeF() - 1));
+        painter.setFont(small);
+        painter.setPen(palette().color(QPalette::PlaceholderText));
+        for (qint32 i = 1; i < 4; i++) {
+            const qreal y = area.top() + area.height() * i / 4.0;
+            const double value = lo + (area.bottom() - y) / area.height() * span;
+            painter.drawText(QRectF(0, y - 14, width() - 4, 14), Qt::AlignRight | Qt::AlignBottom, QString("%1 dB").arg(value, 0, 'f', 1));
+        }
+
         const auto toPoint = [&](qint32 index, float value) {
             const qreal x = totalFrames > 1 ? static_cast<qreal>(index) * (width() - 1) / (totalFrames - 1) : 0;
             const qreal y = area.bottom() - (value - lo) / span * area.height();
@@ -116,8 +127,9 @@ void SnrPlot::paintEvent(QPaintEvent *)
     }
 
     if (!text.isEmpty()) {
+        painter.setFont(font());
         painter.setPen(palette().color(QPalette::PlaceholderText));
-        painter.drawText(QRectF(6, 2, width() - 12, 16), Qt::AlignLeft | Qt::AlignVCenter, text);
+        painter.drawText(QRectF(6, 2, width() - 12, 16), Qt::AlignLeft | Qt::AlignVCenter, text + tr("  (dB)"));
     }
 }
 

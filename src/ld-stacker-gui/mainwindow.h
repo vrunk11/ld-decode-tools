@@ -79,6 +79,9 @@ private:
     void updateTimeline();
     void updatePlot();
     void viewChanged();
+    qint32 aspectAdjustment() const;
+    void updateAspectButton();
+    QImage shownImage(const QImage &image) const;
     void setupAppearanceMenus(QMenu *menu);
     void updateAppearance();
     void customizeTheme();
@@ -152,6 +155,8 @@ private:
     QPushButton *chromaSettingsButton = nullptr;
     QPushButton *enhanceButton = nullptr;
     QPushButton *originalSizeButton = nullptr;
+    QPushButton *aspectButton = nullptr;
+    bool displayAspect = true;
     QLabel *statusSources = nullptr;
     QLabel *statusMode = nullptr;
     QLabel *statusShowing = nullptr;
