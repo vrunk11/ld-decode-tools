@@ -9,6 +9,7 @@
  ******************************************************************************/
 
 #include "ldx.h"
+#include "ldxcodec.h"
 
 #include <QFile>
 #include <QJsonDocument>
@@ -16,6 +17,7 @@
 
 #include <algorithm>
 #include <deque>
+#include <stdexcept>
 #include <map>
 #include <vector>
 
@@ -135,6 +137,7 @@ struct Writer::Private
     std::unique_ptr<KaxSegment> segment;
     KaxTracks *trackList = nullptr;
     std::map<quint32, KaxTrackEntry *> entries;            // by the id (number) of the track
+    std::map<int, QByteArray> flacPrivates;                // what the FLAC tracks give the decoder before the data, by channels
     quint32 nextId = 1;                                    // the id the next track gets
     struct Attached {
         QString name;
@@ -165,6 +168,42 @@ struct Writer::Private
     QString path;
     QString error;
 
+    const Track *trackInfo(quint32 number) const
+    {
+        for (const Track &track: tracks) {
+            if (track.number == number) return &track;
+        }
+        return nullptr;
+    }
+
+    // The channels of a track of samples: an audio track says (stereo by default), the rest are one
+    static int channelsOf(const Track &track)
+    {
+        return track.kind == Kind::Pcm ? qBound(1, track.parameters.value("channels").toInt(2), 8) : 1;
+    }
+
+    // FLAC is for tracks of 16-bit samples, and needs ffmpeg
+    bool prepareCodecs(QString &error)
+    {
+        for (const Track &track: tracks) {
+            if (track.codec == Codec::Flac) {
+                if (track.kind != Kind::Tbc && track.kind != Kind::Rf && track.kind != Kind::Pcm) {
+                    error = QObject::tr("FLAC is for tracks of 16-bit samples (tbc, rf, pcm), and not for a track of %1").arg(kindName(track.kind));
+                    return false;
+                }
+                const int channels = channelsOf(track);
+                if (flacPrivates[channels].isEmpty()) {
+                    flacPrivates[channels] = flacCodecPrivate(channels, error);
+                    if (flacPrivates[channels].isEmpty()) return false;
+                }
+            } else if (track.codec != Codec::Raw) {
+                error = QObject::tr("The %1 codec is not written by this build yet").arg(codecName(track.codec));
+                return false;
+            }
+        }
+        return true;
+    }
+
     // The entries of the tracks, for the file to be written or, when added to, for the blocks to name
     void buildEntries()
     {
@@ -176,21 +215,22 @@ struct Writer::Private
 
             GetChild<KaxTrackNumber>(entry).SetValue(track.number);
             GetChild<KaxTrackUID>(entry).SetValue(track.uid);
-            GetChild<KaxTrackFlagLacing>(entry).SetValue(0);
+            GetChild<KaxTrackFlagLacing>(entry).SetValue(track.codec == Codec::Flac ? 1 : 0);
             if (!track.name.isEmpty()) GetChild<KaxTrackName>(entry).SetValueUTF8(track.name.toUtf8().constData());
 
             if (isSampleKind(track.kind)) {
                 GetChild<KaxTrackType>(entry).SetValue(track_audio);
-                GetChild<KaxCodecID>(entry).SetValue(PcmCodecId);
+                GetChild<KaxCodecID>(entry).SetValue(track.codec == Codec::Flac ? "A_FLAC" : PcmCodecId);
                 KaxTrackAudio &audio = GetChild<KaxTrackAudio>(entry);
                 GetChild<KaxAudioSamplingFreq>(audio).SetValue(StandInSampleRate);
-                GetChild<KaxAudioChannels>(audio).SetValue(1);
+                GetChild<KaxAudioChannels>(audio).SetValue(channelsOf(track));
                 GetChild<KaxAudioBitDepth>(audio).SetValue(16);
             } else {
                 GetChild<KaxTrackType>(entry).SetValue(33);     // metadata: the codec says what is in it
                 GetChild<KaxCodecID>(entry).SetValue(QByteArray("D_LDX/" + kindName(track.kind).toUpper().toLatin1()).constData());
             }
-            const QByteArray description = trackDescription(track);
+            // (a FLAC track has what its decoder needs, and the description of every track is also in a tag)
+            const QByteArray description = track.codec == Codec::Flac ? flacPrivates[channelsOf(track)] : trackDescription(track);
             GetChild<KaxCodecPrivate>(entry).CopyBuffer(reinterpret_cast<const binary *>(description.constData()), description.size());
             entry.SetGlobalTimecodeScale(TimecodeScaleNs);
         }
@@ -262,12 +302,7 @@ void Writer::setHistory(const QJsonArray &entries)
 bool Writer::open(const QString &fileName, QString &error)
 {
     try {
-        for (const Track &track: d->tracks) {
-            if (track.codec != Codec::Raw) {
-                error = QObject::tr("The %1 codec is not written by this build yet").arg(codecName(track.codec));
-                return false;
-            }
-        }
+        if (!d->prepareCodecs(error)) return false;
 
         d->output.reset(new StdIOCallback(fileName.toLocal8Bit().constData(), MODE_CREATE));
 
@@ -303,6 +338,17 @@ bool Writer::open(const QString &fileName, QString &error)
         setSimpleTag(tag, simple, "LDX_PROFILE", QByteArray::number(ProfileVersion));
         setSimpleTag(tag, simple, "LDX_HISTORY", QJsonDocument(d->history).toJson(QJsonDocument::Compact));
         setSimpleTag(tag, simple, "LDX_NEXT_TRACK_ID", QByteArray::number(d->nextId));
+
+        // What each track is, as a tag of the track
+        KaxTag *previousTag = &tag;
+        for (const Track &track: d->tracks) {
+            KaxTag &trackTag = GetNextChild<KaxTag>(tags, *previousTag);
+            previousTag = &trackTag;
+            KaxTagTargets &targets = GetChild<KaxTagTargets>(trackTag);
+            GetChild<KaxTagTrackUID>(targets).SetValue(track.uid);
+            KaxTagSimple *trackSimple = nullptr;
+            setSimpleTag(trackTag, trackSimple, "LDX_TRACK", trackDescription(track));
+        }
         tags.Render(*d->output, false);
 
         // The files kept in the file
@@ -344,13 +390,8 @@ bool Writer::openAppend(const QString &fileName, QString &error)
             return false;
         }
         if (!reader.buildIndex(error)) return false;
-        for (const Track &track: reader.tracks()) {
-            if (track.codec != Codec::Raw) {
-                error = QObject::tr("The %1 codec is not written by this build yet").arg(codecName(track.codec));
-                return false;
-            }
-            d->tracks.append(track);
-        }
+        for (const Track &track: reader.tracks()) d->tracks.append(track);
+        if (!d->prepareCodecs(error)) return false;
         d->history = reader.history();
         d->nextId = reader.nextTrackId();
         for (const Reader::BlockRef &ref: reader.blockRefs()) {
@@ -388,6 +429,18 @@ bool Writer::writeBlock(quint32 track, qint64 timeNs, const QByteArray &data)
 {
     if (!d->output || !d->entries.count(track) || timeNs < 0) return false;
     try {
+        // The frames of the block: itself, or, for FLAC, what the encoder gives
+        std::vector<QByteArray> frames;
+        const Track *info = d->trackInfo(track);
+        if (info && info->codec == Codec::Flac) {
+            QString encodeError;
+            if (!flacEncode(data, Private::channelsOf(*info), info->kind == Kind::Tbc, frames, encodeError)) {
+                d->error = encodeError;
+                return false;
+            }
+        } else {
+            frames.push_back(data);
+        }
         if (d->cluster && timeNs - d->clusterStartNs >= ClusterSpanNs) d->flushCluster();
         if (!d->cluster) {
             d->cluster = new KaxCluster;
@@ -396,14 +449,19 @@ bool Writer::writeBlock(quint32 track, qint64 timeNs, const QByteArray &data)
             d->clusterStartNs = timeNs;
         }
 
-        d->held.push_back(data);
-        QByteArray &kept = d->held.back();
-        // The block owns the buffer object from here (it deletes it when the frames are released)
-        auto *buffer = new DataBuffer(reinterpret_cast<binary *>(kept.data()), static_cast<uint32>(kept.size()));
-        KaxBlockGroup *block = nullptr;
-        // Without lacing the block takes the one frame and says that it is full (false), which is not a failure
-        d->cluster->AddFrame(*d->entries[track], static_cast<uint64>(timeNs), *buffer, block, LACING_NONE);
-        d->clusterBlocks.push_back({ timeNs, track, block });
+        // All the frames go in one block of the file (laced when there are several). The block owns the buffer objects from
+        // here (it deletes them when the frames are released). What the call gives back says whether more frames can go in the
+        // block, and is not a failure.
+        KaxBlockGroup *first = nullptr;
+        for (const QByteArray &frame: frames) {
+            d->held.push_back(frame);
+            QByteArray &kept = d->held.back();
+            auto *buffer = new DataBuffer(reinterpret_cast<binary *>(kept.data()), static_cast<uint32>(kept.size()));
+            KaxBlockGroup *block = nullptr;
+            d->cluster->AddFrame(*d->entries[track], static_cast<uint64>(timeNs), *buffer, block, frames.size() > 1 ? LACING_EBML : LACING_NONE);
+            if (!first) first = block;
+        }
+        d->clusterBlocks.push_back({ timeNs, track, first });
         return true;
     } catch (const std::exception &exception) {
         d->error = QString::fromLocal8Bit(exception.what());
@@ -477,6 +535,9 @@ struct Reader::Private
     QJsonArray historyValue;
     quint32 nextIdValue = 0;
     QVector<Attachment> attachmentList;
+    std::map<quint64, QByteArray> descriptions;       // what each track is, by the uid of the track, from the tags
+    std::map<quint32, QByteArray> flacPrivates;       // what the decoder of a FLAC track is given first
+    std::map<quint32, std::unique_ptr<FlacDecoder>> decoders;
     uint64 timecodeScale = 1000000;            // Matroska default
     std::deque<Block> queue;
 
@@ -509,7 +570,15 @@ struct Reader::Private
             if (auto *enabled = FindChild<KaxTrackFlagEnabled>(entry)) {
                 if (enabled->GetValue() == 0) continue;     // a removed stream
             }
-            if (auto *priv = FindChild<KaxCodecPrivate>(entry)) {
+            QString codecId;
+            if (auto *id = FindChild<KaxCodecID>(entry)) codecId = QString::fromLatin1(id->GetValue().c_str());
+            if (codecId == QLatin1String("A_FLAC")) {
+                // FLAC: the private data are the decoder's, and what the track is comes from its tag
+                track.codec = Codec::Flac;
+                if (auto *priv = FindChild<KaxCodecPrivate>(entry)) {
+                    flacPrivates[track.number] = QByteArray(reinterpret_cast<const char *>(priv->GetBuffer()), static_cast<int>(priv->GetSize()));
+                }
+            } else if (auto *priv = FindChild<KaxCodecPrivate>(entry)) {
                 const QJsonObject object = QJsonDocument::fromJson(QByteArray(reinterpret_cast<const char *>(priv->GetBuffer()),
                                                                               static_cast<int>(priv->GetSize()))).object();
                 track.kind = kindFromName(object["kind"].toString());
@@ -521,10 +590,127 @@ struct Reader::Private
         }
     }
 
+    // The length in bytes of an EBML element id or data size, from its first byte (0 if it is not valid)
+    static int vintLength(unsigned char first, int limit)
+    {
+        for (int length = 1; length <= limit; length++) {
+            if (first & (0x80 >> (length - 1))) return length;
+        }
+        return 0;
+    }
+
+    // What each track is: from its tag when it has one (a track written before the tags was described in its private data)
+    void applyDescriptions()
+    {
+        for (Track &track: trackList) {
+            const auto found = descriptions.find(track.uid);
+            if (found == descriptions.end()) continue;
+            const QJsonObject object = QJsonDocument::fromJson(found->second).object();
+            track.kind = kindFromName(object["kind"].toString());
+            track.codec = codecFromName(object["codec"].toString());
+            track.depth = object["depth"].toInt(16);
+            track.parameters = object["parameters"].toObject();
+        }
+    }
+
+    const Track *trackById(quint32 number) const
+    {
+        for (const Track &track: trackList) {
+            if (track.number == number) return &track;
+        }
+        return nullptr;
+    }
+
+    // The data of a block from its frames: they are decoded for a track that has a codec
+    bool assemble(quint32 track, const std::vector<QByteArray> &frames, QByteArray &out, QString &error)
+    {
+        const Track *info = trackById(track);
+        if (info && info->codec == Codec::Flac) {
+            std::unique_ptr<FlacDecoder> &decoder = decoders[track];
+            if (!decoder) {
+                decoder = std::make_unique<FlacDecoder>();
+                if (!decoder->open(flacPrivates[track], error)) {
+                    decoder.reset();
+                    return false;
+                }
+            }
+            return decoder->decode(frames, info->kind == Kind::Tbc, out, error);
+        }
+        out.clear();
+        for (const QByteArray &frame: frames) out.append(frame);
+        return true;
+    }
+
+    static quint64 vintValue(const unsigned char *bytes, int length)
+    {
+        quint64 value = bytes[0] & (0xFF >> length);
+        for (int i = 1; i < length; i++) value = (value << 8) | bytes[i];
+        return value;
+    }
+
+    // The frames of a block that is laced (0 none, 1 Xiph, 2 fixed size, 3 EBML)
+    static bool splitLaces(const QByteArray &payload, int lacing, std::vector<QByteArray> &frames)
+    {
+        frames.clear();
+        if (lacing == 0) {
+            frames.push_back(payload);
+            return true;
+        }
+        const unsigned char *bytes = reinterpret_cast<const unsigned char *>(payload.constData());
+        const qint64 total = payload.size();
+        if (total < 2) return false;
+        const int count = bytes[0] + 1;
+        qint64 position = 1;
+        std::vector<qint64> sizes;
+        if (lacing == 2) {
+            for (int i = 0; i < count; i++) sizes.push_back((total - 1) / count);
+        } else if (lacing == 1) {
+            for (int i = 0; i < count - 1; i++) {
+                qint64 size = 0;
+                for (;;) {
+                    if (position >= total) return false;
+                    const int part = bytes[position++];
+                    size += part;
+                    if (part != 255) break;
+                }
+                sizes.push_back(size);
+            }
+        } else {
+            qint64 previous = 0;
+            for (int i = 0; i < count - 1; i++) {
+                if (position >= total) return false;
+                const int length = vintLength(bytes[position], 8);
+                if (length == 0 || position + length > total) return false;
+                qint64 value = static_cast<qint64>(vintValue(bytes + position, length));
+                // the first size is as it is, the others are the difference from the one before
+                if (i > 0) value = previous + (value - ((Q_INT64_C(1) << (7 * length - 1)) - 1));
+                sizes.push_back(value);
+                previous = value;
+                position += length;
+            }
+        }
+        if (lacing != 2) {
+            qint64 used = 0;
+            for (const qint64 size: sizes) used += size;
+            sizes.push_back(total - position - used);
+        }
+        for (const qint64 size: sizes) {
+            if (size < 0 || position + size > total) return false;
+            frames.push_back(payload.mid(static_cast<int>(position), static_cast<int>(size)));
+            position += size;
+        }
+        return true;
+    }
+
     void readTags(KaxTags &tags)
     {
         for (EbmlElement *tagElement: tags.GetElementList()) {
             if (EbmlId(*tagElement) != EBML_ID(KaxTag)) continue;
+            // The track a tag is about, if it is about one
+            quint64 aboutTrack = 0;
+            if (auto *targets = FindChild<KaxTagTargets>(*static_cast<KaxTag *>(tagElement))) {
+                if (auto *uid = FindChild<KaxTagTrackUID>(*targets)) aboutTrack = uid->GetValue();
+            }
             for (EbmlElement *child: static_cast<KaxTag *>(tagElement)->GetElementList()) {
                 if (EbmlId(*child) != EBML_ID(KaxTagSimple)) continue;
                 KaxTagSimple &simple = *static_cast<KaxTagSimple *>(child);
@@ -533,6 +719,10 @@ struct Reader::Private
                 if (!name || !value) continue;
                 const QString key = QString::fromUtf8(name->GetValueUTF8().c_str());
                 const QByteArray text = QByteArray(value->GetValueUTF8().c_str());
+                if (aboutTrack != 0) {
+                    if (key == QLatin1String("LDX_TRACK")) descriptions[aboutTrack] = text;
+                    continue;
+                }
                 if (key == QLatin1String("LDX_PROFILE")) profileValue = text.toInt();
                 if (key == QLatin1String("LDX_HISTORY")) historyValue = QJsonDocument::fromJson(text).array();
                 if (key == QLatin1String("LDX_NEXT_TRACK_ID")) nextIdValue = static_cast<quint32>(text.toUInt());
@@ -614,18 +804,9 @@ struct Reader::Private
         return true;
     }
 
-    // The length in bytes of an EBML element id or data size, from its first byte (0 if it is not valid)
-    static int vintLength(unsigned char first, int limit)
-    {
-        for (int length = 1; length <= limit; length++) {
-            if (first & (0x80 >> (length - 1))) return length;
-        }
-        return 0;
-    }
-
     // Just the frame of the block at a position in a cluster, read by hand: a BlockGroup, whose first child is
     // the Block (a track number, a time and some flags, then the data). Without the rest of the cluster.
-    bool readBlockAt(quint64 clusterPosition, quint64 relativePosition, Block &out)
+    bool readBlockAt(quint64 clusterPosition, quint64 relativePosition, quint32 &track, std::vector<QByteArray> &frames)
     {
         input->setFilePointer(static_cast<int64>(segmentElement->GetElementPosition() + segmentElement->HeadSize() + clusterPosition));
         EbmlStream scan(*input);
@@ -667,14 +848,15 @@ struct Reader::Private
                 unsigned char blockHead[16];
                 if (!readAt(dataStart, blockHead, sizeof(blockHead))) return false;
                 const int trackLength = vintLength(blockHead[0], 8);
-                if (trackLength == 0 || (blockHead[trackLength + 2] & 0x06) != 0) return false;
-                const quint64 track = readSize(blockHead, trackLength);
+                if (trackLength == 0) return false;
                 const quint64 headerSize = static_cast<quint64>(trackLength) + 3;
                 if (size < headerSize) return false;
-                out.track = static_cast<quint32>(track);
-                out.data.resize(static_cast<int>(size - headerSize));
+                const int lacing = (blockHead[trackLength + 2] >> 1) & 3;
+                track = static_cast<quint32>(readSize(blockHead, trackLength));
+                QByteArray payload(static_cast<int>(size - headerSize), 0);
                 input->setFilePointer(static_cast<int64>(dataStart + headerSize));
-                return input->read(out.data.data(), static_cast<size_t>(out.data.size())) == static_cast<size_t>(out.data.size());
+                if (input->read(payload.data(), static_cast<size_t>(payload.size())) != static_cast<size_t>(payload.size())) return false;
+                return splitLaces(payload, lacing, frames);
             }
             child = dataStart + size;
         }
@@ -717,6 +899,22 @@ struct Reader::Private
     void pushBlock(BlockType &block, KaxCluster &cluster, qint64 clusterNs, std::deque<Block> &target)
     {
         block.SetParent(cluster);
+        const Track *info = trackById(static_cast<quint32>(block.TrackNum()));
+        if (info && info->codec != Codec::Raw) {
+            // All the frames of the block are one block of samples
+            std::vector<QByteArray> frames;
+            for (unsigned int i = 0; i < block.NumberFrames(); i++) {
+                DataBuffer &frame = block.GetBuffer(i);
+                frames.emplace_back(reinterpret_cast<const char *>(frame.Buffer()), static_cast<int>(frame.Size()));
+            }
+            Block out;
+            out.track = block.TrackNum();
+            out.timeNs = clusterNs + static_cast<qint64>(block.GetRelativeTimestamp()) * static_cast<qint64>(timecodeScale);
+            QString decodeError;
+            if (!assemble(out.track, frames, out.data, decodeError)) throw std::runtime_error(decodeError.toStdString());
+            target.push_back(std::move(out));
+            return;
+        }
         for (unsigned int i = 0; i < block.NumberFrames(); i++) {
             DataBuffer &frame = block.GetBuffer(i);
             Block out;
@@ -779,6 +977,7 @@ bool Reader::open(const QString &fileName, QString &error)
             delete element;
             d->pending = nullptr;
         }
+        d->applyDescriptions();
     } catch (const std::exception &exception) {
         error = QObject::tr("Could not read %1: %2").arg(fileName, QString::fromLocal8Bit(exception.what()));
         return false;
@@ -895,8 +1094,13 @@ bool Reader::readBlock(quint32 track, qint64 index, Block &block)
     try {
         std::deque<Block> blocks;
         if (entry.relativePosition != Private::NoPosition) {
+            quint32 found = 0;
+            std::vector<QByteArray> frames;
+            QString decodeError;
             Block direct;
-            if (d->readBlockAt(entry.clusterPosition, entry.relativePosition, direct) && direct.track == track) {
+            if (d->readBlockAt(entry.clusterPosition, entry.relativePosition, found, frames) && found == track
+                && d->assemble(track, frames, direct.data, decodeError)) {
+                direct.track = track;
                 direct.timeNs = entry.timeNs;
                 block = std::move(direct);
                 return true;

@@ -35,11 +35,11 @@ constexpr int FlacStandInRate = 48000;
 constexpr int FlacCompressionLevel = 8;
 
 // What a FLAC decoder is given before the data: "fLaC" and the STREAMINFO block, as in a Matroska track
-QByteArray flacCodecPrivate(QString &error);
+QByteArray flacCodecPrivate(int channels, QString &error);
 
-// A block of samples (little-endian 16-bit) as FLAC frames. `unsignedSamples` says the samples are unsigned (TBC), which
+// A block of samples (little-endian 16-bit, the channels one after the other for each sample) as FLAC frames. `unsignedSamples` says the samples are unsigned (TBC), which
 // are made signed by taking 32768 from them, so that the wave does not jump where it crosses the middle.
-bool flacEncode(const QByteArray &samples, bool unsignedSamples, std::vector<QByteArray> &frames, QString &error);
+bool flacEncode(const QByteArray &samples, int channels, bool unsignedSamples, std::vector<QByteArray> &frames, QString &error);
 
 class FlacDecoder
 {

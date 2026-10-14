@@ -9,6 +9,7 @@
  ******************************************************************************/
 
 #include <QCoreApplication>
+#include <QFileInfo>
 #include <QJsonObject>
 #include <QTemporaryDir>
 #include <cstdlib>
@@ -328,7 +329,7 @@ static void testFlac(const QString &directory)
     std::cerr << "Testing FLAC\n";
 
     QString error;
-    const QByteArray codecPrivate = Ldx::flacCodecPrivate(error);
+    const QByteArray codecPrivate = Ldx::flacCodecPrivate(1, error);
     CHECK(codecPrivate.size() == 4 + 4 + 34 && codecPrivate.left(4) == "fLaC");
 
     // Blocks of any length up to the most, unsigned and signed, come back as they were
@@ -338,7 +339,7 @@ static void testFlac(const QString &directory)
         for (const int samples: { 1, 17, 1470, 32768, 32769, 239330, 262144 }) {
             const QByteArray original = wave(samples, samples);
             std::vector<QByteArray> frames;
-            CHECK(Ldx::flacEncode(original, unsignedSamples, frames, error));
+            CHECK(Ldx::flacEncode(original, 1, unsignedSamples, frames, error));
             CHECK(!frames.empty() && static_cast<int>(frames.size()) <= Ldx::FlacMaxFrames);
             QByteArray decoded;
             if (!decoder.decode(frames, unsignedSamples, decoded, error)) std::cerr << "  decode failed for " << samples << " samples: " << error.toStdString() << " (" << frames.size() << " frames, first " << frames[0].size() << " bytes)\n";
@@ -350,18 +351,119 @@ static void testFlac(const QString &directory)
     // A field of this kind is smaller as FLAC (unsigned samples are made signed, so the wave does not jump)
     std::vector<QByteArray> framesUnsigned, framesRaw;
     const QByteArray field = wave(239330, 1);
-    CHECK(Ldx::flacEncode(field, true, framesUnsigned, error));
-    CHECK(Ldx::flacEncode(field, false, framesRaw, error));
+    CHECK(Ldx::flacEncode(field, 1, true, framesUnsigned, error));
+    CHECK(Ldx::flacEncode(field, 1, false, framesRaw, error));
     qint64 compressed = 0, uncompressed = 0;
     for (const QByteArray &frame: framesUnsigned) compressed += frame.size();
     for (const QByteArray &frame: framesRaw) uncompressed += frame.size();
     CHECK(compressed < field.size() * 8 / 10);
     CHECK(compressed < uncompressed);
 
+    // Stereo (the analogue audio): the two channels are coded together
+    Ldx::FlacDecoder stereoDecoder;
+    CHECK(stereoDecoder.open(Ldx::flacCodecPrivate(2, error), error));
+    for (const int samples: { 1, 1470, 32769, 100000 }) {
+        const QByteArray original = wave(samples * 2, samples + 7);
+        std::vector<QByteArray> frames;
+        CHECK(Ldx::flacEncode(original, 2, false, frames, error));
+        QByteArray decoded;
+        CHECK(stereoDecoder.decode(frames, false, decoded, error));
+        CHECK(decoded == original);
+    }
+
     // Too long a block is refused
     std::vector<QByteArray> none;
-    CHECK(!Ldx::flacEncode(QByteArray((262144 + 1) * 2, 0), false, none, error));
+    CHECK(!Ldx::flacEncode(QByteArray((262144 + 1) * 2, 0), 1, false, none, error));
     Q_UNUSED(directory);
+}
+
+// A track whose blocks are FLAC: the blocks written are the blocks read, in order and by place, and the file is smaller
+static void testFlacTracks(const QString &path)
+{
+    if (!Ldx::flacAvailable()) return;
+    std::cerr << "Testing FLAC tracks\n";
+
+    Ldx::Writer writer;
+    Ldx::Track video;
+    video.kind = Ldx::Kind::Tbc;
+    video.codec = Ldx::Codec::Flac;
+    video.name = "flac capture";
+    video.parameters["system"] = "NTSC";
+    writer.addTrack(video);
+    Ldx::Track plain;
+    plain.kind = Ldx::Kind::Tbc;      // a raw one beside it
+    writer.addTrack(plain);
+    Ldx::Track audio;
+    audio.kind = Ldx::Kind::Pcm;
+    audio.codec = Ldx::Codec::Flac;
+    writer.addTrack(audio);
+    Ldx::Track metadata;
+    metadata.kind = Ldx::Kind::Metadata;
+    metadata.depth = 0;
+    writer.addTrack(metadata);
+
+    QString error;
+    CHECK(writer.open(path, error));
+    QVector<Ldx::Block> written;
+    qint64 rawBytes = 0;
+    auto put = [&](quint32 track, qint64 timeNs, const QByteArray &data) {
+        Ldx::Block block;
+        block.track = track;
+        block.timeNs = timeNs;
+        block.data = data;
+        CHECK(writer.writeBlock(block.track, block.timeNs, block.data));
+        written.append(block);
+        rawBytes += data.size();
+    };
+    put(4, 0, QByteArray("metadata"));
+    for (int i = 0; i < 6; i++) {
+        const qint64 time = i * 16683000LL;
+        put(1, time, wave(239330, i));
+        put(2, time, wave(239330, i));
+        put(3, time, wave(1470 * 2, i + 50));
+    }
+    CHECK(writer.finish(error));
+    CHECK(QFileInfo(path).size() < rawBytes * 8 / 10);          // (a raw track is a third of what was written)
+
+    Ldx::Reader reader;
+    CHECK(reader.open(path, error));
+    const QVector<Ldx::Track> tracks = reader.tracks();
+    CHECK(tracks.size() == 4);
+    CHECK(tracks[0].codec == Ldx::Codec::Flac && tracks[0].kind == Ldx::Kind::Tbc && tracks[0].name == "flac capture");
+    CHECK(tracks[0].parameters["system"].toString() == "NTSC" && tracks[0].depth == 16);
+    CHECK(tracks[1].codec == Ldx::Codec::Raw && tracks[2].codec == Ldx::Codec::Flac && tracks[2].kind == Ldx::Kind::Pcm);
+
+    Ldx::Block block;
+    int index = 0;
+    while (reader.nextBlock(block)) {
+        CHECK(index < written.size());
+        CHECK(block.track == written[index].track && block.data == written[index].data);
+        index++;
+    }
+    CHECK(index == written.size());
+
+    Ldx::Reader random;
+    CHECK(random.open(path, error));
+    CHECK(random.buildIndex(error));
+    CHECK(random.blockCount(1) == 6 && random.blockCount(3) == 6);
+    for (const int wanted: { 4, 0, 5, 2 }) {
+        Ldx::Block found;
+        CHECK(random.readBlock(1, wanted, found) && found.data == wave(239330, wanted));
+        CHECK(random.readBlock(2, wanted, found) && found.data == wave(239330, wanted));
+        CHECK(random.readBlock(3, wanted, found) && found.data == wave(1470 * 2, wanted + 50));
+    }
+
+    // Added to: a block of a FLAC track at the end
+    Ldx::Writer append;
+    CHECK(append.openAppend(path, error));
+    CHECK(append.writeBlock(1, 6 * 16683000LL, wave(239330, 77)));
+    CHECK(append.finish(error));
+    Ldx::Reader after;
+    CHECK(after.open(path, error));
+    CHECK(after.buildIndex(error));
+    Ldx::Block found;
+    CHECK(after.blockCount(1) == 7 && after.readBlock(1, 6, found) && found.data == wave(239330, 77));
+    CHECK(after.readBlock(1, 1, found) && found.data == wave(239330, 1));
 }
 
 static void testNotAnLdxFile(const QString &path)
@@ -389,6 +491,7 @@ int main(int argc, char *argv[])
     testIdsAndAttachments(directory.filePath("ids.ldx"));
     testAppend(directory.filePath("append.ldx"));
     testFlac(directory.path());
+    testFlacTracks(directory.filePath("flac.ldx"));
     testNotAnLdxFile(directory.filePath("garbage.ldx"));
 
     std::cerr << "All tests passed\n";
