@@ -866,13 +866,20 @@ qint32 MainWindow::effectiveOffset(qint32 index) const
     return index == referenceIndex() ? 0 : project.sources[index].offset;
 }
 
-float MainWindow::sourceSnr(const SourceState &state, qint32 atFrame, qint32 offset, bool &known) const
+// The SNR of a source at a frame: of the white flag, or, when it has none (VHS for instance), of the black level.
+// `black` says which one it is.
+float MainWindow::sourceSnr(const SourceState &state, qint32 atFrame, qint32 offset, bool &known, bool *black) const
 {
     known = false;
+    if (black) *black = false;
     if (!state.loaded) return 0;
     const qint32 own = atFrame - offset;
     if (own < 1 || own > state.info.whiteSnr.size()) return 0;
-    const float value = state.info.whiteSnr[own - 1];
+    float value = state.info.whiteSnr[own - 1];
+    if (!std::isfinite(value) && own <= state.info.blackSnr.size()) {
+        value = state.info.blackSnr[own - 1];
+        if (black) *black = true;
+    }
     known = std::isfinite(value);
     return known ? value : 0;
 }
@@ -883,24 +890,42 @@ void MainWindow::updateTabTexts()
     if (tabBar->count() != project.sources.size()) return;
 
     const QSignalBlocker blocker(tabBar);
-    const bool stackKnown = frame >= 1 && frame <= stackWhite.size() && std::isfinite(stackWhite[frame - 1]);
-    stackButton->setText(stackKnown ? tr("Stack  %1 dB").arg(stackWhite[frame - 1], 0, 'f', 1) : tr("Stack"));
+    // (the black level stands in for the white flag where there is none)
+    float stackValue = 0;
+    bool stackKnown = false, stackBlackLevel = false;
+    if (frame >= 1 && frame <= stackWhite.size()) {
+        stackValue = stackWhite[frame - 1];
+        if (!std::isfinite(stackValue) && frame <= stackBlack.size()) {
+            stackValue = stackBlack[frame - 1];
+            stackBlackLevel = true;
+        }
+        stackKnown = std::isfinite(stackValue);
+    }
+    stackButton->setText(stackKnown ? tr("Stack  %1 dB").arg(stackValue, 0, 'f', 1) : tr("Stack"));
+    stackButton->setToolTip(stackKnown ? (stackBlackLevel ? tr("The SNR of the black level: this video has no white flag") : tr("The SNR of the white flag")) : QString());
 
-    // The source with the best SNR here
+    // The source with the best SNR here (compared on the white flag where the sources have one)
+    bool anyWhite = false;
+    for (qint32 index = 0; index < project.sources.size(); index++) {
+        bool known, black;
+        sourceSnr(states.value(project.sources[index].id), frame, effectiveOffset(index), known, &black);
+        if (known && !black) anyWhite = true;
+    }
     qint32 best = -1;
     float bestValue = 0;
     for (qint32 index = 0; index < project.sources.size(); index++) {
         const StackSource &source = project.sources[index];
-        bool known;
-        const float value = sourceSnr(states.value(source.id), frame, effectiveOffset(index), known);
-        if (known && source.enabled && (best < 0 || value > bestValue)) { best = index; bestValue = value; }
+        bool known, black;
+        const float value = sourceSnr(states.value(source.id), frame, effectiveOffset(index), known, &black);
+        if (known && source.enabled && black != anyWhite && (best < 0 || value > bestValue)) { best = index; bestValue = value; }
     }
 
     for (qint32 index = 0; index < project.sources.size(); index++) {
         const StackSource &source = project.sources[index];
-        bool known;
-        const float value = sourceSnr(states.value(source.id), frame, effectiveOffset(index), known);
+        bool known, black;
+        const float value = sourceSnr(states.value(source.id), frame, effectiveOffset(index), known, &black);
         tabBar->setTabText(index, known ? tr("%1  %2 dB").arg(index + 1).arg(value, 0, 'f', 1) : QString::number(index + 1));
+        tabBar->setTabToolTip(index, known ? (black ? tr("The SNR of the black level: this video has no white flag") : tr("The SNR of the white flag")) : QString());
         tabBar->setTabTextColor(index, index == best ? QColor("#3b6d11") : palette().color(QPalette::WindowText));
     }
 }
@@ -1075,7 +1100,8 @@ void MainWindow::showStackPicture(const FrameResult &result)
         stackWindow->setMessage(result.message);
         return;
     }
-    const QString snr = std::isfinite(result.stackWhiteSnr) ? tr("  -  %1 dB").arg(result.stackWhiteSnr, 0, 'f', 1) : QString();
+    const double stackSnr = std::isfinite(result.stackWhiteSnr) ? result.stackWhiteSnr : result.stackBlackSnr;
+    const QString snr = std::isfinite(stackSnr) ? tr("  -  %1 dB").arg(stackSnr, 0, 'f', 1) : QString();
     stackWindow->setPicture(shownImage(result.image), tr("Stack, frame %1%2").arg(result.frame).arg(snr));
 }
 
