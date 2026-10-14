@@ -314,6 +314,8 @@ void MainWindow::buildUi()
     stackButton->setToolTip(tr("On: the picture is the stack. Off: it is the source of the tab chosen. (key 0 or S)"));
     optionsLayout->addWidget(stackButton);
     optionsLayout->addWidget(chromaButton);
+    aspectButton = new QPushButton;
+    optionsLayout->addWidget(aspectButton);
     optionsLayout->addStretch(1);
     QToolButton *zoomOut = makeButton(":/icons/zoom-out.svg", tr("Zoom out"), true);
     QToolButton *zoomIn = makeButton(":/icons/zoom-in.svg", tr("Zoom in"), true);
@@ -328,8 +330,6 @@ void MainWindow::buildUi()
     optionsLayout->addWidget(zoomOut);
     optionsLayout->addWidget(zoomSpin);
     optionsLayout->addWidget(zoomIn);
-    aspectButton = new QPushButton;
-    optionsLayout->addWidget(aspectButton);
     originalSizeButton = makeButton(":/icons/zoom-original.svg", tr("Original size: zoom to 100% and resize the window to show the whole picture"), false);
     optionsLayout->addWidget(originalSizeButton);
     mainLayout->addWidget(options);
