@@ -167,9 +167,17 @@ struct Writer::Private
         if (!cluster) return;
         cluster->Render(*output, cues);
         const quint64 position = cluster->GetElementPosition() - (segment->GetElementPosition() + segment->HeadSize());
-        const quint64 dataStart = cluster->GetElementPosition() + cluster->HeadSize();
+        // Where each block is in the data of the cluster: after the elements that come before it, whose sizes are
+        // known now (the position the library gives for a child changes with the options of the cluster)
+        std::map<const EbmlElement *, quint64> offsets;
+        quint64 offset = 0;
+        for (EbmlElement *child: cluster->GetElementList()) {
+            offsets[child] = offset;
+            offset += child->ElementSize(false);
+        }
         for (const BlockCue &block: clusterBlocks) {
-            cueRecords.push_back({ block.timeNs, block.track, position, block.block ? block.block->GetElementPosition() - dataStart : 0 });
+            const auto found = offsets.find(block.block);
+            cueRecords.push_back({ block.timeNs, block.track, position, found != offsets.end() ? found->second : 0 });
         }
         clusterBlocks.clear();
         cluster->ReleaseFrames();
@@ -320,7 +328,6 @@ bool Writer::writeBlock(quint32 track, qint64 timeNs, const QByteArray &data)
             d->cluster = new KaxCluster;
             d->cluster->SetParent(*d->segment);
             d->cluster->SetPreviousTimecode(0, TimecodeScaleNs);
-            d->cluster->EnableChecksum();
             d->clusterStartNs = timeNs;
         }
 
@@ -781,7 +788,8 @@ bool Reader::readBlock(quint32 track, qint64 index, Block &block)
         }
         if (!d->readClusterAt(entry.clusterPosition, blocks)) return false;
         for (Block &candidate: blocks) {
-            if (candidate.track == track && candidate.timeNs == entry.timeNs) {
+            // (the time of a cue is in the ticks of the file, a little less exact than the time of the block)
+            if (candidate.track == track && qAbs(candidate.timeNs - entry.timeNs) <= 2 * static_cast<qint64>(d->timecodeScale)) {
                 block = std::move(candidate);
                 return true;
             }

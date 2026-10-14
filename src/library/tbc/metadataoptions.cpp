@@ -9,6 +9,7 @@
  ******************************************************************************/
 
 #include "metadataoptions.h"
+#include "ldxcapture.h"
 #include "cvbs.h"
 
 #include <QCoreApplication>
@@ -118,6 +119,12 @@ bool MetadataOptions::selectInput(const QString &tbcFileName, bool useInputFile,
             return false;
         }
         metadataFileName = inputFileName;
+        return true;
+    }
+
+    // An LDX file (or one of its tracks) has its metadata in itself
+    if (LdxCapture::isLdxName(tbcFileName)) {
+        metadataFileName = tbcFileName;
         return true;
     }
 

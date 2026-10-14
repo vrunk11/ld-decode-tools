@@ -22,6 +22,9 @@ struct StackSource {
     QString label;
     bool enabled = true;   // an off source stays in the list but is left out of the stack
     qint32 offset = 0;     // the source is shifted by this many frames to align it with the others
+
+    // What opens the capture: the file, or, for a track of an LDX file, the file and "#" and the id of the track
+    QString reference() const;
 };
 
 // How the sources are stacked (the options of ld-disc-stacker)

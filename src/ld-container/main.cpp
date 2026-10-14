@@ -801,6 +801,74 @@ int info(const QStringList &arguments)
     return 0;
 }
 
+// ld-container verify file.ldx
+int verify(const QStringList &arguments)
+{
+    QCommandLineParser parser;
+    parser.setApplicationDescription("Check an LDX file: every block is read in the order of the file and by its place in its\n"
+                                     "track (as the tools that jump about in a capture read it), and the two must agree.");
+    parser.addHelpOption();
+    parser.addPositionalArgument("file", "The LDX file");
+    parser.process(arguments);
+    if (parser.positionalArguments().size() != 1) {
+        err << parser.helpText();
+        return 1;
+    }
+    const QString fileName = parser.positionalArguments().first();
+
+    // In the order of the file: what each track holds, as the size and a hash of its blocks
+    struct Seen {
+        qint64 size;
+        quint64 hash;
+        qint64 timeNs;
+    };
+    QMap<quint32, std::vector<Seen>> seen;
+    {
+        Ldx::Reader reader;
+        QString error;
+        if (!reader.open(fileName, error)) {
+            err << error << "\n";
+            return 1;
+        }
+        if (reader.profile() < 1) {
+            err << fileName << " is not an LDX file\n";
+            return 1;
+        }
+        Ldx::Block block;
+        while (reader.nextBlock(block)) {
+            seen[block.track].push_back({ block.data.size(), qHash(block.data, 0), block.timeNs });
+        }
+    }
+
+    // By place in the track
+    Ldx::Reader reader;
+    QString error;
+    if (!reader.open(fileName, error) || !reader.buildIndex(error)) {
+        err << error << "\n";
+        return 1;
+    }
+    int problems = 0;
+    for (const Ldx::Track &track: reader.tracks()) {
+        const std::vector<Seen> &blocks = seen[track.number];
+        if (reader.blockCount(track.number) != static_cast<qint64>(blocks.size())) {
+            err << "  track " << track.number << ": " << blocks.size() << " blocks in the file, " << reader.blockCount(track.number) << " in the index\n";
+            problems++;
+            continue;
+        }
+        int bad = 0;
+        for (qint64 i = 0; i < static_cast<qint64>(blocks.size()); i++) {
+            Ldx::Block block;
+            if (!reader.readBlock(track.number, i, block) || block.data.size() != blocks[i].size || qHash(block.data, 0) != blocks[i].hash) {
+                if (bad++ < 5) err << "  track " << track.number << ": block " << i << " does not read back the same\n";
+            }
+        }
+        if (bad > 0) problems += bad;
+        out << "  track " << track.number << " (" << Ldx::kindName(track.kind) << "): " << blocks.size() << " blocks" << (bad ? QString(", %1 differ").arg(bad) : QString(", all agree")) << "\n";
+    }
+    out << (problems ? "The file has problems\n" : "The file is sound\n");
+    return problems ? 1 : 0;
+}
+
 // ld-container unpack file.ldx -o directory
 int unpack(const QStringList &arguments)
 {
@@ -883,7 +951,8 @@ int main(int argc, char *argv[])
                "  remove   remove the track with an id (and what is about it) from an .ldx file\n"
                "  stack    keep a stacking session in an .ldx file, its sources being tracks\n"
                "  unpack   write the tracks and attachments of an .ldx file out as separate files\n"
-               "  info     show what an .ldx file holds\n\n"
+               "  info     show what an .ldx file holds\n"
+               "  verify   check that every block of an .ldx file reads back the same, in order and by place\n\n"
                "Use ld-container <command> --help for the options of a command.\n";
         return arguments.size() < 2 ? 1 : 0;
     }
@@ -897,6 +966,7 @@ int main(int argc, char *argv[])
     if (command == "stack") return setStack(arguments);
     if (command == "unpack") return unpack(arguments);
     if (command == "info") return info(arguments);
+    if (command == "verify") return verify(arguments);
     err << "Unknown command " << command << "\n";
     return 1;
 }

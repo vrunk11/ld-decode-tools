@@ -12,6 +12,8 @@
 
 #include "lddecodemetadata.h"
 #include "stackedvideo.h"
+#include "ldxcapture.h"
+#include <QTemporaryFile>
 
 #include "cvbs.h"
 #include "cvbsaudio.h"
@@ -721,6 +723,35 @@ void LdDecodeMetaData::clear()
 // Read all metadata, in whichever format the file is in
 bool LdDecodeMetaData::read(QString fileName)
 {
+    // A capture kept in an LDX file: its own metadata, or those of the stack of the session the file keeps
+    if (LdxCapture::isLdxName(fileName)) {
+        QString path;
+        qint32 track;
+        LdxCapture::split(fileName, path, track);
+        QString error;
+        if (track == 0 && LdxCapture::hasSession(path)) {
+            if (!StackedVideo::readMetadata(fileName, *this, error)) {
+                qCritical().noquote() << error;
+                return false;
+            }
+            return true;
+        }
+        LdxCapture capture;
+        QByteArray json;
+        if (!capture.open(fileName, error) || !capture.readMetadata(json, error)) {
+            qCritical().noquote() << error;
+            return false;
+        }
+        QTemporaryFile temporary;
+        if (!temporary.open() || temporary.write(json) != json.size() || !temporary.flush()) {
+            qCritical() << "Could not hold the metadata of" << fileName;
+            return false;
+        }
+        if (!readJson(temporary.fileName())) return false;
+        format = MetadataFormat::Json;
+        return true;
+    }
+
     // A stacking session: the metadata of its stack
     if (fileName.endsWith(".stack", Qt::CaseInsensitive)) {
         QString error;
@@ -763,6 +794,12 @@ bool LdDecodeMetaData::read(QString fileName)
 // Write all metadata, choosing the format from the file name or the input
 bool LdDecodeMetaData::write(QString fileName) const
 {
+    // The metadata of a capture is kept in its LDX file
+    if (LdxCapture::isLdxName(fileName)) {
+        qWarning() << "The metadata of an LDX file cannot be written";
+        return false;
+    }
+
     // The metadata of a stacking session is that of its sources: there is none to write
     if (fileName.endsWith(".stack", Qt::CaseInsensitive)) {
         qWarning() << "The metadata of a stacking session cannot be written";
@@ -805,6 +842,9 @@ LdDecodeMetaData::MetadataFormat LdDecodeMetaData::detectFormat(const QString &f
 // Find the metadata for a TBC file, preferring SQLite when both exist
 QString LdDecodeMetaData::findMetadataFile(const QString &tbcFileName)
 {
+    // An LDX file (or one of its tracks) has its metadata in itself
+    if (LdxCapture::isLdxName(tbcFileName)) return tbcFileName;
+
     // A stacking session has the metadata of its stack in itself
     if (tbcFileName.endsWith(".stack", Qt::CaseInsensitive)) return tbcFileName;
 
