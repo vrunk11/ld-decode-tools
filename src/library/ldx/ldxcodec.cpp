@@ -17,6 +17,7 @@
 extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavutil/channel_layout.h>
+#include <libavutil/opt.h>
 #include <libavutil/frame.h>
 #include <libavutil/mem.h>
 #include <libavutil/samplefmt.h>
@@ -241,6 +242,170 @@ bool FlacDecoder::decode(const std::vector<QByteArray> &frames, bool unsignedSam
     return true;
 }
 
+bool ffv1Available()
+{
+    return avcodec_find_encoder(AV_CODEC_ID_FFV1) && avcodec_find_decoder(AV_CODEC_ID_FFV1);
+}
+
+struct Ffv1Encoder::Private
+{
+    ContextPtr context;
+    int width = 0;
+    int height = 0;
+    qint64 count = 0;
+};
+
+Ffv1Encoder::Ffv1Encoder() : d(new Private) {}
+Ffv1Encoder::~Ffv1Encoder() = default;
+
+bool Ffv1Encoder::open(int width, int height, QString &error)
+{
+    const AVCodec *codec = avcodec_find_encoder(AV_CODEC_ID_FFV1);
+    if (!codec) {
+        error = QObject::tr("This build of ffmpeg has no FFV1 encoder");
+        return false;
+    }
+    d->context.reset(avcodec_alloc_context3(codec));
+    if (!d->context) {
+        error = QObject::tr("Could not make an FFV1 encoder");
+        return false;
+    }
+    AVCodecContext *context = d->context.get();
+    context->width = width;
+    context->height = height;
+    context->pix_fmt = AV_PIX_FMT_GRAY10LE;
+    context->time_base = AVRational { 1, 60 };
+    context->framerate = AVRational { 60, 1 };
+    context->gop_size = 1;                              // every frame stands alone
+    context->thread_count = 1;
+    context->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;      // the decoder is given its configuration first
+    av_opt_set_int(context->priv_data, "level", 3, 0);
+    av_opt_set_int(context->priv_data, "coder", 1, 0);
+    av_opt_set_int(context->priv_data, "context", 1, 0);
+    av_opt_set_int(context->priv_data, "slices", 4, 0);
+    av_opt_set_int(context->priv_data, "slicecrc", 1, 0);
+    if (avcodec_open2(context, codec, nullptr) < 0) {
+        error = QObject::tr("Could not open the FFV1 encoder");
+        return false;
+    }
+    d->width = width;
+    d->height = height;
+    return true;
+}
+
+QByteArray Ffv1Encoder::extradata() const
+{
+    if (!d->context || d->context->extradata_size < 1) return QByteArray();
+    return QByteArray(reinterpret_cast<const char *>(d->context->extradata), d->context->extradata_size);
+}
+
+bool Ffv1Encoder::encode(const QByteArray &image, QByteArray &packet, QString &error)
+{
+    packet.clear();
+    if (!d->context || image.size() != d->width * d->height * 2) {
+        error = QObject::tr("An FFV1 image is of %1 x %2 words").arg(d->width).arg(d->height);
+        return false;
+    }
+    FramePtr frame(av_frame_alloc());
+    frame->format = AV_PIX_FMT_GRAY10LE;
+    frame->width = d->width;
+    frame->height = d->height;
+    if (av_frame_get_buffer(frame.get(), 0) < 0) {
+        error = QObject::tr("Could not make a frame for the FFV1 encoder");
+        return false;
+    }
+    for (int row = 0; row < d->height; row++) {
+        std::memcpy(frame->data[0] + static_cast<qint64>(row) * frame->linesize[0], image.constData() + static_cast<qint64>(row) * d->width * 2,
+                    static_cast<size_t>(d->width) * 2);
+    }
+    frame->pts = d->count++;
+    frame->pict_type = AV_PICTURE_TYPE_I;
+
+    PacketPtr out(av_packet_alloc());
+    if (avcodec_send_frame(d->context.get(), frame.get()) < 0) {
+        error = QObject::tr("The FFV1 encoder failed");
+        return false;
+    }
+    const int result = avcodec_receive_packet(d->context.get(), out.get());
+    if (result < 0) {
+        error = QObject::tr("The FFV1 encoder gave nothing");
+        return false;
+    }
+    packet = QByteArray(reinterpret_cast<const char *>(out->data), out->size);
+    return true;
+}
+
+struct Ffv1Decoder::Private
+{
+    ContextPtr context;
+    int width = 0;
+    int height = 0;
+};
+
+Ffv1Decoder::Ffv1Decoder() : d(new Private) {}
+Ffv1Decoder::~Ffv1Decoder() = default;
+
+bool Ffv1Decoder::open(int width, int height, const QByteArray &extradata, QString &error)
+{
+    const AVCodec *codec = avcodec_find_decoder(AV_CODEC_ID_FFV1);
+    if (!codec) {
+        error = QObject::tr("This build of ffmpeg has no FFV1 decoder");
+        return false;
+    }
+    d->context.reset(avcodec_alloc_context3(codec));
+    if (!d->context) {
+        error = QObject::tr("Could not make an FFV1 decoder");
+        return false;
+    }
+    AVCodecContext *context = d->context.get();
+    context->width = width;
+    context->height = height;
+    context->pix_fmt = AV_PIX_FMT_GRAY10LE;
+    context->thread_count = 1;
+    if (!extradata.isEmpty()) {
+        context->extradata = static_cast<uint8_t *>(av_mallocz(static_cast<size_t>(extradata.size()) + AV_INPUT_BUFFER_PADDING_SIZE));
+        std::memcpy(context->extradata, extradata.constData(), static_cast<size_t>(extradata.size()));
+        context->extradata_size = extradata.size();
+    }
+    if (avcodec_open2(context, codec, nullptr) < 0) {
+        error = QObject::tr("Could not open the FFV1 decoder");
+        return false;
+    }
+    d->width = width;
+    d->height = height;
+    return true;
+}
+
+bool Ffv1Decoder::decode(const QByteArray &data, QByteArray &image, QString &error)
+{
+    image.clear();
+    if (!d->context) {
+        error = QObject::tr("The FFV1 decoder is not open");
+        return false;
+    }
+    PacketPtr packet(av_packet_alloc());
+    FramePtr frame(av_frame_alloc());
+    if (av_new_packet(packet.get(), data.size()) < 0) {
+        error = QObject::tr("Out of memory");
+        return false;
+    }
+    std::memcpy(packet->data, data.constData(), static_cast<size_t>(data.size()));
+    if (avcodec_send_packet(d->context.get(), packet.get()) < 0 || avcodec_receive_frame(d->context.get(), frame.get()) < 0) {
+        error = QObject::tr("The FFV1 decoder failed");
+        return false;
+    }
+    if (frame->width != d->width || frame->height != d->height || frame->format != AV_PIX_FMT_GRAY10LE) {
+        error = QObject::tr("The FFV1 image is not of %1 x %2 words of 10 bits").arg(d->width).arg(d->height);
+        return false;
+    }
+    image.resize(d->width * d->height * 2);
+    for (int row = 0; row < d->height; row++) {
+        std::memcpy(image.data() + static_cast<qint64>(row) * d->width * 2, frame->data[0] + static_cast<qint64>(row) * frame->linesize[0],
+                    static_cast<size_t>(d->width) * 2);
+    }
+    return true;
+}
+
 #else // no ffmpeg
 
 bool flacAvailable()
@@ -276,6 +441,38 @@ bool FlacDecoder::decode(const std::vector<QByteArray> &, bool, QByteArray &, QS
     return false;
 }
 
+bool ffv1Available() { return false; }
+
+struct Ffv1Encoder::Private {};
+Ffv1Encoder::Ffv1Encoder() : d(new Private) {}
+Ffv1Encoder::~Ffv1Encoder() = default;
+bool Ffv1Encoder::open(int, int, QString &error) { error = QObject::tr("This build has no FFV1: it was built without ffmpeg"); return false; }
+QByteArray Ffv1Encoder::extradata() const { return QByteArray(); }
+bool Ffv1Encoder::encode(const QByteArray &, QByteArray &, QString &error) { error = QObject::tr("This build has no FFV1: it was built without ffmpeg"); return false; }
+
+struct Ffv1Decoder::Private {};
+Ffv1Decoder::Ffv1Decoder() : d(new Private) {}
+Ffv1Decoder::~Ffv1Decoder() = default;
+bool Ffv1Decoder::open(int, int, const QByteArray &, QString &error) { error = QObject::tr("This build has no FFV1: it was built without ffmpeg"); return false; }
+bool Ffv1Decoder::decode(const QByteArray &, QByteArray &, QString &error) { error = QObject::tr("This build has no FFV1: it was built without ffmpeg"); return false; }
+
+
 #endif
+
+QByteArray ffv1Pad(const QByteArray &samples, int width, int height, quint16 padValue)
+{
+    const qint64 words = static_cast<qint64>(width) * height;
+    QByteArray image(static_cast<int>(words * 2), 0);
+    const qint64 have = qMin<qint64>(samples.size() / 2, words);
+    std::memcpy(image.data(), samples.constData(), static_cast<size_t>(have * 2));
+    quint16 *target = reinterpret_cast<quint16 *>(image.data());
+    for (qint64 i = have; i < words; i++) target[i] = padValue;
+    return image;
+}
+
+QByteArray ffv1Unpad(const QByteArray &image, qint64 samples)
+{
+    return image.left(static_cast<int>(qMin<qint64>(samples * 2, image.size())));
+}
 
 } // namespace Ldx

@@ -494,6 +494,60 @@ static void testUnsignedSamples(const QString &directory)
     CHECK(sizes[0] < sizes[1]);
 }
 
+// A frame of CVBS samples: 10 bits in words, a line of a ramp with noise, which repeats
+static QByteArray cvbsFrame(qint64 samples, int width, int seed)
+{
+    QByteArray data(static_cast<int>(samples * 2), 0);
+    quint16 *values = reinterpret_cast<quint16 *>(data.data());
+    quint32 state = 777u + static_cast<quint32>(seed);
+    for (qint64 i = 0; i < samples; i++) {
+        state = state * 1664525u + 1013904223u;
+        const int noise = static_cast<int>((state >> 24) & 0x7) - 4;
+        const int signal = 200 + static_cast<int>((i % width) * 600 / width);
+        values[i] = static_cast<quint16>(qBound(0, signal + noise, 1023));
+    }
+    return data;
+}
+
+static void testFfv1()
+{
+    if (!Ldx::ffv1Available()) {
+        std::cerr << "Skipping the FFV1 tests: this build has no ffmpeg\n";
+        return;
+    }
+    std::cerr << "Testing FFV1\n";
+
+    // A frame that fills its image (NTSC), and one that does not (PAL: 625 lines and 4 samples)
+    struct Shape { int width; qint64 samples; };
+    for (const Shape shape: { Shape { 910, 477750 }, Shape { 1135, 709379 }, Shape { 909, 477225 } }) {
+        const int height = Ldx::ffv1Height(shape.samples, shape.width);
+        CHECK(height == (shape.samples == 709379 ? 626 : 525));
+
+        const QByteArray frame = cvbsFrame(shape.samples, shape.width, shape.width);
+        const QByteArray image = Ldx::ffv1Pad(frame, shape.width, height, 252);
+        CHECK(image.size() == shape.width * height * 2);
+        CHECK(Ldx::ffv1Unpad(image, shape.samples) == frame);
+
+        QString error;
+        Ldx::Ffv1Encoder encoder;
+        CHECK(encoder.open(shape.width, height, error));
+        CHECK(!encoder.extradata().isEmpty());
+        Ldx::Ffv1Decoder decoder;
+        CHECK(decoder.open(shape.width, height, encoder.extradata(), error));
+
+        // Several in a row, each alone
+        for (int n = 0; n < 3; n++) {
+            const QByteArray sent = Ldx::ffv1Pad(cvbsFrame(shape.samples, shape.width, n), shape.width, height, 252);
+            QByteArray packet, received;
+            CHECK(encoder.encode(sent, packet, error));
+            CHECK(packet.size() < sent.size() / 2);
+            if (!decoder.decode(packet, received, error)) std::cerr << "  " << error.toStdString() << "\n";
+            CHECK(decoder.decode(packet, received, error));
+            CHECK(received == sent);
+        }
+    }
+}
+
 static void testNotAnLdxFile(const QString &path)
 {
     std::cerr << "Testing a file that is not an LDX file\n";
@@ -521,6 +575,7 @@ int main(int argc, char *argv[])
     testFlac(directory.path());
     testFlacTracks(directory.filePath("flac.ldx"));
     testUnsignedSamples(directory.path());
+    testFfv1();
     testNotAnLdxFile(directory.filePath("garbage.ldx"));
 
     std::cerr << "All tests passed\n";
