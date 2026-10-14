@@ -97,11 +97,7 @@ private:
     void sourcesChanged();      // what is stacked changed: the stack must be worked out again
 
     void setFrame(qint32 frame);
-    void setPosition(qint32 position);
-    bool fieldUnit() const { return fieldView && !fieldSplit; }   // the controls count fields
-    qint32 positionOf(qint32 atFrame, qint32 atField) const { return fieldUnit() ? 2 * (atFrame - 1) + 1 + atField : atFrame; }
-    qint32 currentPosition() const { return positionOf(frame, fieldIndex); }
-    void updateViewButtons();
+    void updateViewCombo();
     void viewModeChanged();
     void requestFrame();
     void applyZoom();
@@ -159,8 +155,7 @@ private:
     QPushButton *chromaButton = nullptr;
     QToolButton *originalSizeButton = nullptr;
     QPushButton *aspectButton = nullptr;
-    QPushButton *viewButton = nullptr;
-    QPushButton *fieldModeButton = nullptr;
+    QComboBox *viewCombo = nullptr;   // Frame, Split, Field 1, Field 2
     bool displayAspect = true;
     bool fieldView = false;         // one field of the frame, not the frame
     bool fieldSplit = false;        // in field view: both fields one above the other

@@ -137,7 +137,7 @@ MainWindow::MainWindow(const QStringList &arguments, QWidget *parent)
 
     zoom = 1.0;
     setZoom(zoom);
-    updateViewButtons();
+    updateViewCombo();
 
     // A session file, or the sources to start with
     QStringList files;
@@ -314,10 +314,11 @@ void MainWindow::buildUi()
     optionsLayout->addWidget(chromaButton);
     aspectButton = new QPushButton;
     optionsLayout->addWidget(aspectButton);
-    viewButton = new QPushButton;
-    optionsLayout->addWidget(viewButton);
-    fieldModeButton = new QPushButton;
-    optionsLayout->addWidget(fieldModeButton);
+    // What the picture is: the frame, both fields of it one above the other, or one field with its lines doubled
+    viewCombo = new QComboBox;
+    viewCombo->addItems({ tr("Frame"), tr("Split"), tr("Field 1"), tr("Field 2") });
+    viewCombo->setToolTip(tr("The picture: the frame, both fields (split, the first above the second), or one field with its lines doubled (key F goes through them)"));
+    optionsLayout->addWidget(viewCombo);
     optionsLayout->addStretch(1);
     QToolButton *zoomOut = makeButton(":/icons/zoom-out.svg", tr("Zoom out"), true);
     QToolButton *zoomIn = makeButton(":/icons/zoom-in.svg", tr("Zoom in"), true);
@@ -373,12 +374,12 @@ void MainWindow::buildUi()
         project.showStack = on;
         viewChanged();
     });
-    connect(frameSpin, &QSpinBox::valueChanged, this, &MainWindow::setPosition);
-    connect(frameSlider, &QSlider::valueChanged, this, &MainWindow::setPosition);
-    connect(firstButton, &QToolButton::clicked, this, [this]() { setPosition(1); });
-    connect(previousButton, &QToolButton::clicked, this, [this]() { setPosition(currentPosition() - 1); });
-    connect(nextButton, &QToolButton::clicked, this, [this]() { setPosition(currentPosition() + 1); });
-    connect(lastButton, &QToolButton::clicked, this, [this]() { setPosition(positionOf(totalFrames, 1)); });
+    connect(frameSpin, &QSpinBox::valueChanged, this, &MainWindow::setFrame);
+    connect(frameSlider, &QSlider::valueChanged, this, &MainWindow::setFrame);
+    connect(firstButton, &QToolButton::clicked, this, [this]() { setFrame(1); });
+    connect(previousButton, &QToolButton::clicked, this, [this]() { setFrame(frame - 1); });
+    connect(nextButton, &QToolButton::clicked, this, [this]() { setFrame(frame + 1); });
+    connect(lastButton, &QToolButton::clicked, this, [this]() { setFrame(totalFrames); });
     connect(snrPlot, &SnrGraph::frameRequested, this, &MainWindow::setFrame);
     connect(modeCombo, &QComboBox::currentIndexChanged, this, [this](qint32 index) {
         project.stacking.mode = index - 1;
@@ -390,14 +391,13 @@ void MainWindow::buildUi()
     });
     connect(zoomIn, &QToolButton::clicked, this, [this]() { stepZoom(1); });
     connect(zoomOut, &QToolButton::clicked, this, [this]() { stepZoom(-1); });
-    connect(viewButton, &QPushButton::clicked, this, [this]() {
-        fieldView = !fieldView;
+    connect(viewCombo, &QComboBox::currentIndexChanged, this, [this](qint32 index) {
+        fieldView = index != 0;
+        fieldSplit = index == 1;
+        fieldIndex = index == 3 ? 1 : 0;
         project.fieldView = fieldView;
-        viewModeChanged();
-    });
-    connect(fieldModeButton, &QPushButton::clicked, this, [this]() {
-        fieldSplit = !fieldSplit;
         project.fieldSplit = fieldSplit;
+        project.fieldIndex = fieldIndex;
         viewModeChanged();
     });
     connect(aspectButton, &QPushButton::clicked, this, [this]() {
@@ -415,9 +415,9 @@ void MainWindow::buildUi()
     });
     connect(zoomSpin, &QSpinBox::valueChanged, this, [this](qint32 percent) { setZoom(percent / 100.0); });
 
-    new QShortcut(Qt::Key_F, this, [this]() { viewButton->click(); });
-    new QShortcut(Qt::Key_Left, this, [this]() { setPosition(currentPosition() - 1); });
-    new QShortcut(Qt::Key_Right, this, [this]() { setPosition(currentPosition() + 1); });
+    new QShortcut(Qt::Key_F, this, [this]() { viewCombo->setCurrentIndex((viewCombo->currentIndex() + 1) % viewCombo->count()); });
+    new QShortcut(Qt::Key_Left, this, [this]() { setFrame(frame - 1); });
+    new QShortcut(Qt::Key_Right, this, [this]() { setFrame(frame + 1); });
     // 1 to 9 pick a source, 0 (or S) switches the stack
     for (qint32 digit = 1; digit <= 9; digit++) {
         new QShortcut(QKeySequence(Qt::Key_0 + digit), this, [this, digit]() {
@@ -578,7 +578,8 @@ void MainWindow::loadSession(const QString &fileName)
     updateAspectButton();
     fieldView = project.fieldView;
     fieldSplit = project.fieldSplit;
-    updateViewButtons();
+    fieldIndex = project.fieldIndex;
+    updateViewCombo();
     syncDialogs();
     {
         const QSignalBlocker blocker(chromaButton);
@@ -867,14 +868,13 @@ void MainWindow::updateTimeline()
 
     const QSignalBlocker spinBlocker(frameSpin);
     const QSignalBlocker sliderBlocker(frameSlider);
-    const qint32 positions = qMax(1, total) * (fieldUnit() ? 2 : 1);
-    frameSpin->setRange(1, positions);
-    frameSlider->setRange(1, positions);
+    frameSpin->setRange(1, qMax(1, total));
+    frameSlider->setRange(1, qMax(1, total));
     frame = qBound(1, frame, qMax(1, total));
-    frameSpin->setValue(currentPosition());
-    frameSlider->setValue(currentPosition());
-    frameSpin->setPrefix(fieldUnit() ? tr("Field ") : tr("Frame "));
-    totalLabel->setText(tr("of %1").arg(total * (fieldUnit() ? 2 : 1)));
+    frameSpin->setValue(frame);
+    frameSlider->setValue(frame);
+    frameSpin->setPrefix(tr("Frame "));
+    totalLabel->setText(tr("of %1").arg(total));
 
     const bool enabled = total > 0;
     for (QWidget *widget: { static_cast<QWidget *>(firstButton), static_cast<QWidget *>(previousButton),
@@ -904,32 +904,18 @@ QString MainWindow::currentView() const
     return project.selected;
 }
 
-// To a frame (of the SNR graphs, say): the field being looked at stays what it was
 void MainWindow::setFrame(qint32 newFrame)
 {
-    setPosition(positionOf(qBound(1, newFrame, qMax(1, totalFrames)), fieldIndex));
-}
-
-// To a place of the controls: a frame, or a field when the field view goes field by field
-void MainWindow::setPosition(qint32 position)
-{
     if (totalFrames < 1) return;
-    const qint32 last = totalFrames * (fieldUnit() ? 2 : 1);
-    position = qBound(1, position, last);
-    qint32 newFrame = position, newField = fieldIndex;
-    if (fieldUnit()) {
-        newFrame = (position + 1) / 2;
-        newField = (position + 1) % 2;
-    }
-    if (newFrame == frame && newField == fieldIndex && frameSpin->value() == position && frameSlider->value() == position) return;
+    newFrame = qBound(1, newFrame, totalFrames);
+    if (newFrame == frame && frameSpin->value() == frame && frameSlider->value() == frame) return;
     frame = newFrame;
-    fieldIndex = newField;
 
     {
         const QSignalBlocker spinBlocker(frameSpin);
         const QSignalBlocker sliderBlocker(frameSlider);
-        frameSpin->setValue(position);
-        frameSlider->setValue(position);
+        frameSpin->setValue(frame);
+        frameSlider->setValue(frame);
     }
     snrPlot->setMarker(frame);
     updateTabTexts();
@@ -937,21 +923,16 @@ void MainWindow::setPosition(qint32 position)
     requestFrame();
 }
 
-// What the buttons for the frame and the field say, and which are there
-void MainWindow::updateViewButtons()
+// The list shows what the picture is (the session may have set it)
+void MainWindow::updateViewCombo()
 {
-    viewButton->setText(fieldView ? tr("Field") : tr("Frame"));
-    viewButton->setToolTip(tr("What the picture is: a frame, or one field of it (key F)"));
-    fieldModeButton->setVisible(fieldView);
-    fieldModeButton->setText(fieldSplit ? tr("Split") : tr("Doubled"));
-    fieldModeButton->setToolTip(tr("Field view: one field with its lines doubled, or both fields, one above the other"));
+    const QSignalBlocker blocker(viewCombo);
+    viewCombo->setCurrentIndex(!fieldView ? 0 : (fieldSplit ? 1 : (fieldIndex ? 3 : 2)));
 }
 
-// The frame or field view was switched: the controls count frames or fields, and the picture is made again
+// The view was changed: the picture is made again
 void MainWindow::viewModeChanged()
 {
-    updateViewButtons();
-    updateTimeline();
     updateStatus();
     requestFrame();
 }
