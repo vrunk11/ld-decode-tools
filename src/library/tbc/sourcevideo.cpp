@@ -24,6 +24,7 @@
 
 #include "sourcevideo.h"
 #include "stackedvideo.h"
+#include "ldxcapture.h"
 
 #include <cstdio>
 #include <QFileInfo>
@@ -143,6 +144,38 @@ bool SourceVideo::open(QString filename, qint32 _fieldLength, qint32 _fieldLineL
     // Open the source video file
     inputFile.setFileName(filename);
     isCvbs = false;
+    if (LdxCapture::isLdxName(filename)) {
+        QString path;
+        qint32 track;
+        LdxCapture::split(filename, path, track);
+        QString error;
+        if (track == 0 && LdxCapture::hasSession(path)) {
+            // An LDX file with a session: the stack of its sources
+            auto session = std::make_unique<StackedVideo>();
+            if (!session->open(filename, error)) {
+                qWarning().noquote() << error;
+                return false;
+            }
+            if (session->getFieldLength() != fieldLength) {
+                qWarning() << "The fields of the stack are not of the length the metadata says";
+                return false;
+            }
+            availableFields = session->getNumberOfFields();
+            stacked = std::move(session);
+        } else {
+            auto capture = std::make_unique<LdxCapture>();
+            if (!capture->open(filename, error)) {
+                qWarning().noquote() << error;
+                return false;
+            }
+            availableFields = capture->numberOfFields();
+            ldx = std::move(capture);
+        }
+        fieldCache.clear();
+        isSourceVideoOpen = true;
+        inputFilePos = 0;
+        return true;
+    }
     if (filename.endsWith(".stack", Qt::CaseInsensitive)) {
         // A stacking session: the stack of its sources
         auto session = std::make_unique<StackedVideo>();
@@ -218,6 +251,7 @@ void SourceVideo::close()
     tbcDebugStream() << "SourceVideo::close(): Called, closing the source video file and emptying the frame cache";
     stream.reset();
     stacked.reset();
+    ldx.reset();
     if (inputFile.isOpen()) inputFile.close();
     isSourceVideoOpen = false;
     inputFilePos = -1;
@@ -255,6 +289,25 @@ qint32 SourceVideo::getFieldLength()
 SourceVideo::Data SourceVideo::getVideoField(qint32 fieldNumber, qint32 startFieldLine, qint32 endFieldLine)
 {
     if (stacked) return stacked->getField(fieldNumber, startFieldLine, endFieldLine);
+
+    if (ldx) {
+        // Whole fields, kept for the next time they are asked for
+        if (fieldNumber < 1 || fieldNumber > availableFields) qFatal("Application requested a field that is not in the input LDX file");
+        if (!fieldCache.contains(fieldNumber - 1)) {
+            Data whole = ldx->getField(fieldNumber);
+            if (whole.size() != fieldLength) qFatal("A field of the input LDX file is not of the length the metadata says (field %d is %d samples, %d expected)", fieldNumber, static_cast<int>(whole.size()), fieldLength);
+            fieldCache.insert(fieldNumber - 1, new Data(whole), 1);
+        }
+        const Data &field = *fieldCache.object(fieldNumber - 1);
+        if (startFieldLine == -1 && endFieldLine == -1) return field;
+
+        if (fieldLineLength == -1) qFatal("Application did not set field line length when opening TBC file");
+        const qint32 lineSamples = fieldLineLength / 2;
+        if (startFieldLine < 1 || endFieldLine < startFieldLine || endFieldLine * lineSamples > field.size()) {
+            qFatal("Application requested out-of-bounds field line");
+        }
+        return field.mid((startFieldLine - 1) * lineSamples, (endFieldLine - startFieldLine + 1) * lineSamples);
+    }
 
     // Adjust the field number to index from zero
     fieldNumber--;

@@ -35,6 +35,7 @@
 #include "streamreader.h"
 
 class StackedVideo;
+class LdxCapture;
 
 class SourceVideo
 {
@@ -54,6 +55,8 @@ public:
 
     // A .stack file (a stacking session) is read as the TBC file of the stack of its sources, which are
     // stacked as the fields are asked for (see StackedVideo); its metadata is read by LdDecodeMetaData.
+    // "capture.ldx" or "capture.ldx#3" (a track of an LDX file) is read as the TBC file of that track, or, for an LDX
+    // file that keeps a stacking session and no track named, as the stack (see LdxCapture and StackedVideo).
     // File handling methods. A .cvbs, .cvbsy or .cvbsc file is read as TBC
     // fields: each stored frame becomes two fields of _fieldLength samples.
     // "-" (standard input), or a named pipe, is read as a stream: see StreamReader.
@@ -115,6 +118,9 @@ private:
 
     // A stacking session (.stack)
     std::unique_ptr<StackedVideo> stacked;
+
+    // A capture kept in an LDX file (a track of it)
+    std::unique_ptr<LdxCapture> ldx;
 
     // CVBS input (.cvbs, .cvbsy, .cvbsc): whole frames, split into fields
     bool isCvbs;

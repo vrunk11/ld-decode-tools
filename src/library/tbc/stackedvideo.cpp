@@ -12,6 +12,8 @@
 
 #include <QFileInfo>
 
+#include "ldxcapture.h"
+
 #include "tbc/logging.h"
 
 StackedVideo::StackedVideo()
@@ -23,6 +25,18 @@ StackedVideo::StackedVideo()
 StackedVideo::~StackedVideo() = default;
 
 // The reference is the first source that is on: its metadata is the stack's
+// Whether the metadata of a capture are there: in a file, or in an LDX file
+static bool metadataThere(const QString &metadataFile)
+{
+    if (LdxCapture::isLdxName(metadataFile)) {
+        QString path;
+        qint32 track;
+        LdxCapture::split(metadataFile, path, track);
+        return QFileInfo::exists(path);
+    }
+    return QFileInfo::exists(metadataFile);
+}
+
 static const StackSource *referenceSource(const StackProject &project)
 {
     for (const StackSource &source: project.sources) {
@@ -42,9 +56,9 @@ bool StackedVideo::readMetadata(const QString &stackFile, LdDecodeMetaData &meta
         return false;
     }
 
-    const QString metadataFile = LdDecodeMetaData::findMetadataFile(reference->file);
-    if (!QFileInfo::exists(metadataFile) || !metadata.read(metadataFile)) {
-        error = QObject::tr("Could not read the metadata of %1").arg(reference->file);
+    const QString metadataFile = LdDecodeMetaData::findMetadataFile(reference->reference());
+    if (!metadataThere(metadataFile) || !metadata.read(metadataFile)) {
+        error = QObject::tr("Could not read the metadata of %1").arg(reference->reference());
         return false;
     }
     metadata.setIsFirstFieldFirst(!session.stacking.reverseFields);
@@ -91,20 +105,20 @@ bool StackedVideo::open(const QString &stackFile, QString &error)
         if (!entry.enabled) continue;
 
         // TBC and CVBS are not mixed
-        const bool isCvbs = Cvbs::isDataFileName(StackProject::referenceFile(entry.file));
+        const bool isCvbs = Cvbs::isDataFileName(StackProject::referenceFile(entry.reference()));
         if (sources.empty()) {
             firstIsCvbs = isCvbs;
         } else if (isCvbs != firstIsCvbs) {
-            error = QObject::tr("%1 is not of the same format (TBC or CVBS) as the first source: they cannot be stacked together").arg(entry.file);
+            error = QObject::tr("%1 is not of the same format (TBC or CVBS) as the first source: they cannot be stacked together").arg(entry.reference());
             return false;
         }
 
         auto source = std::make_unique<Source>();
         source->offset = sources.empty() ? 0 : entry.offset;    // the reference has none
 
-        const QString metadataFile = LdDecodeMetaData::findMetadataFile(entry.file);
-        if (!QFileInfo::exists(metadataFile) || !source->metadata.read(metadataFile)) {
-            error = QObject::tr("Could not read the metadata of %1").arg(entry.file);
+        const QString metadataFile = LdDecodeMetaData::findMetadataFile(entry.reference());
+        if (!metadataThere(metadataFile) || !source->metadata.read(metadataFile)) {
+            error = QObject::tr("Could not read the metadata of %1").arg(entry.reference());
             return false;
         }
         source->metadata.setIsFirstFieldFirst(!project.stacking.reverseFields);
@@ -117,14 +131,14 @@ bool StackedVideo::open(const QString &stackFile, QString &error)
         } else {
             const LdDecodeMetaData::VideoParameters &first = sources.front()->metadata.getVideoParameters();
             if (parameters.fieldWidth != fieldWidth || parameters.fieldHeight != fieldHeight || parameters.system != first.system) {
-                error = QObject::tr("%1 is not of the same video system and size as the first source").arg(entry.file);
+                error = QObject::tr("%1 is not of the same video system and size as the first source").arg(entry.reference());
                 return false;
             }
         }
 
         // (with the line length, so that only the first lines of a field can be asked for)
-        if (!source->video.open(entry.file, fieldLength, fieldWidth)) {
-            error = QObject::tr("Could not open %1").arg(entry.file);
+        if (!source->video.open(entry.reference(), fieldLength, fieldWidth)) {
+            error = QObject::tr("Could not open %1").arg(entry.reference());
             return false;
         }
         sources.push_back(std::move(source));

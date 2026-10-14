@@ -10,6 +10,8 @@
 
 #include "stackproject.h"
 
+#include "ldxcapture.h"
+
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -54,14 +56,22 @@ qint32 StackProject::indexOfSource(const QString &id) const
 
 bool StackProject::load(const QString &fileName, QString &error)
 {
-    QFile file(fileName);
-    if (!file.open(QIODevice::ReadOnly)) {
-        error = QObject::tr("Could not open %1").arg(fileName);
-        return false;
+    // A session is a file of its own, or the one an LDX file keeps
+    const bool inLdx = LdxCapture::isLdxName(fileName);
+    QByteArray text;
+    if (inLdx) {
+        if (!LdxCapture::readSession(fileName, text, error)) return false;
+    } else {
+        QFile file(fileName);
+        if (!file.open(QIODevice::ReadOnly)) {
+            error = QObject::tr("Could not open %1").arg(fileName);
+            return false;
+        }
+        text = file.readAll();
     }
 
     QJsonParseError parseError;
-    const QJsonDocument document = QJsonDocument::fromJson(file.readAll(), &parseError);
+    const QJsonDocument document = QJsonDocument::fromJson(text, &parseError);
     if (document.isNull() || !document.isObject()) {
         error = QObject::tr("%1 is not a session file: %2").arg(fileName, parseError.errorString());
         return false;
@@ -82,6 +92,8 @@ bool StackProject::load(const QString &fileName, QString &error)
         StackSource source;
         source.file = fromStored(object.value("file").toString(), base);
         source.track = object.value("track").toInt(0);
+        // A track of the LDX file the session is kept in
+        if (inLdx && source.file.isEmpty() && source.track > 0) source.file = QDir::cleanPath(QFileInfo(fileName).absoluteFilePath());
         if (source.file.isEmpty() && source.track < 1) continue;
         source.id = object.value("id").toString();
         if (source.id.isEmpty() || loaded.indexOfSource(source.id) >= 0) source.id = loaded.newSourceId();
@@ -185,15 +197,31 @@ bool StackProject::save(const QString &fileName, QString &error) const
     return true;
 }
 
+QString StackSource::reference() const
+{
+    if (track > 0 && LdxCapture::isLdxName(file)) return LdxCapture::trackName(file, track);
+    return file;
+}
+
+// A name gives a session when it is a .stack file, or an LDX file (not one of its tracks) that keeps one
+static bool isSession(const QString &name)
+{
+    if (name.endsWith(".stack", Qt::CaseInsensitive)) return true;
+    QString path;
+    qint32 track;
+    LdxCapture::split(name, path, track);
+    return track == 0 && path.endsWith(".ldx", Qt::CaseInsensitive) && LdxCapture::hasSession(path);
+}
+
 QString StackProject::referenceFile(QString fileName)
 {
-    for (qint32 depth = 0; depth < 8 && fileName.endsWith(".stack", Qt::CaseInsensitive); depth++) {
+    for (qint32 depth = 0; depth < 8 && isSession(fileName); depth++) {
         StackProject session;
         QString error;
         if (!session.load(fileName, error)) return fileName;
         QString next;
         for (const StackSource &source: session.sources) {
-            if (source.enabled) { next = source.file; break; }
+            if (source.enabled) { next = source.reference(); break; }
         }
         if (next.isEmpty()) return fileName;
         fileName = next;

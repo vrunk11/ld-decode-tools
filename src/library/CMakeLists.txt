@@ -8,6 +8,7 @@ add_library(lddecode-library STATIC
     tbc/fieldvbi.cpp
     tbc/fmcode.cpp
     tbc/jsonio.cpp
+    tbc/ldxcapture.cpp
     tbc/sqliteio.cpp
     tbc/lddecodemetadata.cpp
     tbc/metadataoptions.cpp
@@ -42,4 +43,7 @@ if(LDDECODE_LDX_AVAILABLE)
     )
     target_include_directories(lddecode-ldx PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/ldx)
     target_link_libraries(lddecode-ldx PUBLIC Qt::Core EBML::ebml Matroska::matroska)
+    # and the tools read captures kept in LDX files through the TBC library
+    target_link_libraries(lddecode-library PUBLIC lddecode-ldx)
+    target_compile_definitions(lddecode-library PUBLIC LDDECODE_WITH_LDX)
 endif()
