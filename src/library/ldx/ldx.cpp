@@ -149,11 +149,13 @@ struct Writer::Private
     struct BlockCue {
         qint64 timeNs;
         quint32 track;
+        KaxBlockGroup *block;           // its position is known once the cluster is written
     };
     struct CueRecord {
         qint64 timeNs;
         quint32 track;
         quint64 clusterPosition;        // from the start of the data of the segment
+        quint64 relativePosition;       // of the block, from the start of the data of the cluster
     };
     std::vector<BlockCue> clusterBlocks;       // the blocks of the cluster being written
     std::vector<CueRecord> cueRecords;         // of all the blocks written, for the cues at the end
@@ -165,7 +167,10 @@ struct Writer::Private
         if (!cluster) return;
         cluster->Render(*output, cues);
         const quint64 position = cluster->GetElementPosition() - (segment->GetElementPosition() + segment->HeadSize());
-        for (const BlockCue &block: clusterBlocks) cueRecords.push_back({ block.timeNs, block.track, position });
+        const quint64 dataStart = cluster->GetElementPosition() + cluster->HeadSize();
+        for (const BlockCue &block: clusterBlocks) {
+            cueRecords.push_back({ block.timeNs, block.track, position, block.block ? block.block->GetElementPosition() - dataStart : 0 });
+        }
         clusterBlocks.clear();
         cluster->ReleaseFrames();
         delete cluster;
@@ -326,7 +331,7 @@ bool Writer::writeBlock(quint32 track, qint64 timeNs, const QByteArray &data)
         KaxBlockGroup *block = nullptr;
         // Without lacing the block takes the one frame and says that it is full (false), which is not a failure
         d->cluster->AddFrame(*d->entries[track], static_cast<uint64>(timeNs), *buffer, block, LACING_NONE);
-        d->clusterBlocks.push_back({ timeNs, track });
+        d->clusterBlocks.push_back({ timeNs, track, block });
         return true;
     } catch (const std::exception &exception) {
         d->error = QString::fromLocal8Bit(exception.what());
@@ -354,6 +359,7 @@ bool Writer::finish(QString &error)
                 KaxCueTrackPositions &positions = GetChild<KaxCueTrackPositions>(*point);
                 GetChild<KaxCueTrack>(positions).SetValue(record.track);
                 GetChild<KaxCueClusterPosition>(positions).SetValue(record.clusterPosition);
+                GetChild<KaxCueRelativePosition>(positions).SetValue(record.relativePosition);
             }
             cues.Render(*d->output, false);
         }
@@ -393,7 +399,9 @@ struct Reader::Private
     struct IndexEntry {
         qint64 timeNs;
         quint64 clusterPosition;        // from the start of the data of the segment
+        quint64 relativePosition;       // of the block, from the start of the data of the cluster (NoPosition if not known)
     };
+    static constexpr quint64 NoPosition = ~static_cast<quint64>(0);
     std::map<quint32, std::vector<IndexEntry>> index;
     bool indexed = false;
 
@@ -489,8 +497,10 @@ struct Reader::Private
                         auto &trackPositions = *static_cast<KaxCueTrackPositions *>(positions);
                         auto *track = FindChild<KaxCueTrack>(trackPositions);
                         auto *cluster = FindChild<KaxCueClusterPosition>(trackPositions);
+                        auto *relative = FindChild<KaxCueRelativePosition>(trackPositions);
                         if (!track || !cluster) continue;
-                        index[static_cast<quint32>(track->GetValue())].push_back({ static_cast<qint64>(time->GetValue() * timecodeScale), cluster->GetValue() });
+                        index[static_cast<quint32>(track->GetValue())].push_back({ static_cast<qint64>(time->GetValue() * timecodeScale), cluster->GetValue(),
+                                                                          relative ? relative->GetValue() : NoPosition });
                     }
                 }
                 found = true;
@@ -509,6 +519,73 @@ struct Reader::Private
                 return a.timeNs == b.timeNs && a.clusterPosition == b.clusterPosition; }), entry.second.end());
         }
         return true;
+    }
+
+    // The length in bytes of an EBML element id or data size, from its first byte (0 if it is not valid)
+    static int vintLength(unsigned char first, int limit)
+    {
+        for (int length = 1; length <= limit; length++) {
+            if (first & (0x80 >> (length - 1))) return length;
+        }
+        return 0;
+    }
+
+    // Just the frame of the block at a position in a cluster, read by hand: a BlockGroup, whose first child is
+    // the Block (a track number, a time and some flags, then the data). Without the rest of the cluster.
+    bool readBlockAt(quint64 clusterPosition, quint64 relativePosition, Block &out)
+    {
+        input->setFilePointer(static_cast<int64>(segmentElement->GetElementPosition() + segmentElement->HeadSize() + clusterPosition));
+        EbmlStream scan(*input);
+        std::unique_ptr<EbmlElement> clusterElement(scan.FindNextID(KaxCluster::ClassInfos, 0xFFFFFFFFL));
+        if (!clusterElement) return false;
+        const quint64 groupPosition = clusterElement->GetElementPosition() + clusterElement->HeadSize() + relativePosition;
+
+        const auto readAt = [this](quint64 position, unsigned char *buffer, size_t size) {
+            input->setFilePointer(static_cast<int64>(position));
+            return input->read(buffer, size) == size;
+        };
+        const auto readSize = [](const unsigned char *bytes, int length) {
+            quint64 value = bytes[0] & (0xFF >> length);
+            for (int i = 1; i < length; i++) value = (value << 8) | bytes[i];
+            return value;
+        };
+
+        // The BlockGroup: its id (0xA0) and the size of its data
+        unsigned char head[16];
+        if (!readAt(groupPosition, head, sizeof(head)) || head[0] != 0xA0) return false;
+        const int groupSizeLength = vintLength(head[1], 8);
+        if (groupSizeLength == 0) return false;
+        const quint64 groupSize = readSize(head + 1, groupSizeLength);
+        quint64 child = groupPosition + 1 + groupSizeLength;
+        const quint64 groupEnd = child + groupSize;
+
+        // Its children, up to the Block (0xA1)
+        while (child < groupEnd) {
+            unsigned char childHead[16];
+            if (!readAt(child, childHead, sizeof(childHead))) return false;
+            const int idLength = vintLength(childHead[0], 4);
+            if (idLength == 0) return false;
+            const int sizeLength = vintLength(childHead[idLength], 8);
+            if (sizeLength == 0) return false;
+            const quint64 size = readSize(childHead + idLength, sizeLength);
+            const quint64 dataStart = child + idLength + sizeLength;
+            if (idLength == 1 && childHead[0] == 0xA1) {
+                // The track number, then 2 bytes of time and 1 of flags (no lacing: one frame)
+                unsigned char blockHead[16];
+                if (!readAt(dataStart, blockHead, sizeof(blockHead))) return false;
+                const int trackLength = vintLength(blockHead[0], 8);
+                if (trackLength == 0 || (blockHead[trackLength + 2] & 0x06) != 0) return false;
+                const quint64 track = readSize(blockHead, trackLength);
+                const quint64 headerSize = static_cast<quint64>(trackLength) + 3;
+                if (size < headerSize) return false;
+                out.track = static_cast<quint32>(track);
+                out.data.resize(static_cast<int>(size - headerSize));
+                input->setFilePointer(static_cast<int64>(dataStart + headerSize));
+                return input->read(out.data.data(), static_cast<size_t>(out.data.size())) == static_cast<size_t>(out.data.size());
+            }
+            child = dataStart + size;
+        }
+        return false;
     }
 
     // The blocks of the cluster at a position
@@ -694,6 +771,14 @@ bool Reader::readBlock(quint32 track, qint64 index, Block &block)
     const Private::IndexEntry entry = found->second[static_cast<size_t>(index)];
     try {
         std::deque<Block> blocks;
+        if (entry.relativePosition != Private::NoPosition) {
+            Block direct;
+            if (d->readBlockAt(entry.clusterPosition, entry.relativePosition, direct) && direct.track == track) {
+                direct.timeNs = entry.timeNs;
+                block = std::move(direct);
+                return true;
+            }
+        }
         if (!d->readClusterAt(entry.clusterPosition, blocks)) return false;
         for (Block &candidate: blocks) {
             if (candidate.track == track && candidate.timeNs == entry.timeNs) {
