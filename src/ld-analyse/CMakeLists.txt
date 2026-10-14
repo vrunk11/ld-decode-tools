@@ -24,8 +24,6 @@ set(ld-analyse_SOURCES
     visibledropoutanalysisdialog.cpp visibledropoutanalysisdialog.ui
     whitesnranalysisdialog.cpp whitesnranalysisdialog.ui
     plotwidget.cpp
-    theme.cpp
-    themeeditordialog.cpp
     videofilter.cpp
     videofilterdialog.cpp
 )
@@ -50,7 +48,7 @@ target_include_directories(ld-analyse PRIVATE
 
 target_link_libraries(ld-analyse PRIVATE
     Qt::Core Qt::Gui Qt::Widgets Qt::Svg
-    lddecode-library lddecode-chroma
+    lddecode-library lddecode-chroma lddecode-gui
 )
 
 if(FFMPEG_FOUND)

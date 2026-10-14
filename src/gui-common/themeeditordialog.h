@@ -1,6 +1,6 @@
 /******************************************************************************
  * themeeditordialog.h
- * ld-analyse - TBC output analysis GUI
+ * ld-decode-tools GUI - shared by ld-analyse and ld-stacker-gui
  *
  * SPDX-License-Identifier: GPL-3.0-or-later
  * SPDX-FileCopyrightText: 2026 ld-decode-tools contributors

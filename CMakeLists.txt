@@ -186,6 +186,7 @@ add_compile_definitions(APP_COMMIT=\"${APP_COMMIT}\")
 
 # Subdirectories
 
+add_subdirectory(src/gui-common)
 add_subdirectory(src/ld-analyse)
 add_subdirectory(src/ld-chroma-decoder)
 add_subdirectory(src/ld-chroma-decoder/encoder)
