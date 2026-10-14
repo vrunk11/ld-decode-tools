@@ -38,7 +38,7 @@ ld-disc-stacker capture.ldx other.ldx stacked.ldx
 
 A file with several captures is opened by the number of the track: `capture.ldx#3`. Without a number the tools take the capture of the stacking session the file keeps, or else its first video track.
 
-The tools that write video (`ld-dropout-correct`, `ld-discmap`, `ld-disc-stacker`) can write an `.ldx` file as their output. The converters (`ld-tbc-to-cvbs`, `ld-cvbs-to-tbc`), the export tools and the EFM and AC3 tools do not read LDX files yet: `ld-container unpack` or `ld-container extract` gives them their files.
+The tools that write video (`ld-dropout-correct`, `ld-discmap`, `ld-disc-stacker`) can write an `.ldx` file as their output. An LDX file holds TBC or CVBS video as it is and the tools read both, so there is nothing to convert (`ld-tbc-to-cvbs` and `ld-cvbs-to-tbc` are for the separate files). The export tools and the EFM and AC3 tools do not read LDX files yet: `ld-container unpack` or `ld-container extract` gives them their files.
 
 ## Pipes
 

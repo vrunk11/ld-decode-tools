@@ -82,7 +82,7 @@ each GitHub release.
 - **LDX files**: `capture.ldx` keeps the video, metadata, audio and history of a capture (or of several) in one file; `capture.ldx#3` is the track 3 of a file with several captures
   - Every tool that reads a `.tbc` or `.cvbs` file reads an `.ldx` file; `ld-process-vbi` and `ld-process-vits` add their metadata to it, and `ld-dropout-correct`, `ld-discmap` and `ld-disc-stacker` can write one
   - `-` is a pipe: an LDX stream carries the video and its metadata, so `ld-chroma-decoder`, `ld-analyse`, `ld-process-vbi`, `ld-process-vits`, `ld-disc-stacker` and `ld-dropout-correct` need no `--system` or `--input-metadata` for it
-  - The tools that convert or export (`ld-tbc-to-cvbs`, `ld-cvbs-to-tbc`, `ld-export-metadata`...) and the EFM and AC3 tools do not read LDX files yet: `ld-container unpack` or `extract` gives them the files
+  - An LDX file holds TBC or CVBS video as it is, and the tools read both, so there is nothing to convert: `ld-tbc-to-cvbs` and `ld-cvbs-to-tbc` are for the separate files. The export tools (`ld-export-metadata`...) and the EFM and AC3 tools do not read LDX files yet: `ld-container unpack` or `extract` gives them the files
 - **Dependencies**: Qt 6 and FFTW3; libebml and libmatroska for LDX files (without them the LDX tools are not built), with FFmpeg's libavcodec for FLAC and FFV1 in them; FFmpeg is otherwise only needed for the chroma tests and to turn the decoded output into video files
 - **Performance**: Many tools support multi-threading for faster processing
 
