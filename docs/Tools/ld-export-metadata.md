@@ -27,3 +27,7 @@ Options:
 Arguments:
   input                     Specify input metadata file
 ```
+
+## LDX files
+
+The input can be an LDX file (`capture.ldx`, or `capture.ldx#3` for one of its tracks): the metadata are those of the capture it holds (the current ones, with what the tools added since), and nothing is written to the file. `ld-export-decode-metadata` takes an LDX file in the same way.
