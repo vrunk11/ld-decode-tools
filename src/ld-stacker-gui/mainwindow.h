@@ -163,6 +163,7 @@ private:
     qint32 fieldIndex = 0;          // in field view, which field of the frame: 0 the first, 1 the second
     bool fitFirstSource = false;    // the next source to be loaded is the first one imported
     bool fitPicture = false;        // and its first picture is to be shown at its original size
+    bool fitWindow = false;         // a session was opened: the window is to fit its picture at its own zoom
     QLabel *statusSources = nullptr;
     QLabel *statusMode = nullptr;
     QLabel *statusFormat = nullptr;
