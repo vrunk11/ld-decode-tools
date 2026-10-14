@@ -5,6 +5,9 @@
     ld-disc-stacker - Disc stacking for ld-decode
     Copyright (C) 2020-2022 Simon Inns
 
+    SPDX-License-Identifier: GPL-3.0-or-later
+    SPDX-FileCopyrightText: 2020-2022 Simon Inns
+
     This file is part of ld-decode-tools.
 
     ld-disc-stacker is free software: you can redistribute it and/or
