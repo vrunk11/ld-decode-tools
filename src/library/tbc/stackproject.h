@@ -72,6 +72,9 @@ public:
     // The file that gives the format (TBC or CVBS) of a source: the file itself, or, for a .stack session (which
     // is read as the stack of its sources), the first source of it that is on, down to a real file
     static QString referenceFile(QString fileName);
+
+    // Whether a name gives a session: a .stack file, or an LDX file (and not one of its tracks) that keeps one
+    static bool isSession(const QString &name);
 };
 
 #endif // STACKPROJECT_H

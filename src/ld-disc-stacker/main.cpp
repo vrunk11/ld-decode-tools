@@ -142,7 +142,7 @@ int main(int argc, char *argv[])
 
     // Positional argument to specify input video file
     parser.addPositionalArgument("inputs", QCoreApplication::translate(
-                                     "main", "Specify input TBC files (- as first source for piped input; a .stack session file is read as the stack of its sources), or one .stack session file to stack as it says"));
+                                     "main", "Specify input TBC files (- as first source for piped input; a .stack session file, or an .ldx file that keeps a session, is read as the stack of its sources; capture.ldx#3 is the track 3 of an LDX file), or one .stack or .ldx session to stack as it says"));
 
     // Positional argument to specify output video file
     parser.addPositionalArgument("output", QCoreApplication::translate(
@@ -239,7 +239,7 @@ int main(int argc, char *argv[])
     // stack of its own sources, which are stacked with the others.)
     bool fromSession = false;
     QVector<qint32> offsets;
-    if (!positionalArguments.isEmpty() && positionalArguments.at(0).endsWith(".stack", Qt::CaseInsensitive)
+    if (!positionalArguments.isEmpty() && StackProject::isSession(positionalArguments.at(0))
         && positionalArguments.count() <= 2) {
         StackProject session;
         QString sessionError;
@@ -251,7 +251,7 @@ int main(int argc, char *argv[])
         QStringList sessionArguments;
         for (const StackSource &source: session.sources) {
             if (!source.enabled) continue;
-            sessionArguments.append(source.file);
+            sessionArguments.append(source.reference());
             offsets.append(source.offset);
         }
         if (sessionArguments.count() < 2) {
