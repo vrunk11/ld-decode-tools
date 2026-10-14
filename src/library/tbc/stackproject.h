@@ -48,7 +48,8 @@ public:
     // What only the GUI uses
     bool chroma = false;
     double zoom = 1.0;
-    QString selected = "stack";            // "stack" or the id of a source
+    QString selected;                      // the id of the source whose tab is chosen
+    bool showStack = true;                 // the picture is the stack, or (off) the source chosen
 
     // Read a session file. Returns false, with the reason in error, when it cannot be used.
     bool load(const QString &fileName, QString &error);

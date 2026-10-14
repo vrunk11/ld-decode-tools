@@ -48,6 +48,7 @@ int main(int argc, char *argv[])
     project.metadataFormat = "json";
     project.zoom = 3.0;
     project.selected = "b";
+    project.showStack = false;
 
     const QString fileName = base.absoluteFilePath("session.stack");
     QString error;
@@ -78,6 +79,7 @@ int main(int argc, char *argv[])
     CHECK(loaded.metadataFormat == "json");
     CHECK(loaded.zoom == 3.0);
     CHECK(loaded.selected == "b");
+    CHECK(!loaded.showStack);
 
     // Auto is the mode when there is none
     project.stacking.mode = -1;

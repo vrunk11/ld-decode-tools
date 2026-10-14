@@ -75,6 +75,7 @@ private:
     void updateTabTexts();
     void updateTimeline();
     void updatePlot();
+    void viewChanged();
     void showStackPicture(const FrameResult &result);
     void syncDialogs();
     void updateSnrWindow();
@@ -121,6 +122,7 @@ private:
 
     QListWidget *sourceList = nullptr;
     QTabBar *tabBar = nullptr;
+    QToolButton *stackButton = nullptr;
     QScrollArea *scrollArea = nullptr;
     QLabel *imageLabel = nullptr;
     SnrPlot *snrPlot = nullptr;

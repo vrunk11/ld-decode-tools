@@ -194,7 +194,9 @@ void MainWindow::buildUi()
     const auto showRow = [this](QListWidgetItem *item) {
         if (!item) return;
         const qint32 index = project.indexOfSource(item->data(Qt::UserRole).toString());
-        if (index >= 0 && tabBar->currentIndex() != index + 1) tabBar->setCurrentIndex(index + 1);
+        if (index < 0) return;
+        if (stackButton->isChecked()) stackButton->setChecked(false);
+        tabBar->setCurrentIndex(index);
     };
     connect(sourceList, &QListWidget::itemClicked, this, showRow);
     connect(sourceList, &QListWidget::itemActivated, this, showRow);
@@ -214,7 +216,23 @@ void MainWindow::buildUi()
     tabBar->setUsesScrollButtons(true);
     tabBar->setElideMode(Qt::ElideNone);
     tabBar->setDrawBase(true);
-    mainLayout->addWidget(tabBar);
+    // The stack is a button, on or off, beside the tabs of the sources: on, the picture is the stack, off it
+    // is the source of the tab chosen, so that the two can be compared by switching it
+    QWidget *tabRow = new QWidget;
+    QHBoxLayout *tabRowLayout = new QHBoxLayout(tabRow);
+    tabRowLayout->setContentsMargins(4, 4, 4, 0);
+    tabRowLayout->setSpacing(6);
+    stackButton = new QToolButton;
+    stackButton->setText(tr("Stack"));
+    stackButton->setIcon(dotIcon(STACK_COLOR));
+    stackButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    stackButton->setCheckable(true);
+    stackButton->setChecked(true);
+    stackButton->setMinimumWidth(110);
+    stackButton->setToolTip(tr("On: the picture is the stack. Off: it is the source of the tab chosen. (key 0)"));
+    tabRowLayout->addWidget(stackButton);
+    tabRowLayout->addWidget(tabBar, 1);
+    mainLayout->addWidget(tabRow);
 
     imageLabel = new QLabel(tr("Add sources to start"));
     imageLabel->setAlignment(Qt::AlignCenter);
@@ -319,20 +337,23 @@ void MainWindow::buildUi()
 
     // Wiring
     connect(tabBar, &QTabBar::currentChanged, this, [this](qint32 index) {
-        if (index < 0) return;
-        project.selected = index == 0 ? QStringLiteral("stack") : project.sources.value(index - 1).id;
-        if (index > 0) {
-            // The row follows the tab
+        if (index < 0 || index >= project.sources.size()) return;
+        // Choosing a source shows it: the stack is off
+        project.selected = project.sources[index].id;
+        project.showStack = false;
+        {
+            const QSignalBlocker blocker(stackButton);
+            stackButton->setChecked(false);
+            const QSignalBlocker listBlocker(sourceList);
             for (qint32 row = 0; row < sourceList->count(); row++) {
-                if (sourceList->item(row)->data(Qt::UserRole).toString() == project.selected) {
-                    const QSignalBlocker blocker(sourceList);
-                    sourceList->setCurrentRow(row);
-                }
+                if (sourceList->item(row)->data(Qt::UserRole).toString() == project.selected) sourceList->setCurrentRow(row);
             }
         }
-        updatePlot();
-        updateStatus();
-        requestFrame();
+        viewChanged();
+    });
+    connect(stackButton, &QToolButton::toggled, this, [this](bool on) {
+        project.showStack = on;
+        viewChanged();
     });
     connect(frameSpin, &QSpinBox::valueChanged, this, &MainWindow::setFrame);
     connect(frameSlider, &QSlider::valueChanged, this, &MainWindow::setFrame);
@@ -358,11 +379,14 @@ void MainWindow::buildUi()
 
     new QShortcut(Qt::Key_Left, this, [this]() { setFrame(frame - 1); });
     new QShortcut(Qt::Key_Right, this, [this]() { setFrame(frame + 1); });
-    for (qint32 digit = 0; digit <= 9; digit++) {
+    // 1 to 9 pick a source, 0 (or S) switches the stack
+    for (qint32 digit = 1; digit <= 9; digit++) {
         new QShortcut(QKeySequence(Qt::Key_0 + digit), this, [this, digit]() {
-            if (digit < tabBar->count()) tabBar->setCurrentIndex(digit);
+            if (digit - 1 < tabBar->count()) tabBar->setCurrentIndex(digit - 1);
         });
     }
+    new QShortcut(QKeySequence(Qt::Key_0), this, [this]() { stackButton->toggle(); });
+    new QShortcut(QKeySequence(Qt::Key_S), this, [this]() { stackButton->toggle(); });
 
     rebuildTabs();
 }
@@ -672,17 +696,23 @@ void MainWindow::rebuildTabs()
     const QSignalBlocker blocker(tabBar);
     while (tabBar->count() > 0) tabBar->removeTab(0);
 
-    tabBar->addTab(dotIcon(STACK_COLOR), tr("Stack"));
     for (qint32 index = 0; index < project.sources.size(); index++) {
         const StackSource &source = project.sources[index];
         tabBar->addTab(dotIcon(colorFor(source.id)), QString::number(index + 1));
-        tabBar->setTabToolTip(index + 1, source.file);
+        tabBar->setTabToolTip(index, source.file);
     }
 
-    qint32 current = 0;
-    const qint32 selectedIndex = project.indexOfSource(project.selected);
-    if (selectedIndex >= 0) current = selectedIndex + 1; else project.selected = "stack";
-    tabBar->setCurrentIndex(current);
+    // The tab chosen, or the first source if it is gone
+    qint32 current = project.indexOfSource(project.selected);
+    if (current < 0) {
+        current = 0;
+        project.selected = project.sources.isEmpty() ? QString() : project.sources.first().id;
+    }
+    if (!project.sources.isEmpty()) tabBar->setCurrentIndex(current);
+    {
+        const QSignalBlocker stackBlocker(stackButton);
+        stackButton->setChecked(project.showStack);
+    }
     updateTabTexts();
 }
 
@@ -716,11 +746,11 @@ float MainWindow::sourceSnr(const SourceState &state, qint32 atFrame, qint32 off
 // Each tab says what the SNR of its picture is at this frame
 void MainWindow::updateTabTexts()
 {
-    if (tabBar->count() != project.sources.size() + 1) return;
+    if (tabBar->count() != project.sources.size()) return;
 
     const QSignalBlocker blocker(tabBar);
     const auto stackValue = stackSnr.constFind(frame);
-    tabBar->setTabText(0, stackValue != stackSnr.constEnd() ? tr("Stack  %1 dB").arg(*stackValue, 0, 'f', 1) : tr("Stack"));
+    stackButton->setText(stackValue != stackSnr.constEnd() ? tr("Stack  %1 dB").arg(*stackValue, 0, 'f', 1) : tr("Stack"));
 
     // The source with the best SNR here
     qint32 best = -1;
@@ -736,8 +766,8 @@ void MainWindow::updateTabTexts()
         const StackSource &source = project.sources[index];
         bool known;
         const float value = sourceSnr(states.value(source.id), frame, effectiveOffset(index), known);
-        tabBar->setTabText(index + 1, known ? tr("%1  %2 dB").arg(index + 1).arg(value, 0, 'f', 1) : QString::number(index + 1));
-        tabBar->setTabTextColor(index + 1, index == best ? QColor("#3b6d11") : palette().color(QPalette::WindowText));
+        tabBar->setTabText(index, known ? tr("%1  %2 dB").arg(index + 1).arg(value, 0, 'f', 1) : QString::number(index + 1));
+        tabBar->setTabTextColor(index, index == best ? QColor("#3b6d11") : palette().color(QPalette::WindowText));
     }
 }
 
@@ -790,7 +820,8 @@ void MainWindow::sourcesChanged()
 
 QString MainWindow::currentView() const
 {
-    return project.selected.isEmpty() ? QStringLiteral("stack") : project.selected;
+    if (project.showStack || project.sources.isEmpty() || project.indexOfSource(project.selected) < 0) return QStringLiteral("stack");
+    return project.selected;
 }
 
 void MainWindow::setFrame(qint32 newFrame)
@@ -918,6 +949,14 @@ void MainWindow::updateSnrWindow()
     }
     snrWindow->setContent(tr("SNR - source %1 (%2)").arg(index + 1).arg(sourceTitle(source)), values, colorFor(source.id),
                           stackSnr, STACK_COLOR, frame);
+}
+
+// What the picture shows changed: the stack or a source
+void MainWindow::viewChanged()
+{
+    updatePlot();
+    updateStatus();
+    requestFrame();
 }
 
 void MainWindow::updatePlot()
