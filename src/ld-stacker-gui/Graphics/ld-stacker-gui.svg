@@ -1,21 +1,25 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- ld-stacker-gui: a disc with its reflections, an arrow down, and the discs that are stacked, in
-     different greys and each a little off the one above. ld-stacker-gui-small.svg is the same on the grid of
-     16 pixels. -->
+<!-- ld-stacker-gui: a grey disc with the colours of its reflection, an arrow down, and the discs that are
+     stacked, in different greys and each a little off the one above. ld-stacker-gui-small.svg is the same
+     on the grid of 16 pixels. -->
 <svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
   <defs>
-    <radialGradient id="gold" cx="0.35" cy="0.3" r="0.8">
-      <stop offset="0" stop-color="#FBE38A"/><stop offset="1" stop-color="#E9B93A"/>
+    <radialGradient id="steel" cx="0.35" cy="0.3" r="0.8">
+      <stop offset="0" stop-color="#EEF0EB"/><stop offset="1" stop-color="#A9ADA4"/>
     </radialGradient>
-    <clipPath id="face"><circle cx="20" cy="20" r="16"/></clipPath>
+    <linearGradient id="r1" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#4FC3F7" stop-opacity="0"/><stop offset="0.5" stop-color="#4FC3F7" stop-opacity="0.75"/><stop offset="1" stop-color="#B388FF" stop-opacity="0.75"/>
+    </linearGradient>
+    <linearGradient id="r2" x1="1" y1="1" x2="0" y2="0">
+      <stop offset="0" stop-color="#FFD54F" stop-opacity="0"/><stop offset="0.5" stop-color="#FF8A65" stop-opacity="0.7"/><stop offset="1" stop-color="#F06292" stop-opacity="0.7"/>
+    </linearGradient>
   </defs>
-  <circle cx="20" cy="20" r="16" fill="url(#gold)"/>
-  <g clip-path="url(#face)">
-    <path d="M20 20L-4 -2L-4 12Z" fill="#fff" fill-opacity="0.55"/>
-    <path d="M20 20L44 42L44 28Z" fill="#fff" fill-opacity="0.35"/>
-    <path d="M20 20L44 -2L30 -4Z" fill="#fff" fill-opacity="0.15"/>
-  </g>
-  <circle cx="20" cy="20" r="8" fill="none" stroke="#555753" stroke-width="1.6" stroke-opacity="0.4"/>
+  <circle cx="20" cy="20" r="16" fill="url(#steel)"/>
+  <path d="M20 20L5.43 14.70A15.5 15.5 0 0 1 11.10 7.31Z" fill="url(#r1)"/>
+  <path d="M20 20L34.57 25.30A15.5 15.5 0 0 1 28.89 32.70Z" fill="url(#r2)"/>
+  <path d="M20 20L25.30 5.43A15.5 15.5 0 0 1 30.96 9.04Z" fill="#fff" fill-opacity="0.5"/>
+  <path d="M20 20L14.70 34.57A15.5 15.5 0 0 1 9.04 30.96Z" fill="#fff" fill-opacity="0.35"/>
+  <circle cx="20" cy="20" r="8" fill="none" stroke="#555753" stroke-width="1.6" stroke-opacity="0.35"/>
   <circle cx="20" cy="20" r="4" fill="#2E3436"/>
   <circle cx="20" cy="20" r="16" fill="none" stroke="#555753" stroke-width="3.2"/>
   <path d="M10 10A14 14 0 0 1 22 6" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-opacity="0.9"/>
