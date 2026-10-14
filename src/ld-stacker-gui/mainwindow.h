@@ -123,8 +123,7 @@ private:
     QImage currentImage;
     FrameResult lastResult;       // the last picture of the main view
     FrameResult lastStackResult;  // the last stack, wherever it was asked for
-    SnrWindow *snrWindow = nullptr;
-    QString snrWindowSource;
+    QMap<QString, SnrWindow *> snrWindows;   // a window for each source whose SNR was asked for
     StackOutputWindow *stackWindow = nullptr;
     StackingOptionsDialog *optionsDialog = nullptr;
     EnhanceDialog *enhanceDialog = nullptr;

@@ -98,9 +98,6 @@ MainWindow::MainWindow(const QStringList &arguments, QWidget *parent)
     buildUi();
     buildMenus();
 
-    snrWindow = new SnrWindow(this);
-    snrWindow->setWindowFlag(Qt::Window, true);
-    connect(snrWindow, &SnrWindow::frameRequested, this, &MainWindow::setFrame);
     stackWindow = new StackOutputWindow(this);
     stackWindow->setWindowFlag(Qt::Window, true);
     connect(stackWindow, &StackOutputWindow::closed, this, [this]() { stackOutputAction->setChecked(false); });
@@ -519,6 +516,7 @@ void MainWindow::removeSource(const QString &id)
     if (index < 0) return;
     project.sources.remove(index);
     states.remove(id);
+    delete snrWindows.take(id);
     QMetaObject::invokeMethod(backend, "removeSource", Qt::QueuedConnection, Q_ARG(QString, id));
     rebuildSourceList();
     rebuildTabs();
@@ -545,6 +543,9 @@ void MainWindow::loadSession(const QString &fileName)
     stackBlack.clear();
     stackSnrDone = 0;
     currentImage = QImage();
+
+    qDeleteAll(snrWindows);
+    snrWindows.clear();
 
     project = loaded;
     sessionFile = fileName;
@@ -989,24 +990,35 @@ void MainWindow::syncDialogs()
 
 void MainWindow::openSnrWindow(const QString &id)
 {
-    snrWindowSource = id;
-    snrWindow->show();
-    snrWindow->raise();
-    updateSnrWindow();   // (it only follows what is stacked once it is visible)
+    // Each source has a window of its own, made the first time it is asked for
+    SnrWindow *window = snrWindows.value(id);
+    if (!window) {
+        window = new SnrWindow(this);
+        window->setWindowFlag(Qt::Window, true);
+        connect(window, &SnrWindow::frameRequested, this, &MainWindow::setFrame);
+        window->move(pos() + QPoint(60 + 30 * snrWindows.size(), 80 + 30 * snrWindows.size()));
+        snrWindows.insert(id, window);
+    }
+    window->show();
+    window->raise();
+    updateSnrWindow();   // (they only follow what is stacked once they are visible)
 }
 
-// The SNR window follows what is stacked and the frame viewed
+// The SNR windows follow what is stacked and the frame viewed
 void MainWindow::updateSnrWindow()
 {
-    if (snrWindowSource.isEmpty() || !snrWindow->isVisible()) return;
-    const qint32 index = project.indexOfSource(snrWindowSource);
-    if (index < 0) {
-        snrWindow->hide();
-        return;
+    for (auto it = snrWindows.constBegin(); it != snrWindows.constEnd(); ++it) {
+        SnrWindow *window = it.value();
+        if (!window->isVisible()) continue;
+        const qint32 index = project.indexOfSource(it.key());
+        if (index < 0) {
+            window->hide();
+            continue;
+        }
+        const StackSource &source = project.sources[index];
+        window->setContent(tr("SNR - source %1 (%2)").arg(index + 1).arg(sourceTitle(source)), sourceCurve(index, true),
+                           sourceCurve(index, false), stackWhite, stackBlack, frame);
     }
-    const StackSource &source = project.sources[index];
-    snrWindow->setContent(tr("SNR - source %1 (%2)").arg(index + 1).arg(sourceTitle(source)), sourceCurve(index, true),
-                          sourceCurve(index, false), stackWhite, stackBlack, frame);
 }
 
 // What the picture shows changed: the stack or a source
