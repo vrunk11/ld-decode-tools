@@ -204,3 +204,13 @@ A capture of CVBS (a `.cvbs` file) is a track of kind `cvbs`: **a block is a fra
 - **What the tools read**: a cvbs track is read as the two fields of the TBC that a frame maps to, the way a `.cvbs` file is, so a capture of CVBS kept in an LDX file stacks, decodes and shows as one kept in a file. The result of a stack of captures of CVBS is CVBS (a `.cvbs` file), as for files.
 - **Measured** on a part of the NTSC capture kept as CVBS: the track as FFV1 is **34 %** of its size as raw samples, and `unpack` gives the `.cvbs` file back identical, byte for byte.
 - A Y/C pair (`.cvbsy`, `.cvbsc`) and the audio of a CVBS capture (WAV files) are not tracks yet.
+
+## 19. Pipes
+
+An LDX file can be sent down a pipe, one producer to one consumer (`ld-container pack capture.tbc -o - | ld-chroma-decoder - out.rgb`), with everything in one stream: the video, its metadata, the audio, whatever the producer has.
+
+**What a producer writes** (the library writes it with `Writer::openStream`): the EBML header, a segment **with no size** (it has no end that is known), the info, the tracks, the tags and the attachments, then the clusters as the blocks come, in the order of their time. Nothing is written again, so there are **no cues** and no padding, and the tags have the history up to when the stream began. The **metadata of the video are sent first**, before the video that they describe, because a consumer needs them to start (a producer that does not have them yet sends the video alone, and the consumer then takes the video system from the track and the defaults of the tools). Codecs work as in a file: raw in a pipe is the usual choice, FLAC and FFV1 are decoded by the consumer.
+
+**What a consumer does** (`Reader::openStream`): it reads the stream in order, with `nextBlock`; there is no index and no random access (`buildIndex` says so), and a block that has gone by cannot be read again. A window of what has come in is kept, so that the few bytes a reader looks at and puts back can be put back.
+
+**The tools**: `-` is the standard input, and **an LDX stream is what a pipe is when nothing else is said** (no `--input-format`, no `--system`, no input metadata): the video system, TBC or CVBS, the metadata and the codec come from the stream, so the tools do not have to be told about the format of the video. `--input-format ldx` says it. ld-chroma-decoder and ld-analyse read an LDX stream so; the first TBC or CVBS track is the video, and a stream that is not LDX is refused with a message that says how to read raw video. The data that go down a pipe are binary: the messages of a tool that writes to the standard output go to the standard error.

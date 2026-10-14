@@ -44,3 +44,14 @@ An LDX file is a Matroska file: `ffprobe` lists its tracks, and `ffmpeg -i file.
 ## CVBS
 
 `ld-container pack capture.cvbs -o file.ldx` packs the frames of a composite CVBS file (with its metadata) as a `cvbs` track, and `--codec ffv1` (or `auto`) keeps it as FFV1, which is about a third of the raw size. `add` and `stack --embed` take `.cvbs` files too. `unpack` gives the `.cvbs` file back (as the encoding it had), with its `.meta` and the companion metadata beside it. `--codec auto` is the best codec for each track: FLAC for the TBC and the audio, FFV1 for CVBS; `flac` and `ffv1` are for the tracks they suit and leave the others raw. A frame is not cut in two: `--start` and `--fields` of a CVBS capture are in fields and must be whole frames.
+
+## Piped LDX
+
+`-` as the output of `pack`, `add`, `remove`, `stack` and `recompress` writes the LDX stream to the standard output, and `-` as the file of `info`, `unpack`, `extract`, `recompress`, `add`, `remove` and `stack` reads it from the standard input, so that tools can be chained:
+
+```
+ld-container pack capture.tbc --pcm capture.pcm -o - | ld-container recompress - --codec flac -o - | ld-analyse -
+ld-container pack capture.cvbs --codec ffv1 -o - | ld-chroma-decoder - out.rgb
+```
+
+A stream has no index, so `verify` needs a file, and an LDX stream is read in order. The messages go to the standard error when the standard output carries the data. See the specification (section 19).
