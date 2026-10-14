@@ -71,6 +71,11 @@ public:
 
     bool open(const QString &fileName, QString &error);
 
+    // Add to a file that is already written, instead of making one: its tracks are kept, the blocks written go at the
+    // end, and the cues are written again. Nothing is moved. Add what is said in the history with addHistory.
+    bool openAppend(const QString &fileName, QString &error);
+    void addHistory(const QJsonObject &entry);
+
     // Blocks are written in the order of their time, all tracks together
     bool writeBlock(quint32 track, qint64 timeNs, const QByteArray &data);
     bool finish(QString &error);
@@ -95,6 +100,18 @@ public:
     QVector<Track> tracks() const;
     QJsonArray history() const;
     quint32 nextTrackId() const;
+
+    // Where the blocks are, from the cues (after buildIndex): for the writer that adds to a file
+    struct BlockRef {
+        quint32 track;
+        qint64 timeNs;
+        quint64 clusterPosition;
+        quint64 relativePosition;
+    };
+    QVector<BlockRef> blockRefs() const;
+    quint64 cuesPosition() const;                       // in the file, where the cues start
+    quint64 segmentPosition() const;                    // in the file, where the segment starts
+    qint64 lastTimeNs() const;                          // the time of the last block of any track
 
     struct Attachment {
         QString name;
