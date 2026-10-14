@@ -1,21 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- The icon on the grid of 16 x 16 pixels, for the small sizes: discs close up, the one in the middle
-     partly covered by the two around it that run off the picture, the one in front yellow, and an outline
-     of one pixel around the picture. -->
+<!-- The icon on the grid of 16 x 16 pixels, for the small sizes: a disc, an arrow down, and the layers that
+     are stacked, the last one (the result) in green. -->
 <svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">
-  <defs><clipPath id="c"><rect x="0.5" y="0.5" width="15" height="15" rx="2.5"/></clipPath></defs>
-  <g clip-path="url(#c)">
-    <rect width="16" height="16" fill="#F4F5F2"/>
-    <g stroke="#555753" stroke-width="1">
-      <circle cx="6" cy="12" r="5" fill="#CFD2CB"/>
-      <circle cx="3" cy="3.5" r="6" fill="#A1A59B"/>
-      <circle cx="12.5" cy="8.5" r="6" fill="#F2C94C"/>
-    </g>
-    <g fill="#2E3436">
-      <circle cx="6" cy="12" r="1"/>
-      <circle cx="3" cy="3.5" r="1"/>
-      <circle cx="12.5" cy="8.5" r="1"/>
-    </g>
-  </g>
-  <rect x="0.5" y="0.5" width="15" height="15" rx="2.5" fill="none" stroke="#555753" stroke-width="1"/>
+  <circle cx="5" cy="5" r="4" fill="#F2C94C" stroke="#555753" stroke-width="1"/>
+  <circle cx="5" cy="5" r="1" fill="#2E3436"/>
+  <rect x="12" y="1" width="1" height="6" fill="#555753"/>
+  <path d="M10 6h5v1h-1v1h-1v1h-1v-1h-1v-1h-1z" fill="#555753"/>
+  <rect x="1" y="10" width="14" height="1" fill="#888A85"/>
+  <rect x="1" y="12" width="14" height="1" fill="#888A85"/>
+  <rect x="1" y="14" width="14" height="1" fill="#73B345"/>
 </svg>

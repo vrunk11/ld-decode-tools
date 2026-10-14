@@ -1,29 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- ld-stacker-gui: discs seen from above, close up. The one in the middle is partly covered by the two
-     around it, which run off the picture, so the picture has an outline; the one in front is yellow, like a
-     CDV. Few shapes and a heavy outline, so that it holds when it is small (ld-stacker-gui-small.svg is the
-     same on the grid of 16 pixels). -->
+<!-- ld-stacker-gui: a disc, an arrow down, and the layers that are stacked, the last one (the result) in
+     green. ld-stacker-gui-small.svg is the same on the grid of 16 pixels. -->
 <svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <defs><clipPath id="c"><rect x="1.5" y="1.5" width="61" height="61" rx="10"/></clipPath></defs>
-  <g clip-path="url(#c)">
-    <rect width="64" height="64" fill="#F4F5F2"/>
-    <g stroke="#555753" stroke-width="3">
-      <circle cx="24" cy="48" r="20" fill="#CFD2CB"/>
-    </g>
-    <circle cx="24" cy="48" r="10" fill="none" stroke="#555753" stroke-width="1.6" stroke-opacity="0.5"/>
-    <circle cx="24" cy="48" r="4" fill="#2E3436"/>
-
-    <g stroke="#555753" stroke-width="3">
-      <circle cx="12" cy="14" r="24" fill="#A1A59B"/>
-    </g>
-    <circle cx="12" cy="14" r="12" fill="none" stroke="#555753" stroke-width="1.6" stroke-opacity="0.5"/>
-    <circle cx="12" cy="14" r="5" fill="#2E3436"/>
-
-    <g stroke="#555753" stroke-width="3">
-      <circle cx="50" cy="34" r="24" fill="#F2C94C"/>
-    </g>
-    <circle cx="50" cy="34" r="12" fill="none" stroke="#555753" stroke-width="1.6" stroke-opacity="0.5"/>
-    <circle cx="50" cy="34" r="5" fill="#2E3436"/>
+  <circle cx="20" cy="20" r="16" fill="#F2C94C" stroke="#555753" stroke-width="3.2"/>
+  <circle cx="20" cy="20" r="8" fill="none" stroke="#555753" stroke-width="1.6" stroke-opacity="0.5"/>
+  <circle cx="20" cy="20" r="4" fill="#2E3436"/>
+  <path d="M50 4v24" stroke="#555753" stroke-width="5" stroke-linecap="round"/>
+  <path d="M40 24l10 12 10-12z" fill="#555753" stroke="#555753" stroke-width="3" stroke-linejoin="round"/>
+  <g stroke="#555753" stroke-width="2.4" stroke-linejoin="round">
+    <rect x="4" y="42" width="56" height="5" rx="1.5" fill="#CFD2CB"/>
+    <rect x="4" y="50" width="56" height="5" rx="1.5" fill="#A1A59B"/>
+    <rect x="4" y="58" width="56" height="4" rx="1.5" fill="#73B345"/>
   </g>
-  <rect x="1.5" y="1.5" width="61" height="61" rx="10" fill="none" stroke="#555753" stroke-width="3"/>
 </svg>
