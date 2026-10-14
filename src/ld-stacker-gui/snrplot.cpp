@@ -10,6 +10,7 @@
 
 #include "snrplot.h"
 
+#include <QFontMetrics>
 #include <QHBoxLayout>
 #include <QMouseEvent>
 #include <QPainter>
@@ -22,14 +23,14 @@ SnrPlot::SnrPlot(QWidget *parent)
 {
     setMinimumHeight(40);
     setCursor(Qt::CrossCursor);
+    setMouseTracking(true);
     setAutoFillBackground(true);
     setBackgroundRole(QPalette::Base);
 }
 
-void SnrPlot::setCurves(const QVector<SnrCurve> &newCurves, const QString &label)
+void SnrPlot::setCurves(const QVector<SnrCurve> &newCurves)
 {
     curves = newCurves;
-    text = label;
     totalFrames = 0;
     for (const SnrCurve &curve: curves) totalFrames = qMax(totalFrames, static_cast<qint32>(curve.values.size()));
     update();
@@ -44,7 +45,7 @@ void SnrPlot::setMarker(qint32 frame)
 qint32 SnrPlot::frameAt(qint32 x) const
 {
     if (totalFrames < 1) return 1;
-    const double fraction = qBound(0.0, static_cast<double>(x) / qMax(1, width() - 1), 1.0);
+    const double fraction = qBound(0.0, static_cast<double>(x) / qMax(1, plotWidth() - 1), 1.0);
     return 1 + qRound(fraction * (totalFrames - 1));
 }
 
@@ -53,14 +54,9 @@ void SnrPlot::paintEvent(QPaintEvent *)
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing, true);
 
-    const QRectF area = rect().adjusted(0, 4, 0, -4);
-
-    // A line every quarter
-    painter.setPen(QPen(palette().color(QPalette::Mid), 1, Qt::DotLine));
-    for (qint32 i = 1; i < 4; i++) {
-        const qreal y = area.top() + area.height() * i / 4.0;
-        painter.drawLine(QPointF(0, y), QPointF(width(), y));
-    }
+    const qint32 plotW = plotWidth();
+    const QRectF area(0, 4, plotW, height() - 8);
+    const QColor textColor = palette().color(QPalette::Text);
 
     // The range of what is shown
     bool any = false;
@@ -75,26 +71,38 @@ void SnrPlot::paintEvent(QPaintEvent *)
         }
     }
 
-    if (totalFrames > 0 && any) {
-        double span = high - low;
-        double lo = low;
+    double lo = 0, span = 1;
+    if (any) {
+        span = high - low;
+        lo = low;
         if (span < 1.0) { lo -= (1.0 - span) / 2; span = 1.0; }
         lo -= span * 0.05;   // a little room above and below
         span *= 1.1;
+    }
 
-        // What the lines are worth, in dB
-        QFont small = font();
-        small.setPointSizeF(qMax(7.0, small.pointSizeF() - 1));
-        painter.setFont(small);
-        painter.setPen(palette().color(QPalette::PlaceholderText));
-        for (qint32 i = 1; i < 4; i++) {
-            const qreal y = area.top() + area.height() * i / 4.0;
+    // A grid that can be seen on any theme, with what each line is worth in dB in the margin on the right
+    QColor gridColor = textColor;
+    gridColor.setAlpha(70);
+    QFont axisFont = font();
+    axisFont.setPointSizeF(qMax(7.0, axisFont.pointSizeF() - 1));
+    for (qint32 i = 0; i <= 4; i++) {
+        const qreal y = area.top() + area.height() * i / 4.0;
+        painter.setPen(QPen(gridColor, 1));
+        painter.drawLine(QPointF(0, y), QPointF(plotW, y));
+        if (any && i > 0 && i < 4) {
             const double value = lo + (area.bottom() - y) / area.height() * span;
-            painter.drawText(QRectF(0, y - 14, width() - 4, 14), Qt::AlignRight | Qt::AlignBottom, QString("%1 dB").arg(value, 0, 'f', 1));
+            painter.setFont(axisFont);
+            painter.setPen(textColor);
+            painter.drawText(QRectF(plotW + 4, y - 8, AXIS_WIDTH - 6, 16), Qt::AlignLeft | Qt::AlignVCenter,
+                             QString("%1 dB").arg(value, 0, 'f', 1));
         }
+    }
+    painter.setPen(QPen(gridColor, 1));
+    painter.drawLine(QPointF(plotW, 0), QPointF(plotW, height()));
 
+    if (totalFrames > 0 && any) {
         const auto toPoint = [&](qint32 index, float value) {
-            const qreal x = totalFrames > 1 ? static_cast<qreal>(index) * (width() - 1) / (totalFrames - 1) : 0;
+            const qreal x = totalFrames > 1 ? static_cast<qreal>(index) * (plotW - 1) / (totalFrames - 1) : 0;
             const qreal y = area.bottom() - (value - lo) / span * area.height();
             return QPointF(x, y);
         };
@@ -120,16 +128,50 @@ void SnrPlot::paintEvent(QPaintEvent *)
         }
     }
 
+    // The frame viewed
+    const auto xOf = [&](qint32 frame) {
+        return totalFrames > 1 ? (frame - 1) * (plotW - 1) / static_cast<qreal>(totalFrames - 1) : 0.0;
+    };
     if (totalFrames > 0 && markerFrame >= 1) {
-        const qreal x = totalFrames > 1 ? (markerFrame - 1) * (width() - 1) / (totalFrames - 1) : 0;
-        painter.setPen(QPen(palette().color(QPalette::Text), 2));
-        painter.drawLine(QPointF(x, 0), QPointF(x, height()));
+        painter.setPen(QPen(textColor, 2));
+        painter.drawLine(QPointF(xOf(markerFrame), 0), QPointF(xOf(markerFrame), height()));
     }
 
-    if (!text.isEmpty()) {
+    // The values under the cursor
+    if (totalFrames > 0 && hoverFrame >= 1) {
+        QColor hoverColor = textColor;
+        hoverColor.setAlpha(140);
+        painter.setPen(QPen(hoverColor, 1, Qt::DashLine));
+        painter.drawLine(QPointF(xOf(hoverFrame), 0), QPointF(xOf(hoverFrame), height()));
+
+        QStringList lines;
+        lines << tr("Frame %1").arg(hoverFrame);
+        for (const SnrCurve &curve: curves) {
+            if (!curve.visible || hoverFrame > curve.values.size() || curve.name.isEmpty()) continue;
+            const float value = curve.values[hoverFrame - 1];
+            lines << (std::isfinite(value) ? tr("%1: %2 dB").arg(curve.name).arg(value, 0, 'f', 2) : tr("%1: -").arg(curve.name));
+        }
+
         painter.setFont(font());
-        painter.setPen(palette().color(QPalette::PlaceholderText));
-        painter.drawText(QRectF(6, 2, width() - 12, 16), Qt::AlignLeft | Qt::AlignVCenter, text + tr("  (dB)"));
+        const QFontMetrics metrics(font());
+        qint32 boxWidth = 0;
+        for (const QString &line: lines) boxWidth = qMax(boxWidth, metrics.horizontalAdvance(line));
+        boxWidth += 12;
+        const qint32 boxHeight = metrics.height() * lines.size() + 8;
+        // On the side of the cursor that has the room
+        const qreal x = xOf(hoverFrame);
+        const qreal boxX = x + 10 + boxWidth < plotW ? x + 10 : x - 10 - boxWidth;
+        const QRectF box(boxX, 4, boxWidth, boxHeight);
+        QColor fill = palette().color(QPalette::Window);
+        fill.setAlpha(225);
+        painter.setPen(QPen(textColor, 1));
+        painter.setBrush(fill);
+        painter.drawRect(box);
+        painter.setPen(textColor);
+        for (qint32 i = 0; i < lines.size(); i++) {
+            painter.drawText(QRectF(box.left() + 6, box.top() + 4 + i * metrics.height(), boxWidth, metrics.height()),
+                             Qt::AlignLeft | Qt::AlignVCenter, lines[i]);
+        }
     }
 }
 
@@ -140,7 +182,16 @@ void SnrPlot::mousePressEvent(QMouseEvent *event)
 
 void SnrPlot::mouseMoveEvent(QMouseEvent *event)
 {
-    if (event->buttons() & Qt::LeftButton) emit frameRequested(frameAt(static_cast<qint32>(event->position().x())));
+    const qint32 x = static_cast<qint32>(event->position().x());
+    hoverFrame = (x >= 0 && x < plotWidth()) ? frameAt(x) : 0;
+    update();
+    if (event->buttons() & Qt::LeftButton) emit frameRequested(frameAt(x));
+}
+
+void SnrPlot::leaveEvent(QEvent *)
+{
+    hoverFrame = 0;
+    update();
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -169,6 +220,10 @@ SnrGraph::SnrGraph(bool withStack, QWidget *parent)
         row->addWidget(stackCheck);
     }
     row->addStretch(1);
+    // What the graph is of, beside the check boxes and not on the curves
+    titleLabel = new QLabel;
+    titleLabel->setForegroundRole(QPalette::PlaceholderText);
+    row->addWidget(titleLabel);
     layout->addLayout(row);
 
     plot = new SnrPlot;
@@ -180,10 +235,10 @@ SnrGraph::SnrGraph(bool withStack, QWidget *parent)
     if (stackCheck) connect(stackCheck, &QCheckBox::toggled, this, [this]() { redraw(); });
 }
 
-void SnrGraph::setData(const QString &newLabel, const QVector<float> &newWhite, const QVector<float> &newBlack,
+void SnrGraph::setData(const QString &label, const QVector<float> &newWhite, const QVector<float> &newBlack,
                        const QVector<float> &newStackWhite, const QVector<float> &newStackBlack)
 {
-    label = newLabel;
+    titleLabel->setText(label.isEmpty() ? tr("dB") : tr("%1 (dB)").arg(label));
     white = newWhite;
     black = newBlack;
     stackWhite = newStackWhite;
@@ -200,10 +255,10 @@ void SnrGraph::redraw()
 {
     QVector<SnrCurve> curves;
     if (stackCheck && stackCheck->isChecked()) {
-        curves.append({ stackWhite, whiteColor(), true, whiteCheck->isChecked() });
-        curves.append({ stackBlack, blackColor(), true, blackCheck->isChecked() });
+        curves.append({ stackWhite, whiteColor(), true, whiteCheck->isChecked(), tr("Stack white") });
+        curves.append({ stackBlack, blackColor(), true, blackCheck->isChecked(), tr("Stack black") });
     }
-    curves.append({ white, whiteColor(), false, whiteCheck->isChecked() });
-    curves.append({ black, blackColor(), false, blackCheck->isChecked() });
-    plot->setCurves(curves, label);
+    curves.append({ white, whiteColor(), false, whiteCheck->isChecked(), tr("White SNR") });
+    curves.append({ black, blackColor(), false, blackCheck->isChecked(), tr("Black PSNR") });
+    plot->setCurves(curves);
 }

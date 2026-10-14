@@ -13,6 +13,8 @@
 
 #include <QCheckBox>
 #include <QColor>
+#include <QLabel>
+#include <QString>
 #include <QVector>
 #include <QWidget>
 
@@ -22,10 +24,11 @@ struct SnrCurve {
     QColor color;
     bool thin = false;       // drawn finer, behind the others (what is compared with)
     bool visible = true;
+    QString name;            // as the value under the cursor calls it
 };
 
-// SNR curves over the frames, with a marker on the frame being viewed. Clicking or dragging on it asks for a
-// frame.
+// SNR curves over the frames, in dB, with the scale on the right, a marker on the frame being viewed and the
+// values under the cursor. Clicking or dragging on it asks for a frame.
 class SnrPlot : public QWidget
 {
     Q_OBJECT
@@ -33,7 +36,7 @@ class SnrPlot : public QWidget
 public:
     explicit SnrPlot(QWidget *parent = nullptr);
 
-    void setCurves(const QVector<SnrCurve> &curves, const QString &label);
+    void setCurves(const QVector<SnrCurve> &curves);
     void setMarker(qint32 frame);
 
     QSize sizeHint() const override { return QSize(400, 70); }
@@ -46,14 +49,18 @@ protected:
     void paintEvent(QPaintEvent *event) override;
     void mousePressEvent(QMouseEvent *event) override;
     void mouseMoveEvent(QMouseEvent *event) override;
+    void leaveEvent(QEvent *event) override;
 
 private:
+    static constexpr qint32 AXIS_WIDTH = 56;     // room on the right for the scale
+
+    qint32 plotWidth() const { return qMax(1, width() - AXIS_WIDTH); }
     qint32 frameAt(qint32 x) const;
 
     QVector<SnrCurve> curves;
     qint32 totalFrames = 0;
-    QString text;
     qint32 markerFrame = 0;
+    qint32 hoverFrame = 0;   // under the cursor, 0 if it is not on the plot
 };
 
 // The plot with what is on it to switch: the white SNR and the black PSNR, each its own colour, and, in the
@@ -80,10 +87,10 @@ private:
     void redraw();
 
     SnrPlot *plot = nullptr;
+    QLabel *titleLabel = nullptr;
     QCheckBox *whiteCheck = nullptr;
     QCheckBox *blackCheck = nullptr;
     QCheckBox *stackCheck = nullptr;
-    QString label;
     QVector<float> white, black, stackWhite, stackBlack;
 };
 

@@ -149,11 +149,9 @@ private:
     QSlider *frameSlider = nullptr;
     QLabel *totalLabel = nullptr;
     QComboBox *modeCombo = nullptr;
-    QComboBox *zoomMethodCombo = nullptr;
+    qint32 zoomMethod = 0;          // 0 line doubling, 1 smooth
     QSpinBox *zoomSpin = nullptr;
     QPushButton *chromaButton = nullptr;
-    QPushButton *chromaSettingsButton = nullptr;
-    QPushButton *enhanceButton = nullptr;
     QPushButton *originalSizeButton = nullptr;
     QPushButton *aspectButton = nullptr;
     bool displayAspect = true;

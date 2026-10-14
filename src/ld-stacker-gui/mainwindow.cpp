@@ -312,12 +312,6 @@ void MainWindow::buildUi()
     stackButton->setToolTip(tr("On: the picture is the stack. Off: it is the source of the tab chosen. (key 0 or S)"));
     optionsLayout->addWidget(stackButton);
     optionsLayout->addWidget(chromaButton);
-    chromaSettingsButton = new QPushButton(tr("Chroma settings..."));
-    chromaSettingsButton->setToolTip(tr("The configuration of the chroma decoder"));
-    optionsLayout->addWidget(chromaSettingsButton);
-    enhanceButton = new QPushButton(tr("Enhance..."));
-    enhanceButton->setToolTip(tr("Brightness, contrast and gamma of the pictures shown, to bring out the defects"));
-    optionsLayout->addWidget(enhanceButton);
     optionsLayout->addStretch(1);
     QToolButton *zoomOut = makeButton("-", tr("Zoom out"), true);
     QToolButton *zoomIn = makeButton("+", tr("Zoom in"), true);
@@ -327,14 +321,9 @@ void MainWindow::buildUi()
     zoomSpin->setSuffix("%");
     zoomSpin->setKeyboardTracking(false);
     zoomSpin->setToolTip(tr("Zoom: type a value, or use the + and - buttons"));
-    zoomMethodCombo = new QComboBox;
-    zoomMethodCombo->addItem(tr("Line doubling"));
-    zoomMethodCombo->addItem(tr("Smooth"));
-    zoomMethodCombo->setToolTip(tr("How the picture is enlarged: line doubling keeps the pixels as they are"));
     optionsLayout->addWidget(zoomOut);
     optionsLayout->addWidget(zoomSpin);
     optionsLayout->addWidget(zoomIn);
-    optionsLayout->addWidget(zoomMethodCombo);
     aspectButton = new QPushButton;
     optionsLayout->addWidget(aspectButton);
     originalSizeButton = new QPushButton(tr("Original size"));
@@ -390,8 +379,6 @@ void MainWindow::buildUi()
         project.stacking.mode = index - 1;
         sourcesChanged();
     });
-    connect(chromaSettingsButton, &QPushButton::clicked, this, [this]() { chromaDialog->show(); chromaDialog->raise(); });
-    connect(enhanceButton, &QPushButton::clicked, this, [this]() { enhanceDialog->show(); enhanceDialog->raise(); });
     connect(chromaButton, &QPushButton::toggled, this, [this](bool on) {
         project.chroma = on;
         requestFrame();
@@ -410,7 +397,6 @@ void MainWindow::buildUi()
         resizeToImage();
     });
     connect(zoomSpin, &QSpinBox::valueChanged, this, [this](qint32 percent) { setZoom(percent / 100.0); });
-    connect(zoomMethodCombo, &QComboBox::currentIndexChanged, this, [this]() { applyZoom(); });
 
     new QShortcut(Qt::Key_Left, this, [this]() { setFrame(frame - 1); });
     new QShortcut(Qt::Key_Right, this, [this]() { setFrame(frame + 1); });
@@ -439,8 +425,6 @@ void MainWindow::buildMenus()
 
     QMenu *edit = menuBar()->addMenu(tr("&Edit"));
     edit->addAction(tr("&Stacking options..."), this, [this]() { optionsDialog->show(); optionsDialog->raise(); });
-    edit->addAction(tr("&Chroma decoder..."), this, [this]() { chromaDialog->show(); chromaDialog->raise(); });
-    edit->addAction(tr("&Enhance..."), this, [this]() { enhanceDialog->show(); enhanceDialog->raise(); });
 
     QMenu *view = menuBar()->addMenu(tr("&View"));
     stackOutputAction = view->addAction(tr("Stack output"));
@@ -455,6 +439,23 @@ void MainWindow::buildMenus()
             stackWindow->hide();
         }
     });
+    view->addAction(tr("&Chroma decoder configuration..."), this, [this]() { chromaDialog->show(); chromaDialog->raise(); });
+    view->addAction(tr("&Enhance..."), this, [this]() { enhanceDialog->show(); enhanceDialog->raise(); });
+    // How the picture is enlarged: line doubling keeps the pixels as they are
+    QMenu *enlarge = view->addMenu(tr("Enlarge the picture"));
+    QActionGroup *enlargeGroup = new QActionGroup(this);
+    const QStringList methods = { tr("Line doubling"), tr("Smooth") };
+    for (qint32 i = 0; i < methods.size(); i++) {
+        QAction *action = enlarge->addAction(methods[i]);
+        action->setCheckable(true);
+        action->setChecked(i == zoomMethod);
+        enlargeGroup->addAction(action);
+        connect(action, &QAction::triggered, this, [this, i]() {
+            zoomMethod = i;
+            applyZoom();
+            if (stackWindow->isVisible() && lastStackResult.view == "stack") showStackPicture(lastStackResult);
+        });
+    }
     view->addSeparator();
     setupAppearanceMenus(view);
 }
@@ -1138,7 +1139,7 @@ void MainWindow::applyZoom()
 {
     if (currentImage.isNull()) return;
     const QSize size(qRound((currentImage.width() + aspectAdjustment()) * zoom), qRound(currentImage.height() * zoom));
-    const Qt::TransformationMode mode = zoomMethodCombo->currentIndex() == 0 ? Qt::FastTransformation : Qt::SmoothTransformation;
+    const Qt::TransformationMode mode = zoomMethod == 0 ? Qt::FastTransformation : Qt::SmoothTransformation;
     imageLabel->setPixmap(QPixmap::fromImage(enhanceDialog->apply(currentImage)).scaled(size, Qt::IgnoreAspectRatio, mode));
     imageLabel->setMinimumSize(size);
 }
@@ -1378,5 +1379,5 @@ QImage MainWindow::shownImage(const QImage &image) const
     QImage shown = enhanceDialog->apply(image);
     if (adjustment == 0 || shown.isNull()) return shown;
     return shown.scaled(shown.width() + adjustment, shown.height(), Qt::IgnoreAspectRatio,
-                        zoomMethodCombo->currentIndex() == 0 ? Qt::FastTransformation : Qt::SmoothTransformation);
+                        zoomMethod == 0 ? Qt::FastTransformation : Qt::SmoothTransformation);
 }
