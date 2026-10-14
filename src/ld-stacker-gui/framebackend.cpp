@@ -210,10 +210,11 @@ QImage FrameBackend::chromaPicture(Loaded &source, qint32 ownFrame, const Source
 void FrameBackend::render(const FrameRequest &request)
 {
     // Overtaken by a newer request: not worth the time
-    if (request.serial < latest.load()) return;
+    if (request.serial < latest[request.channel & 1].load()) return;
 
     FrameResult result;
     result.serial = request.serial;
+    result.channel = request.channel;
     result.frame = request.frame;
     result.view = request.view;
     result.stackWhiteSnr = std::nan("");

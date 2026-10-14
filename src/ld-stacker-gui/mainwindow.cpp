@@ -70,6 +70,13 @@ MainWindow::MainWindow(const QStringList &arguments, QWidget *parent)
     buildUi();
     buildMenus();
 
+    snrWindow = new SnrWindow(this);
+    snrWindow->setWindowFlag(Qt::Window, true);
+    connect(snrWindow, &SnrWindow::frameRequested, this, &MainWindow::setFrame);
+    stackWindow = new StackOutputWindow(this);
+    stackWindow->setWindowFlag(Qt::Window, true);
+    connect(stackWindow, &StackOutputWindow::closed, this, [this]() { stackOutputAction->setChecked(false); });
+
     QSettings settings;
     restoreGeometry(settings.value("geometry").toByteArray());
     if (!settings.contains("geometry")) resize(1200, 800);
@@ -325,9 +332,18 @@ void MainWindow::buildMenus()
     file->addAction(tr("E&xit"), QKeySequence::Quit, this, &QWidget::close);
 
     QMenu *view = menuBar()->addMenu(tr("&View"));
-    QAction *stackOutput = view->addAction(tr("Stack output"));
-    stackOutput->setEnabled(false);
-    stackOutput->setToolTip(tr("A window with the final stack: not available yet"));
+    stackOutputAction = view->addAction(tr("Stack output"));
+    stackOutputAction->setCheckable(true);
+    stackOutputAction->setToolTip(tr("A window with the final stack, which stays in view while the main window shows a source"));
+    connect(stackOutputAction, &QAction::toggled, this, [this](bool on) {
+        if (on) {
+            stackWindow->show();
+            stackWindow->raise();
+            requestFrame();
+        } else {
+            stackWindow->hide();
+        }
+    });
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -522,6 +538,12 @@ void MainWindow::rebuildSourceList()
         offset->setFixedWidth(70);
         layout->addWidget(offset);
 
+        QToolButton *snrButton = new QToolButton;
+        snrButton->setText(tr("SNR"));
+        snrButton->setToolTip(tr("The SNR of this source over the disc, in a window"));
+        layout->addWidget(snrButton);
+        connect(snrButton, &QToolButton::clicked, this, [this, id]() { openSnrWindow(id); });
+
         connect(enabled, &QCheckBox::toggled, this, [this, id, name](bool on) {
             const qint32 at = project.indexOfSource(id);
             if (at < 0) return;
@@ -684,13 +706,22 @@ void MainWindow::requestFrame()
         currentImage = QImage();
         imageLabel->setPixmap(QPixmap());
         imageLabel->setText(project.sources.isEmpty() ? tr("Add sources to start") : tr("Loading the sources..."));
+        if (stackWindow->isVisible()) stackWindow->setMessage(tr("No sources"));
         return;
     }
 
+    sendRequest(currentView(), 0);
+    // The stack in its own window is worked out too, unless it is what the main view shows
+    if (stackWindow->isVisible() && currentView() != "stack") sendRequest("stack", 1);
+}
+
+void MainWindow::sendRequest(const QString &view, qint32 channel)
+{
     FrameRequest request;
-    request.serial = ++serial;
+    request.serial = ++serials[channel];
+    request.channel = channel;
     request.frame = frame;
-    request.view = currentView();
+    request.view = view;
     request.chroma = project.chroma;
     request.settings = project.stacking;
     for (const StackSource &source: project.sources) {
@@ -700,36 +731,78 @@ void MainWindow::requestFrame()
         entry.offset = source.offset;
         request.entries.append(entry);
     }
-    backend->latest.store(request.serial);
+    backend->latest[channel].store(request.serial);
     QMetaObject::invokeMethod(backend, "render", Qt::QueuedConnection, Q_ARG(FrameRequest, request));
 }
 
 void MainWindow::on_frameReady(const FrameResult &result)
 {
-    if (result.serial != serial) return;   // a newer one is on its way
-    lastResult = result;
+    const qint32 channel = result.channel & 1;
+    if (result.serial != serials[channel]) return;   // a newer one is on its way
 
-    if (result.image.isNull()) {
-        currentImage = QImage();
-        imageLabel->setPixmap(QPixmap());
-        imageLabel->setText(result.message);
-    } else {
-        currentImage = result.image;
-        imageLabel->setText(QString());
-        applyZoom();
+    if (channel == 0) {
+        lastResult = result;
+        if (result.image.isNull()) {
+            currentImage = QImage();
+            imageLabel->setPixmap(QPixmap());
+            imageLabel->setText(result.message);
+        } else {
+            currentImage = result.image;
+            imageLabel->setText(QString());
+            applyZoom();
+        }
     }
 
-    if (result.view == "stack" && std::isfinite(result.stackWhiteSnr)) {
-        stackSnr.insert(result.frame, static_cast<float>(result.stackWhiteSnr));
+    if (result.view == "stack") {
+        lastStackResult = result;
+        if (std::isfinite(result.stackWhiteSnr)) stackSnr.insert(result.frame, static_cast<float>(result.stackWhiteSnr));
+        if (stackWindow->isVisible()) {
+            if (result.image.isNull()) {
+                stackWindow->setMessage(result.message);
+            } else {
+                const QString snr = std::isfinite(result.stackWhiteSnr) ? tr("  -  %1 dB").arg(result.stackWhiteSnr, 0, 'f', 1) : QString();
+                stackWindow->setPicture(result.image, tr("Stack, frame %1%2").arg(result.frame).arg(snr));
+            }
+        }
         updateTabTexts();
         updatePlot();
     }
     updateStatus();
 }
 
+void MainWindow::openSnrWindow(const QString &id)
+{
+    snrWindowSource = id;
+    updateSnrWindow();
+    snrWindow->show();
+    snrWindow->raise();
+}
+
+// The SNR window follows what is stacked and the frame viewed
+void MainWindow::updateSnrWindow()
+{
+    if (snrWindowSource.isEmpty() || !snrWindow->isVisible()) return;
+    const qint32 index = project.indexOfSource(snrWindowSource);
+    if (index < 0) {
+        snrWindow->hide();
+        return;
+    }
+    const StackSource &source = project.sources[index];
+    const SourceState state = states.value(source.id);
+    QVector<float> values(totalFrames, std::nanf(""));
+    for (qint32 at = 1; at <= totalFrames; at++) {
+        bool known;
+        const float value = sourceSnr(state, at, source.offset, known);
+        if (known) values[at - 1] = value;
+    }
+    snrWindow->setContent(tr("SNR - source %1 (%2)").arg(index + 1).arg(sourceTitle(source)), values, colorFor(source.id),
+                          stackSnr, STACK_COLOR, frame);
+}
+
 void MainWindow::updatePlot()
 {
     snrPlot->setMarker(frame);
+    updateSnrWindow();
 
     const QString view = currentView();
     if (view == "stack") {
@@ -766,8 +839,8 @@ void MainWindow::updateStatus()
     }
 
     const bool isStack = currentView() == "stack";
-    if (isStack && lastResult.view == "stack" && lastResult.frame == frame && lastResult.contributing > 0) {
-        statusSources->setText(tr("%1 of %2 sources contribute to this frame").arg(lastResult.contributing).arg(project.sources.size()));
+    if (lastStackResult.view == "stack" && lastStackResult.frame == frame && lastStackResult.contributing > 0) {
+        statusSources->setText(tr("%1 of %2 sources contribute to this frame").arg(lastStackResult.contributing).arg(project.sources.size()));
     } else {
         statusSources->setText(tr("%1 of %2 sources on").arg(on).arg(project.sources.size()));
     }

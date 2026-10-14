@@ -28,6 +28,7 @@
 
 #include "framebackend.h"
 #include "snrplot.h"
+#include "toolwindows.h"
 #include "stackproject.h"
 
 class MainWindow : public QMainWindow
@@ -70,6 +71,9 @@ private:
     void updateTabTexts();
     void updateTimeline();
     void updatePlot();
+    void updateSnrWindow();
+    void openSnrWindow(const QString &id);
+    void sendRequest(const QString &view, qint32 channel);
     void updateStatus();
     void sourcesChanged();      // what is stacked changed: the stack must be worked out again
 
@@ -89,13 +93,18 @@ private:
 
     QThread backendThread;
     FrameBackend *backend = nullptr;
-    quint64 serial = 0;
+    quint64 serials[2] = { 0, 0 };
 
     qint32 frame = 1;
     qint32 totalFrames = 0;
     double zoom = 2.0;
     QImage currentImage;
-    FrameResult lastResult;
+    FrameResult lastResult;       // the last picture of the main view
+    FrameResult lastStackResult;  // the last stack, wherever it was asked for
+    SnrWindow *snrWindow = nullptr;
+    QString snrWindowSource;
+    StackOutputWindow *stackWindow = nullptr;
+    QAction *stackOutputAction = nullptr;
     QMap<qint32, float> stackSnr;
 
     QListWidget *sourceList = nullptr;

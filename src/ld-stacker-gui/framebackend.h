@@ -52,6 +52,7 @@ struct FrameRequest {
     };
 
     quint64 serial = 0;
+    qint32 channel = 0;           // 0 the main picture, 1 the stack output window; each has its own newest request
     qint32 frame = 1;
     QString view = "stack";       // "stack" or the id of a source
     bool chroma = false;          // the picture is chroma decoded
@@ -61,6 +62,7 @@ struct FrameRequest {
 
 struct FrameResult {
     quint64 serial = 0;
+    qint32 channel = 0;
     qint32 frame = 1;
     QString view;
     QImage image;
@@ -87,7 +89,7 @@ public:
 
     // The serial of the newest request, set by the sender before it posts it, so that requests
     // that have been overtaken are skipped
-    std::atomic<quint64> latest{0};
+    std::atomic<quint64> latest[2] = { 0, 0 };
 
 public slots:
     void addSource(const QString &id, const QString &file, bool reverseFields);

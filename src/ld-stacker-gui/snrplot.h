@@ -29,6 +29,8 @@ public:
     void setSeries(const QVector<float> &values, const QColor &color, const QString &label);
     // Only some frames known (the stack is measured as it is viewed)
     void setSparseSeries(const QMap<qint32, float> &values, qint32 totalFrames, const QColor &color, const QString &label);
+    // A second curve, drawn behind (the stack, to compare a source with); empty to have none
+    void setReference(const QMap<qint32, float> &values, const QColor &color);
     void setMarker(qint32 frame);
 
     QSize sizeHint() const override { return QSize(400, 70); }
@@ -46,6 +48,8 @@ private:
     qint32 frameAt(qint32 x) const;
 
     QVector<QPointF> points;   // frame, value
+    QVector<QPointF> referencePoints;
+    QColor referenceColor;
     qint32 totalFrames = 0;
     QColor lineColor;
     QString text;

@@ -4,6 +4,7 @@ set(ld-stacker-gui_SOURCES
     framebackend.cpp
     stackproject.cpp
     snrplot.cpp
+    toolwindows.cpp
 )
 
 add_executable(ld-stacker-gui ${ld-stacker-gui_SOURCES})

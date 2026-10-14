@@ -70,6 +70,16 @@ void SnrPlot::setSparseSeries(const QMap<qint32, float> &values, qint32 total, c
     update();
 }
 
+void SnrPlot::setReference(const QMap<qint32, float> &values, const QColor &color)
+{
+    referencePoints.clear();
+    for (auto it = values.constBegin(); it != values.constEnd(); ++it) {
+        if (std::isfinite(it.value())) referencePoints.append(QPointF(it.key(), it.value()));
+    }
+    referenceColor = color;
+    update();
+}
+
 void SnrPlot::setMarker(qint32 frame)
 {
     markerFrame = frame;
@@ -98,9 +108,15 @@ void SnrPlot::paintEvent(QPaintEvent *)
         painter.drawLine(QPointF(0, y), QPointF(width(), y));
     }
 
-    if (totalFrames > 0 && !points.isEmpty()) {
-        double span = high - low;
-        double lo = low;
+    if (totalFrames > 0 && (!points.isEmpty() || !referencePoints.isEmpty())) {
+        double lowest = low, highest = high;
+        if (points.isEmpty()) { lowest = referencePoints.first().y(); highest = lowest; }
+        for (const QPointF &point: referencePoints) {
+            lowest = qMin(lowest, point.y());
+            highest = qMax(highest, point.y());
+        }
+        double span = highest - lowest;
+        double lo = lowest;
         if (span < 1.0) { lo -= (1.0 - span) / 2; span = 1.0; }
         // A little room above and below
         lo -= span * 0.05;
@@ -111,6 +127,18 @@ void SnrPlot::paintEvent(QPaintEvent *)
             const qreal y = area.bottom() - (point.y() - lo) / span * area.height();
             return QPointF(x, y);
         };
+
+        // The reference, behind
+        painter.setPen(QPen(referenceColor, 1));
+        QPointF previousReference;
+        qint32 previousReferenceFrame = -1;
+        for (const QPointF &point: referencePoints) {
+            const QPointF at = toPoint(point);
+            if (previousReferenceFrame >= 0 && point.x() - previousReferenceFrame <= 1) painter.drawLine(previousReference, at);
+            painter.drawEllipse(at, 1.2, 1.2);
+            previousReference = at;
+            previousReferenceFrame = static_cast<qint32>(point.x());
+        }
 
         painter.setPen(QPen(lineColor, 1.5));
         if (sparse) {
