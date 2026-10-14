@@ -138,6 +138,50 @@ static void testBlockSizes(const QString &directory)
     }
 }
 
+// The ids of the tracks are kept when a file is written again without one of them, and are not given again
+static void testIdsAndAttachments(const QString &path)
+{
+    std::cerr << "Testing the ids of the tracks and the attachments\n";
+
+    Ldx::Writer writer;
+    Ldx::Track first;
+    first.kind = Ldx::Kind::Tbc;
+    first.number = 1;
+    writer.addTrack(first);
+    Ldx::Track third;
+    third.kind = Ldx::Kind::Tbc;
+    third.number = 3;           // 2 was removed
+    writer.addTrack(third);
+    Ldx::Track next;
+    next.kind = Ldx::Kind::Pcm;
+    writer.addTrack(next);
+    CHECK(next.number == 4);
+    writer.setNextTrackId(7);   // 5 and 6 were removed too
+    writer.addAttachment("session.stack", "application/json", "{\"version\":1}");
+    writer.addAttachment("notes.txt", "text/plain", QByteArray(100000, 'x'));
+
+    QString error;
+    CHECK(writer.open(path, error));
+    CHECK(writer.writeBlock(3, 0, pattern(100, 1)));
+    CHECK(!writer.writeBlock(2, 0, pattern(100, 1)));      // there is no track 2
+    CHECK(writer.finish(error));
+
+    Ldx::Reader reader;
+    CHECK(reader.open(path, error));
+    const QVector<Ldx::Track> tracks = reader.tracks();
+    CHECK(tracks.size() == 3);
+    CHECK(tracks[0].number == 1 && tracks[1].number == 3 && tracks[2].number == 4);
+    CHECK(reader.nextTrackId() == 7);
+    const auto attachments = reader.attachments();
+    CHECK(attachments.size() == 2);
+    CHECK(attachments[0].name == "session.stack" && attachments[0].mediaType == "application/json");
+    CHECK(attachments[0].data == "{\"version\":1}");
+    CHECK(attachments[1].name == "notes.txt" && attachments[1].data == QByteArray(100000, 'x'));
+    Ldx::Block block;
+    CHECK(reader.nextBlock(block) && block.track == 3 && block.data == pattern(100, 1));
+    CHECK(!reader.nextBlock(block));
+}
+
 static void testNotAnLdxFile(const QString &path)
 {
     std::cerr << "Testing a file that is not an LDX file\n";
@@ -160,6 +204,7 @@ int main(int argc, char *argv[])
 
     testBlockSizes(directory.path());
     testRoundTrip(directory.filePath("test.ldx"));
+    testIdsAndAttachments(directory.filePath("ids.ldx"));
     testNotAnLdxFile(directory.filePath("garbage.ldx"));
 
     std::cerr << "All tests passed\n";

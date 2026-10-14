@@ -81,7 +81,8 @@ bool StackProject::load(const QString &fileName, QString &error)
         const QJsonObject object = value.toObject();
         StackSource source;
         source.file = fromStored(object.value("file").toString(), base);
-        if (source.file.isEmpty()) continue;
+        source.track = object.value("track").toInt(0);
+        if (source.file.isEmpty() && source.track < 1) continue;
         source.id = object.value("id").toString();
         if (source.id.isEmpty() || loaded.indexOfSource(source.id) >= 0) source.id = loaded.newSourceId();
         source.label = object.value("label").toString();
@@ -133,7 +134,8 @@ bool StackProject::save(const QString &fileName, QString &error) const
     for (const StackSource &source: sources) {
         QJsonObject object;
         object["id"] = source.id;
-        object["file"] = toStored(source.file, base);
+        if (source.track > 0) object["track"] = source.track;
+        if (!source.file.isEmpty() || source.track < 1) object["file"] = toStored(source.file, base);
         if (!source.label.isEmpty()) object["label"] = source.label;
         object["enabled"] = source.enabled;
         object["offset"] = source.offset;

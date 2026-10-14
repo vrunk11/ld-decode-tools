@@ -18,6 +18,7 @@
 struct StackSource {
     QString id;            // names the source in the session; kept when the sources are reordered
     QString file;          // absolute path in memory, relative to the session file in the file
+    qint32 track = 0;      // in a session kept in an LDX file: the id of the track that is the source (and then there is no file)
     QString label;
     bool enabled = true;   // an off source stays in the list but is left out of the stack
     qint32 offset = 0;     // the source is shifted by this many frames to align it with the others

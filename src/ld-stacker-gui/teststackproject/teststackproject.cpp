@@ -81,6 +81,24 @@ int main(int argc, char *argv[])
     CHECK(loaded.selected == "b");
     CHECK(!loaded.showStack);
 
+    // In a session kept in an LDX file a source is a track of that file, and has no path
+    StackProject embedded;
+    StackSource t1;
+    t1.id = "a";
+    t1.track = 1;
+    StackSource t3;
+    t3.id = "b";
+    t3.track = 3;
+    t3.offset = 4;
+    embedded.sources = { t1, t3 };
+    CHECK(embedded.save(fileName, error));
+    StackProject embeddedLoaded;
+    CHECK(embeddedLoaded.load(fileName, error));
+    CHECK(embeddedLoaded.sources.size() == 2);
+    CHECK(embeddedLoaded.sources[0].track == 1 && embeddedLoaded.sources[0].file.isEmpty());
+    CHECK(embeddedLoaded.sources[1].track == 3 && embeddedLoaded.sources[1].offset == 4);
+    CHECK(!project.sources.isEmpty() && project.sources[0].track == 0);
+
     // Auto is the mode when there is none
     project.stacking.mode = -1;
     CHECK(project.save(fileName, error));

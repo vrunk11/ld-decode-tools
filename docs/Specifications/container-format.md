@@ -56,8 +56,9 @@ A block carries the data of one unit and is stamped with the time of the unit (t
 
 **Adding and removing a stream.** A tool can add a stream to a file, or remove the stream with the id *x*:
 
-- *Adding* gives the new track the next free id. In a file that is already written the list of tracks has free space (padding) reserved after it so that a track can be added without moving the data.
-- *Removing* leaves the id unused. A removed track is first only disabled (its blocks stay in the file and readers skip it). Its space is given back when the file is compacted, by writing the file again without it.
+- *Adding* gives the new track the next free id. The first implementation writes the file again with the new track (the blocks of the other tracks are copied and merged by time with the new ones). Free space (padding) is kept after the list of tracks so that a later version can add a track without moving the data.
+- *Removing* writes the file again without the track and its blocks. The id of a removed track is never given to another track: the tag `LDX_NEXT_TRACK_ID` holds the next id to give, and it only goes up.
+- A metadata or annotation track says which track it is about in its parameters (`"track": id`), so that each capture of a file has its own ld-decode metadata. Removing a track removes the metadata tracks that are about it.
 - A `.stack` session, a metadata block or an annotation that refers to a removed id is not valid, and the tool that removes the stream must say so (or remove them with it).
 
 The parameters of a track are those the tools already use: video system, sample rate, field width and height, the position of the active region, the black, white and blanking levels, the order of the fields. They are the fields of the existing `videoParameters` where they exist.
@@ -114,7 +115,9 @@ A tool that reads a file or a pipe and writes another **copies the tracks and bl
 
 ## 10. Embedded `.stack`
 
-A stacking session can be an attachment named `session.stack`. Its sources, instead of paths, are the numbers of tracks of the same file, so that one file holds both the data and the way they are stacked. A `.stack` file on its own keeps working unchanged.
+A stacking session can be an attachment named `session.stack` (media type `application/json`), in the format of the `.stack` files. Each of its sources names **a track of the same file by its id** (`"track": 2`) instead of a path, so that the session does not depend on where any file is on a disk, and the file can be moved, shared or renamed. One file then holds the captures (the sources of a stack, or several captures of the same VHS tape) and the way they are stacked.
+
+A source of an embedded session has either a `track` or a `file` (a path, relative to where the `.ldx` file is, for a capture kept outside). A tool that adds or removes a stream updates the session: a removed track is taken out of its sources, and the tool says so. A `.stack` file on its own keeps working unchanged, and a session can be taken out of a file and put back.
 
 ## 11. Reading rules
 

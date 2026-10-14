@@ -14,6 +14,7 @@
 #include <QRandomGenerator>
 
 #include <deque>
+#include <map>
 #include <vector>
 
 #include <ebml/EbmlHead.h>
@@ -21,6 +22,8 @@
 #include <ebml/EbmlSubHead.h>
 #include <ebml/EbmlVoid.h>
 #include <ebml/StdIOCallback.h>
+#include <matroska/KaxAttached.h>
+#include <matroska/KaxAttachments.h>
 #include <matroska/KaxBlock.h>
 #include <matroska/KaxCluster.h>
 #include <matroska/KaxCues.h>
@@ -128,7 +131,14 @@ struct Writer::Private
     std::unique_ptr<StdIOCallback> output;
     std::unique_ptr<KaxSegment> segment;
     KaxTracks *trackList = nullptr;
-    std::vector<KaxTrackEntry *> entries;
+    std::map<quint32, KaxTrackEntry *> entries;            // by the id (number) of the track
+    quint32 nextId = 1;                                    // the id the next track gets
+    struct Attached {
+        QString name;
+        QString mediaType;
+        QByteArray data;
+    };
+    std::vector<Attached> attachments;
     KaxCues cues;
 
     KaxCluster *cluster = nullptr;
@@ -160,10 +170,25 @@ Writer::~Writer()
 
 void Writer::addTrack(Track &track)
 {
-    // The ids are the numbers of the tracks, from 1, never reused in a file
-    track.number = d->tracks.size() + 1;
+    // The ids are the numbers of the tracks, from 1, never reused in a file. A track that comes from another
+    // file keeps its id.
+    for (const Track &existing: d->tracks) {
+        if (existing.number == track.number) track.number = 0;      // a copy of a track of this file gets an id of its own
+    }
+    if (track.number == 0) track.number = d->nextId;
+    if (track.number >= d->nextId) d->nextId = track.number + 1;
     if (track.uid == 0) track.uid = QRandomGenerator::global()->generate64() | 1;
     d->tracks.append(track);
+}
+
+void Writer::setNextTrackId(quint32 id)
+{
+    d->nextId = qMax(d->nextId, id);
+}
+
+void Writer::addAttachment(const QString &name, const QString &mediaType, const QByteArray &data)
+{
+    d->attachments.push_back({ name, mediaType, data });
 }
 
 void Writer::setHistory(const QJsonArray &entries)
@@ -203,7 +228,7 @@ bool Writer::open(const QString &fileName, QString &error)
         for (const Track &track: d->tracks) {
             KaxTrackEntry &entry = previous ? GetNextChild<KaxTrackEntry>(*d->trackList, *previous) : GetChild<KaxTrackEntry>(*d->trackList);
             previous = &entry;
-            d->entries.push_back(&entry);
+            d->entries[track.number] = &entry;
 
             GetChild<KaxTrackNumber>(entry).SetValue(track.number);
             GetChild<KaxTrackUID>(entry).SetValue(track.uid);
@@ -239,7 +264,23 @@ bool Writer::open(const QString &fileName, QString &error)
         KaxTagSimple *simple = nullptr;
         setSimpleTag(tag, simple, "LDX_PROFILE", QByteArray::number(ProfileVersion));
         setSimpleTag(tag, simple, "LDX_HISTORY", QJsonDocument(d->history).toJson(QJsonDocument::Compact));
+        setSimpleTag(tag, simple, "LDX_NEXT_TRACK_ID", QByteArray::number(d->nextId));
         tags.Render(*d->output, false);
+
+        // The files kept in the file
+        if (!d->attachments.empty()) {
+            KaxAttachments &attachments = GetChild<KaxAttachments>(*d->segment);
+            KaxAttached *previousFile = nullptr;
+            for (const Private::Attached &file: d->attachments) {
+                KaxAttached &attached = previousFile ? GetNextChild<KaxAttached>(attachments, *previousFile) : GetChild<KaxAttached>(attachments);
+                previousFile = &attached;
+                GetChild<KaxFileName>(attached).SetValueUTF8(file.name.toUtf8().constData());
+                GetChild<KaxMimeType>(attached).SetValue(file.mediaType.toLatin1().constData());
+                GetChild<KaxFileUID>(attached).SetValue(QRandomGenerator::global()->generate64() | 1);
+                GetChild<KaxFileData>(attached).CopyBuffer(reinterpret_cast<const binary *>(file.data.constData()), file.data.size());
+            }
+            attachments.Render(*d->output, false);
+        }
 
         d->cues.SetGlobalTimecodeScale(TimecodeScaleNs);
     } catch (const std::exception &exception) {
@@ -251,7 +292,7 @@ bool Writer::open(const QString &fileName, QString &error)
 
 bool Writer::writeBlock(quint32 track, qint64 timeNs, const QByteArray &data)
 {
-    if (!d->output || track < 1 || track > d->entries.size() || timeNs < 0) return false;
+    if (!d->output || !d->entries.count(track) || timeNs < 0) return false;
     try {
         if (d->cluster && timeNs - d->clusterStartNs >= ClusterSpanNs) d->flushCluster();
         if (!d->cluster) {
@@ -268,7 +309,7 @@ bool Writer::writeBlock(quint32 track, qint64 timeNs, const QByteArray &data)
         auto *buffer = new DataBuffer(reinterpret_cast<binary *>(kept.data()), static_cast<uint32>(kept.size()));
         KaxBlockGroup *block = nullptr;
         // Without lacing the block takes the one frame and says that it is full (false), which is not a failure
-        d->cluster->AddFrame(*d->entries[track - 1], static_cast<uint64>(timeNs), *buffer, block, LACING_NONE);
+        d->cluster->AddFrame(*d->entries[track], static_cast<uint64>(timeNs), *buffer, block, LACING_NONE);
         return true;
     } catch (const std::exception &exception) {
         d->error = QString::fromLocal8Bit(exception.what());
@@ -313,6 +354,8 @@ struct Reader::Private
     int profileValue = 0;
     QVector<Track> trackList;
     QJsonArray historyValue;
+    quint32 nextIdValue = 0;
+    QVector<Attachment> attachmentList;
     uint64 timecodeScale = 1000000;            // Matroska default
     std::deque<Block> queue;
 
@@ -360,7 +403,21 @@ struct Reader::Private
                 const QByteArray text = QByteArray(value->GetValueUTF8().c_str());
                 if (key == QLatin1String("LDX_PROFILE")) profileValue = text.toInt();
                 if (key == QLatin1String("LDX_HISTORY")) historyValue = QJsonDocument::fromJson(text).array();
+                if (key == QLatin1String("LDX_NEXT_TRACK_ID")) nextIdValue = static_cast<quint32>(text.toUInt());
             }
+        }
+    }
+
+    void readAttachments(KaxAttachments &attachments)
+    {
+        for (EbmlElement *element: attachments.GetElementList()) {
+            if (EbmlId(*element) != EBML_ID(KaxAttached)) continue;
+            KaxAttached &attached = *static_cast<KaxAttached *>(element);
+            Attachment file;
+            if (auto *name = FindChild<KaxFileName>(attached)) file.name = QString::fromUtf8(name->GetValueUTF8().c_str());
+            if (auto *type = FindChild<KaxMimeType>(attached)) file.mediaType = QString::fromLatin1(type->GetValue().c_str());
+            if (auto *data = FindChild<KaxFileData>(attached)) file.data = QByteArray(reinterpret_cast<const char *>(data->GetBuffer()), static_cast<int>(data->GetSize()));
+            attachmentList.append(file);
         }
     }
 
@@ -444,6 +501,9 @@ bool Reader::open(const QString &fileName, QString &error)
             } else if (EbmlId(*element) == EBML_ID(KaxTags)) {
                 element->Read(*d->stream, EBML_CONTEXT(element), up, dummy, true);
                 d->readTags(*static_cast<KaxTags *>(element));
+            } else if (EbmlId(*element) == EBML_ID(KaxAttachments)) {
+                element->Read(*d->stream, EBML_CONTEXT(element), up, dummy, true);
+                d->readAttachments(*static_cast<KaxAttachments *>(element));
             } else {
                 element->SkipData(*d->stream, EBML_CONTEXT(element));
             }
@@ -460,6 +520,13 @@ bool Reader::open(const QString &fileName, QString &error)
 int Reader::profile() const { return d->profileValue; }
 QVector<Track> Reader::tracks() const { return d->trackList; }
 QJsonArray Reader::history() const { return d->historyValue; }
+QVector<Reader::Attachment> Reader::attachments() const { return d->attachmentList; }
+quint32 Reader::nextTrackId() const
+{
+    quint32 next = d->nextIdValue;
+    for (const Track &track: d->trackList) next = qMax(next, track.number + 1);
+    return next;
+}
 
 bool Reader::nextBlock(Block &block)
 {
@@ -479,6 +546,9 @@ bool Reader::nextBlock(Block &block)
             } else if (EbmlId(*element) == EBML_ID(KaxTags)) {
                 element->Read(*d->stream, EBML_CONTEXT(element), up, dummy, true);
                 d->readTags(*static_cast<KaxTags *>(element));
+            } else if (EbmlId(*element) == EBML_ID(KaxAttachments)) {
+                element->Read(*d->stream, EBML_CONTEXT(element), up, dummy, true);
+                d->readAttachments(*static_cast<KaxAttachments *>(element));
             } else {
                 element->SkipData(*d->stream, EBML_CONTEXT(element));
             }
