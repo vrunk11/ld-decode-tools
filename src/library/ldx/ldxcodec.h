@@ -55,6 +55,49 @@ private:
     std::unique_ptr<Private> d;
 };
 
+// FFV1 for the frames of a track of CVBS samples (10 bits, in 16-bit words). A frame is an image as wide as a line, with the rows
+// that fit; when the last row is not whole it is filled up (a PAL frame has 709,379 samples: 625 lines and 4 samples, so 626 rows).
+bool ffv1Available();
+
+// The rows of the image of a frame of `samples` samples in lines of `width`
+inline int ffv1Height(qint64 samples, int width)
+{
+    return static_cast<int>((samples + width - 1) / width);
+}
+
+// A frame (little-endian 16-bit words) as the words of an image of width * height, the end filled with padValue
+QByteArray ffv1Pad(const QByteArray &samples, int width, int height, quint16 padValue);
+// And back: the first `samples` words of an image
+QByteArray ffv1Unpad(const QByteArray &image, qint64 samples);
+
+class Ffv1Encoder
+{
+public:
+    Ffv1Encoder();
+    ~Ffv1Encoder();
+    bool open(int width, int height, QString &error);
+    QByteArray extradata() const;                 // the decoder is given it first (the CodecPrivate of the track)
+    // An image of width * height words as one packet, every one a key frame
+    bool encode(const QByteArray &image, QByteArray &packet, QString &error);
+
+private:
+    struct Private;
+    std::unique_ptr<Private> d;
+};
+
+class Ffv1Decoder
+{
+public:
+    Ffv1Decoder();
+    ~Ffv1Decoder();
+    bool open(int width, int height, const QByteArray &extradata, QString &error);
+    bool decode(const QByteArray &packet, QByteArray &image, QString &error);
+
+private:
+    struct Private;
+    std::unique_ptr<Private> d;
+};
+
 } // namespace Ldx
 
 #endif // LDXCODEC_H
