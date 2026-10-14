@@ -37,6 +37,7 @@
 #include "sourcevideo.h"
 #include "stackingpool.h"
 #include "stackproject.h"
+#include "ldxstream.h"
 
 int main(int argc, char *argv[])
 {
@@ -307,11 +308,20 @@ int main(int argc, char *argv[])
     // Get the output TBC (should be the last argument of the command line
     outputFilename = positionalArguments.at(positionalArguments.count() - 1);
 
-    // If the first input filename is "-" (piped input) - verify a metadata file has been specified
-    if (inputFilenames[0] == "-" && !metadataOptions.isInputFileSet()) {
-        // Quit with error
-        qCritical("With piped input, you must also specify the input metadata file with --input-metadata");
-        return -1;
+    // If the first input filename is "-" (piped input), it is an LDX stream (it brings its own metadata), unless the input
+    // metadata file is given, for the video of a stream that has none
+    bool ldxInput = false;
+    if (inputFilenames[0] == "-") {
+        if (!metadataOptions.isInputFileSet()) {
+            QString streamError;
+            if (!LdxStream::openStdin(streamError)) {
+                qCritical().noquote() << streamError;
+                qCritical("With piped video that is not an LDX stream, you must also specify the input metadata file with --input-metadata");
+                return -1;
+            }
+            ldxInput = true;
+            qInfo().noquote() << "The first source is an LDX stream that holds" << (LdxStream::instance()->isCvbs() ? "CVBS" : "TBC") << "video";
+        }
     }
 
     // If the output filename is "-" (piped output) - verify a metadata file has been specified
@@ -380,11 +390,20 @@ int main(int argc, char *argv[])
     for (qint32 i = 0; i < totalNumberOfInputFiles; i++) {
         // Work out the metadata filename
         QString metadataFilename;
-        if (!metadataOptions.selectInput(inputFilenames[i], i == 0, metadataFilename)) return -1;
+        if (i == 0 && ldxInput) metadataFilename = "the LDX stream";
+        else if (!metadataOptions.selectInput(inputFilenames[i], i == 0, metadataFilename)) return -1;
         qInfo().nospace().noquote() << "Reading input #" << i << " metadata from " << metadataFilename;
 
-        // Open it
-        if (!ldDecodeMetaData[i]->read(metadataFilename)) {
+        // Open it (the metadata of an LDX stream are those it began with: stacking needs them for the whole of the source
+        // before it begins, so a stream whose metadata come field by field cannot be stacked)
+        if (i == 0 && ldxInput) {
+            QString streamError;
+            if (!LdxStream::instance()->readMetadata(*ldDecodeMetaData[0], streamError) || ldDecodeMetaData[0]->getNumberOfFields() == 0) {
+                qCritical("The LDX stream does not send the metadata of all its fields before its video. Stacking needs them, with the VBI "
+                          "and the mapping: pack the capture with its whole metadata (ld-container pack) or use a file");
+                return -1;
+            }
+        } else if (!ldDecodeMetaData[i]->read(metadataFilename)) {
             qCritical() << "Unable to open TBC metadata file - cannot continue";
             return -1;
         }

@@ -82,3 +82,7 @@ A session can also be read without stacking it to a file: ld-analyse opens a `.s
 ## LDX files
 
 An LDX file (see [the container format](../Specifications/container-format.md)) can be opened where a TBC file is: `capture.ldx` is the capture it holds (or the stack of the session it keeps), and `capture.ldx#3` is the track 3 of a file that holds several captures. The fields and the metadata are read from the file, and nothing is written to it.
+
+### From a pipe
+
+The first source can be `-`, an LDX stream on the standard input (`ld-container pack capture.tbc -o - | ld-disc-stacker - other.tbc out.tbc`), without `--input-metadata`: the video and the metadata come from the stream. Stacking needs the metadata of all the fields (VBI and mapping) before the video, so a stream whose metadata come field by field is refused; pack the capture with its whole metadata. The output is a TBC file.

@@ -9,6 +9,7 @@ add_library(lddecode-library STATIC
     tbc/fmcode.cpp
     tbc/jsonio.cpp
     tbc/ldxcapture.cpp
+    tbc/ldxfilter.cpp
     tbc/ldxstream.cpp
     tbc/sqliteio.cpp
     tbc/lddecodemetadata.cpp
