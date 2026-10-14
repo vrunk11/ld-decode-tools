@@ -108,7 +108,7 @@ private:
     QString sourceTitle(const StackSource &source) const;
     qint32 referenceIndex() const;                 // the first source that is on and loaded: the others line up with it
     qint32 effectiveOffset(qint32 index) const;    // its offset, 0 for the reference
-    float sourceSnr(const SourceState &state, qint32 frame, qint32 offset, bool &known) const;
+    float sourceSnr(const SourceState &state, qint32 frame, qint32 offset, bool &known, bool *black = nullptr) const;
 
     StackProject project;
     QString sessionFile;
