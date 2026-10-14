@@ -26,10 +26,12 @@
 #include <QTextStream>
 
 #include <map>
+#include <functional>
 #include <memory>
 #include <vector>
 
 #include "ldx.h"
+#include "cvbs.h"
 #include "lddecodemetadata.h"
 #include "tbc/logging.h"
 
@@ -107,29 +109,35 @@ private:
     bool done = false;
 };
 
-// The fields of a TBC file, from a field on
+// The fields of a TBC file, or the frames of a CVBS file (which are two fields each, and whose samples are given as
+// 10-bit values), from a field on
 class FieldSource : public BlockSource
 {
 public:
-    FieldSource(QFile &file, quint32 track, VideoSystem system, qint64 fieldBytes, qint64 start, qint64 fields)
-        : file(file), track(track), system(system), fieldBytes(fieldBytes), start(start), fields(fields)
+    using Convert = std::function<QByteArray(const QByteArray &)>;
+
+    FieldSource(QFile &file, quint32 track, VideoSystem system, qint64 unitBytes, qint64 start, qint64 fields,
+                int unitFields = 1, Convert convert = Convert())
+        : file(file), track(track), system(system), unitBytes(unitBytes), start(start), unitFields(unitFields),
+          units(fields / unitFields), convert(std::move(convert))
     {
-        file.seek(start * fieldBytes);
+        file.seek((start / unitFields) * unitBytes);
         firstTime = fieldTimeNs(start, system);
     }
-    qint64 endTimeNs() const { return fieldTimeNs(start + fields, system) - firstTime; }
-    qint64 written() const { return index; }
+    qint64 endTimeNs() const { return fieldTimeNs(start + units * unitFields, system) - firstTime; }
+    qint64 written() const { return index * unitFields; }
 
     bool peek(Ldx::Block &block) override
     {
-        if (index >= fields) return false;
+        if (index >= units) return false;
         if (!loaded) {
-            data = file.read(fieldBytes);
-            if (data.size() != fieldBytes) { fields = index; return false; }
+            data = file.read(unitBytes);
+            if (data.size() != unitBytes) { units = index; return false; }
+            if (convert) data = convert(data);
             loaded = true;
         }
         block.track = track;
-        block.timeNs = fieldTimeNs(start + index, system) - firstTime;
+        block.timeNs = fieldTimeNs(start + index * unitFields, system) - firstTime;
         block.data = data;
         return true;
     }
@@ -139,7 +147,10 @@ private:
     QFile &file;
     quint32 track;
     VideoSystem system;
-    qint64 fieldBytes, start, fields;
+    qint64 unitBytes, start;
+    int unitFields;
+    qint64 units;
+    Convert convert;
     qint64 firstTime = 0, index = 0;
     QByteArray data;
     bool loaded = false;
@@ -253,7 +264,10 @@ struct Capture {
     bool hasAudio = false;
     QByteArray metadataJson;
     VideoSystem system = PAL;
-    qint64 fieldBytes = 0;
+    bool cvbs = false;                      // the frames of a CVBS file, and not the fields of a TBC
+    qint64 unitBytes = 0;                   // what is read from the file for a block: a field, or a frame
+    int unitFields = 1;                     // and how many fields that is
+    std::function<QByteArray(const QByteArray &)> convert;
     qint64 start = 0;
     qint64 fields = 0;
     double pcmRate = 44100;
@@ -268,7 +282,20 @@ void addCaptureOptions(QCommandLineParser &parser)
     parser.addOption(QCommandLineOption("start", "First field to pack (default 0)", "field", "0"));
     parser.addOption(QCommandLineOption("fields", "Number of fields to pack (default all)", "count", "0"));
     parser.addOption(QCommandLineOption("name", "Name of the capture (default: the name of the file)", "name"));
-    parser.addOption(QCommandLineOption("codec", "How the video and the audio are kept: raw (default) or flac", "codec", "raw"));
+    parser.addOption(QCommandLineOption("codec", "How the video and the audio are kept: raw (default), flac (TBC and audio), ffv1 (CVBS), or auto (the best for each)", "codec", "raw"));
+}
+
+// The codec a track of a kind is kept in, for the codec asked for: raw; flac for the tracks of 16-bit samples; ffv1 for CVBS;
+// auto, the best for each. A codec that is for other tracks leaves this one raw.
+bool codecFor(const QString &asked, Ldx::Kind kind, Ldx::Codec &codec)
+{
+    const bool sixteen = kind == Ldx::Kind::Tbc || kind == Ldx::Kind::Rf || kind == Ldx::Kind::Pcm;
+    codec = Ldx::Codec::Raw;
+    if (asked == "raw") return true;
+    if (asked == "auto") { codec = sixteen ? Ldx::Codec::Flac : (kind == Ldx::Kind::Cvbs ? Ldx::Codec::Ffv1 : Ldx::Codec::Raw); return true; }
+    if (asked == "flac") { if (sixteen) codec = Ldx::Codec::Flac; return true; }
+    if (asked == "ffv1") { if (kind == Ldx::Kind::Cvbs) codec = Ldx::Codec::Ffv1; return true; }
+    return false;
 }
 
 struct CaptureOptions {
@@ -304,7 +331,41 @@ bool readCapture(const CaptureOptions &options, const QString &input, Capture &c
     }
     const LdDecodeMetaData::VideoParameters &video = metadata.getVideoParameters();
     capture.system = video.system;
-    capture.fieldBytes = static_cast<qint64>(video.fieldWidth) * video.fieldHeight * 2;
+    capture.cvbs = Cvbs::isDataFileName(input);
+    if (capture.cvbs && Cvbs::channel(input) != Cvbs::Channel::Composite) {
+        err << "Only the composite CVBS files (.cvbs) can be packed, and not " << input << "\n";
+        return false;
+    }
+
+    // What a unit of the video is: a field of a TBC, or a frame of CVBS (two fields) with its samples in 10 bits
+    Cvbs::Geometry geometry;
+    Cvbs::SampleEncoding encoding = Cvbs::SampleEncoding::U10_4FSC;
+    if (capture.cvbs) {
+        geometry = Cvbs::geometry(video.system);
+        if (geometry.fieldLength() != static_cast<qint32>(video.fieldWidth * video.fieldHeight)) {
+            err << "The metadata of " << input << " are not those of a " << Cvbs::presetName(video.system) << " capture\n";
+            return false;
+        }
+        const QString coreMetadata = Cvbs::metaFileName(input);
+        if (QFileInfo::exists(coreMetadata)) {
+            Cvbs::FileMetadata fileMetadata;
+            if (fileMetadata.read(coreMetadata)) encoding = fileMetadata.sampleEncoding;
+        }
+        capture.unitBytes = geometry.frameSamples * 2;
+        capture.unitFields = 2;
+        const auto converter = std::make_shared<Cvbs::SampleConverter>(encoding, video.system);
+        const qint64 samples = geometry.frameSamples;
+        capture.convert = [converter, samples](const QByteArray &stored) {
+            // The 10-bit value of each sample, in a word: what the 16-bit TBC domain is, divided by 64
+            QByteArray values(static_cast<int>(samples * 2), 0);
+            const qint16 *source = reinterpret_cast<const qint16 *>(stored.constData());
+            quint16 *target = reinterpret_cast<quint16 *>(values.data());
+            for (qint64 i = 0; i < samples; i++) target[i] = static_cast<quint16>(converter->toTbc(source[i]) >> 6);
+            return values;
+        };
+    } else {
+        capture.unitBytes = static_cast<qint64>(video.fieldWidth) * video.fieldHeight * 2;
+    }
 
     capture.tbc.reset(new QFile(input));
     if (!capture.tbc->open(QIODevice::ReadOnly)) {
@@ -312,8 +373,16 @@ bool readCapture(const CaptureOptions &options, const QString &input, Capture &c
         return false;
     }
     capture.start = options.start;
-    capture.fields = capture.tbc->size() / capture.fieldBytes - capture.start;
+    capture.fields = (capture.tbc->size() / capture.unitBytes) * capture.unitFields - capture.start;
     if (options.fields > 0) capture.fields = qMin(capture.fields, options.fields);
+    if (capture.cvbs) {
+        // (whole frames)
+        if (capture.start % 2 != 0) {
+            err << "A CVBS capture is packed from a frame: --start is a number of fields, and must be even\n";
+            return false;
+        }
+        capture.fields -= capture.fields % 2;
+    }
     if (capture.fields < 1) {
         err << "There is nothing to pack in " << input << "\n";
         return false;
@@ -351,19 +420,27 @@ bool readCapture(const CaptureOptions &options, const QString &input, Capture &c
     capture.metadataJson = jsonFile.readAll();
 
     const QString name = !options.name.isEmpty() ? options.name : QFileInfo(input).fileName();
-    const Ldx::Codec codec = Ldx::codecFromName(options.codec);
-    if (codec != Ldx::Codec::Raw && codec != Ldx::Codec::Flac) {
-        err << "The codec of the video and the audio is raw or flac, and not " << options.codec << "\n";
+    Ldx::Codec videoCodec, audioCodec;
+    const Ldx::Kind videoKind = capture.cvbs ? Ldx::Kind::Cvbs : Ldx::Kind::Tbc;
+    if (!codecFor(options.codec, videoKind, videoCodec) || !codecFor(options.codec, Ldx::Kind::Pcm, audioCodec)) {
+        err << "The codec is raw, flac, ffv1 or auto, and not " << options.codec << "\n";
         return false;
     }
-    capture.video.kind = Ldx::Kind::Tbc;
-    capture.video.depth = 16;
-    capture.video.codec = codec;
+    capture.video.kind = videoKind;
+    capture.video.depth = capture.cvbs ? 10 : 16;
+    capture.video.codec = videoCodec;
     capture.video.name = name;
     capture.video.parameters["system"] = systemName(video.system);
     capture.video.parameters["sampleRate"] = video.sampleRate;
     capture.video.parameters["fieldWidth"] = video.fieldWidth;
     capture.video.parameters["fieldHeight"] = video.fieldHeight;
+    if (capture.cvbs) {
+        // What a frame is (the length of a line, and its samples) is what the codec needs, and what is needed to give the file back
+        capture.video.parameters["lineWidth"] = geometry.lineWidth;
+        capture.video.parameters["frameSamples"] = static_cast<double>(geometry.frameSamples);
+        capture.video.parameters["sampleEncoding"] = Cvbs::sampleEncodingName(encoding);
+        capture.video.parameters["padValue"] = Cvbs::standardLevels(video.system).blanking;
+    }
 
     capture.metadata.kind = Ldx::Kind::Metadata;
     capture.metadata.depth = 0;
@@ -381,7 +458,7 @@ bool readCapture(const CaptureOptions &options, const QString &input, Capture &c
         capture.pcmRate = options.pcmRate;
         capture.audio.kind = Ldx::Kind::Pcm;
         capture.audio.depth = 16;
-        capture.audio.codec = codec;
+        capture.audio.codec = audioCodec;
         capture.audio.name = QFileInfo(capture.pcm->fileName()).fileName();
         capture.audio.parameters["sampleRate"] = capture.pcmRate;
         capture.audio.parameters["channels"] = 2;
@@ -540,7 +617,7 @@ int pack(const QStringList &arguments)
     }
 
     OnceSource metadata(capture.metadata.number, capture.metadataJson);
-    FieldSource fields(*capture.tbc, capture.video.number, capture.system, capture.fieldBytes, capture.start, capture.fields);
+    FieldSource fields(*capture.tbc, capture.video.number, capture.system, capture.unitBytes, capture.start, capture.fields, capture.unitFields, capture.convert);
     PcmSource pcm(capture.hasAudio ? *capture.pcm : *capture.tbc, capture.audio.number, capture.pcmRate, fields.endTimeNs());
     std::vector<BlockSource *> sources { &metadata, &fields };
     if (capture.hasAudio) sources.push_back(&pcm);
@@ -603,7 +680,7 @@ int addStream(const QStringList &arguments)
     }
     LdxSource old(rewrite.reader, {});
     OnceSource metadata(capture.metadata.number, capture.metadataJson);
-    FieldSource fields(*capture.tbc, capture.video.number, capture.system, capture.fieldBytes, capture.start, capture.fields);
+    FieldSource fields(*capture.tbc, capture.video.number, capture.system, capture.unitBytes, capture.start, capture.fields, capture.unitFields, capture.convert);
     PcmSource pcm(capture.hasAudio ? *capture.pcm : *capture.tbc, capture.audio.number, capture.pcmRate, fields.endTimeNs());
     std::vector<BlockSource *> sources { &old, &metadata, &fields };
     if (capture.hasAudio) sources.push_back(&pcm);
@@ -705,7 +782,7 @@ int setStack(const QStringList &arguments)
     parser.addPositionalArgument("session", "The .stack file");
     parser.addOption(QCommandLineOption({ "o", "output" }, "The LDX file to write", "file"));
     parser.addOption(QCommandLineOption("embed", "Bring the sources that are .tbc files into the LDX file, as tracks (the others stay links)"));
-    parser.addOption(QCommandLineOption("codec", "With --embed, how the video and the audio brought in are kept: raw (default) or flac", "codec", "raw"));
+    parser.addOption(QCommandLineOption("codec", "With --embed, how the video and the audio brought in are kept: raw (default), flac, ffv1 or auto", "codec", "raw"));
     parser.process(arguments);
     if (parser.positionalArguments().size() != 2 || !parser.isSet("output")) {
         err << parser.helpText();
@@ -779,13 +856,13 @@ int setStack(const QStringList &arguments)
             }
             object["file"] = outputDirectory.relativeFilePath(absolute);
             links++;
-        } else if (parser.isSet("embed") && absolute.endsWith(".tbc", Qt::CaseInsensitive)) {
-            // A .tbc: brought in as a track of this file, with its audio if a .pcm of the same name is beside it
+        } else if (parser.isSet("embed") && (absolute.endsWith(".tbc", Qt::CaseInsensitive) || absolute.endsWith(".cvbs", Qt::CaseInsensitive))) {
+            // A .tbc or .cvbs: brought in as a track of this file, with its audio if a .pcm of the same name is beside it
             CaptureOptions options;
             options.codec = parser.value("codec");
             options.name = object.value("label").toString().isEmpty() ? QFileInfo(absolute).fileName() : object.value("label").toString();
             const QString pcm = QFileInfo(absolute).dir().filePath(QFileInfo(absolute).completeBaseName() + ".pcm");
-            if (QFileInfo::exists(pcm)) options.pcm = pcm;
+            if (QFileInfo::exists(pcm) && !absolute.endsWith(".cvbs", Qt::CaseInsensitive)) options.pcm = pcm;
             auto capture = std::make_unique<Capture>();
             if (!readCapture(options, absolute, *capture)) return 1;
             addCaptureTracks(writer, *capture);
@@ -797,7 +874,7 @@ int setStack(const QStringList &arguments)
         } else {
             // A file outside this one: a link, kept as the path from where the LDX file is
             object["file"] = outputDirectory.relativeFilePath(absolute);
-            if (parser.isSet("embed")) out << "  " << QFileInfo(absolute).fileName() << " stays a link (only .tbc files can be embedded for now)\n";
+            if (parser.isSet("embed")) out << "  " << QFileInfo(absolute).fileName() << " stays a link (only .tbc and .cvbs files can be embedded for now)\n";
             links++;
         }
         newSources.append(object);
@@ -829,7 +906,7 @@ int setStack(const QStringList &arguments)
     for (const std::unique_ptr<Capture> &capture: embedded) {
         owned.push_back(std::make_unique<OnceSource>(capture->metadata.number, capture->metadataJson));
         sources.push_back(owned.back().get());
-        auto fields = std::make_unique<FieldSource>(*capture->tbc, capture->video.number, capture->system, capture->fieldBytes, capture->start, capture->fields);
+        auto fields = std::make_unique<FieldSource>(*capture->tbc, capture->video.number, capture->system, capture->unitBytes, capture->start, capture->fields, capture->unitFields, capture->convert);
         const qint64 end = fields->endTimeNs();
         sources.push_back(fields.get());
         owned.push_back(std::move(fields));
@@ -979,11 +1056,11 @@ int extractTrack(const QStringList &arguments)
 int recompress(const QStringList &arguments)
 {
     QCommandLineParser parser;
-    parser.setApplicationDescription("Keep the tracks of 16-bit samples (the TBC, the audio) of an LDX file as flac, or as raw again, without\n"
-                                     "changing what they hold. One track with --id, else all of them. The file is written again, to the output.");
+    parser.setApplicationDescription("Keep the tracks of samples of an LDX file as flac (the TBC and the audio), ffv1 (CVBS), or as raw again, or\n"
+                                     "as the best for each (auto), without changing what they hold. One track with --id, else all of them. The file is written again, to the output.");
     parser.addHelpOption();
     parser.addPositionalArgument("file", "The LDX file");
-    parser.addOption(QCommandLineOption("codec", "raw or flac", "codec"));
+    parser.addOption(QCommandLineOption("codec", "raw, flac, ffv1 or auto", "codec"));
     parser.addOption(QCommandLineOption("id", "Only the track with this id", "id"));
     parser.addOption(QCommandLineOption({ "o", "output" }, "The LDX file to write", "file"));
     parser.process(arguments);
@@ -991,9 +1068,10 @@ int recompress(const QStringList &arguments)
         err << parser.helpText();
         return 1;
     }
-    const Ldx::Codec codec = Ldx::codecFromName(parser.value("codec"));
-    if (codec != Ldx::Codec::Raw && codec != Ldx::Codec::Flac) {
-        err << "The codec is raw or flac\n";
+    const QString asked = parser.value("codec");
+    Ldx::Codec ignored;
+    if (!codecFor(asked, Ldx::Kind::Tbc, ignored)) {
+        err << "The codec is raw, flac, ffv1 or auto\n";
         return 1;
     }
     const QString source = parser.positionalArguments().first();
@@ -1007,13 +1085,17 @@ int recompress(const QStringList &arguments)
     if (!openForRewrite(rewrite, source)) return 1;
     int changed = 0;
     for (Ldx::Track &track: rewrite.tracks) {
-        const bool samples = track.kind == Ldx::Kind::Tbc || track.kind == Ldx::Kind::Rf || track.kind == Ldx::Kind::Pcm;
+        const bool samples = track.kind == Ldx::Kind::Tbc || track.kind == Ldx::Kind::Rf || track.kind == Ldx::Kind::Pcm || track.kind == Ldx::Kind::Cvbs;
         if (!samples || (parser.isSet("id") && track.number != parser.value("id").toUInt())) continue;
+        // (a codec that is for other tracks leaves this one as it is, except raw, which is for all)
+        Ldx::Codec codec;
+        codecFor(asked, track.kind, codec);
+        if (codec == Ldx::Codec::Raw && asked != "raw" && asked != "auto") continue;
         if (track.codec != codec) changed++;
         track.codec = codec;
     }
     if (parser.isSet("id") && changed == 0) {
-        err << "There is no track " << parser.value("id") << " of 16-bit samples to change in " << source << "\n";
+        err << "There is no track " << parser.value("id") << " of samples to change, for this codec, in " << source << "\n";
         return 1;
     }
 
@@ -1128,6 +1210,14 @@ int unpack(const QStringList &arguments)
     QDir().mkpath(directory.absolutePath());
     const QString base = QFileInfo(parser.positionalArguments().first()).completeBaseName();
 
+    struct CvbsOut {
+        VideoSystem system;
+        Cvbs::SampleEncoding encoding;
+        QString path;
+        qint64 frames;
+    };
+    std::map<quint32, std::shared_ptr<Cvbs::SampleConverter>> converters;
+    std::map<quint32, CvbsOut> cvbsTracks;
     std::map<quint32, std::unique_ptr<QFile>> files;
     for (const Ldx::Track &track: reader.tracks()) {
         QString suffix = ".bin";
@@ -1138,12 +1228,27 @@ int unpack(const QStringList &arguments)
         else if (track.kind == Ldx::Kind::Ac3) suffix = ".ac3";
         else if (track.kind == Ldx::Kind::Metadata) suffix = ".json";
         else if (track.kind == Ldx::Kind::Annotations) suffix = ".annotations.json";
-        // The files are told apart by the id of their track
-        const QString name = QString("%1.%2%3").arg(base).arg(track.number).arg(track.kind == Ldx::Kind::Metadata ? ".tbc" + suffix : suffix);
+        // The files are told apart by the id of their track. What is about a CVBS capture is named as its companion: <data file>.json
+        QString name = QString("%1.%2%3").arg(base).arg(track.number).arg(track.kind == Ldx::Kind::Metadata ? ".tbc" + suffix : suffix);
+        if (track.kind == Ldx::Kind::Metadata) {
+            const quint32 about = static_cast<quint32>(track.parameters.value("track").toInt(0));
+            for (const Ldx::Track &other: reader.tracks()) {
+                if (other.number == about && other.kind == Ldx::Kind::Cvbs) name = QString("%1.%2.cvbs.json").arg(base).arg(about);
+            }
+        }
         auto file = std::make_unique<QFile>(directory.filePath(name));
         if (!file->open(QIODevice::WriteOnly)) {
             err << "Could not write " << file->fileName() << "\n";
             return 1;
+        }
+        if (track.kind == Ldx::Kind::Cvbs) {
+            // The samples go back to the words the file had, whatever the encoding
+            const QString system = track.parameters.value("system").toString();
+            const VideoSystem videoSystem = system == "PAL" ? PAL : (system == "NTSC" ? NTSC : PAL_M);
+            Cvbs::SampleEncoding encoding = Cvbs::SampleEncoding::U10_4FSC;
+            Cvbs::parseSampleEncodingName(track.parameters.value("sampleEncoding").toString(), encoding);
+            converters[track.number] = std::make_shared<Cvbs::SampleConverter>(encoding, videoSystem);
+            cvbsTracks[track.number] = { videoSystem, encoding, directory.filePath(name), 0 };
         }
         out << "  track " << track.number << " -> " << name << "\n";
         files[track.number] = std::move(file);
@@ -1159,9 +1264,32 @@ int unpack(const QStringList &arguments)
     while (reader.nextBlock(block)) {
         const auto found = files.find(block.track);
         if (found == files.end()) continue;
-        if (keepLast.contains(block.track)) current[block.track] = block.data; else found->second->write(block.data);
+        if (keepLast.contains(block.track)) {
+            current[block.track] = block.data;
+        } else if (converters.count(block.track)) {
+            // The 10-bit values of a frame, as the words of the file
+            const auto converter = converters[block.track];
+            QByteArray words(block.data.size(), 0);
+            const quint16 *values = reinterpret_cast<const quint16 *>(block.data.constData());
+            qint16 *stored = reinterpret_cast<qint16 *>(words.data());
+            for (qint32 i = 0; i < block.data.size() / 2; i++) stored[i] = converter->fromTbc(static_cast<quint16>(values[i] << 6));
+            found->second->write(words);
+            cvbsTracks[block.track].frames++;
+        } else {
+            found->second->write(block.data);
+        }
     }
     for (const auto &kept: current) files[kept.first]->write(kept.second);
+
+    // The core metadata of a CVBS file, which says how its samples are kept
+    for (const auto &cvbs: cvbsTracks) {
+        files[cvbs.first]->close();
+        Cvbs::FileMetadata fileMetadata;
+        fileMetadata.system = cvbs.second.system;
+        fileMetadata.sampleEncoding = cvbs.second.encoding;
+        fileMetadata.numberOfFrames = static_cast<qint32>(cvbs.second.frames);
+        if (fileMetadata.write(Cvbs::metaFileName(cvbs.second.path))) out << "  core metadata of track " << cvbs.first << " -> " << QFileInfo(Cvbs::metaFileName(cvbs.second.path)).fileName() << "\n";
+    }
 
     for (const Ldx::Reader::Attachment &attachment: reader.attachments()) {
         QFile file(directory.filePath(QFileInfo(attachment.name).fileName()));
@@ -1195,7 +1323,7 @@ int main(int argc, char *argv[])
                "  stack    keep a stacking session in an .ldx file, its sources being tracks\n"
                "  unpack   write the tracks and attachments of an .ldx file out as separate files\n"
                "  info     show what an .ldx file holds\n"
-               "  recompress  keep the tracks of 16-bit samples as flac, or as raw again\n"
+               "  recompress  keep the tracks of samples as flac, ffv1 or raw\n"
                "  verify   check that every block of an .ldx file reads back the same, in order and by place\n"
                "  extract  write the data of one track as it is, to a file or to the standard output (to be piped)\n\n"
                "Use ld-container <command> --help for the options of a command.\n";

@@ -42,7 +42,7 @@ Each stream is a **Matroska track**. A track has a *kind*, a *bit depth* (the us
 | Kind | Content | Unit of a block | Depth |
 |---|---|---|---|
 | `tbc` | the fields of a TBC | one field | 16 |
-| `cvbs` | the fields of a CVBS capture, in the 10-bit domain of the CVBS specification | one field | 10 |
+| `cvbs` | the frames of a CVBS capture, their samples as 10-bit values (section 18) | one frame | 10 |
 | `rf` | RF samples | a fixed number of samples | 16 |
 | `pcm` | the analogue audio of the disc | a fixed number of samples | 16 |
 | `efm` | EFM t-values | one frame (variable size) | 8 |
@@ -170,7 +170,7 @@ The tools take an LDX file where they take a `.tbc`, and say which capture with 
 
 A source of a session that is a track of another file is the same name (`"file": "other.ldx", "track": 3` is `other.ldx#3`). The metadata of a capture are read from its metadata track, and the metadata of a session are those of its first source that is on, as for a `.stack` file. The tools do not write metadata into an LDX file: `ld-container` does.
 
-The first implementation reads `tbc` tracks that are raw or FLAC. A `cvbs` track and the FFV1 codec are refused with a message that names them until they are written.
+The first implementation reads `tbc` tracks that are raw or FLAC. A `cvbs` track is read as the fields of its frames (section 18); FFV1 needs ffmpeg.
 
 ## 16. Adding to a file in place
 
@@ -194,3 +194,13 @@ A track of 16-bit samples (`tbc`, `rf`, `pcm`) can be kept as FLAC (`"codec": "f
 - **Other programs**: `ffprobe` lists a FLAC track, and `ffmpeg` decodes it (`-af asetpts=N/SR/TB` to give the samples a continuous time, since a block holds more samples than its place in the file's time stands for).
 
 Measured on a NTSC capture, the tracks of the TBC and the audio together are about **69 to 71 %** of their raw size.
+
+## 18. CVBS and FFV1
+
+A capture of CVBS (a `.cvbs` file) is a track of kind `cvbs`: **a block is a frame** of the file, whose samples are given as **10-bit values in 16-bit words** (the CVBS_U10 encoding, whatever the encoding of the file the frame comes from; the encoding it had is in the parameters, so that the file can be given back as it was). The parameters of the track are the video system, `lineWidth` (the samples of a line), `frameSamples` (the samples of a frame: 477,750 for NTSC, 709,379 for PAL, 477,225 for PAL-M), `sampleEncoding`, and `padValue` (the blanking level).
+
+- **Raw**: the frame as 16-bit words, like the other tracks of samples.
+- **FFV1** (`"codec": "ffv1"`): a video track (`V_FFV1`, level 3, every frame a key frame, 10-bit grey), whose image is as wide as a line and has the rows that fit. **When the last row is not whole it is filled up with `padValue`**: a PAL frame is 625 lines and 4 samples, so its image has 626 rows (the frame is cut off again after it is decoded). NTSC and PAL-M frames fill their images. A player that knows Matroska shows the track as video of 910 x 525 (NTSC) or 1135 x 626 (PAL).
+- **What the tools read**: a cvbs track is read as the two fields of the TBC that a frame maps to, the way a `.cvbs` file is, so a capture of CVBS kept in an LDX file stacks, decodes and shows as one kept in a file. The result of a stack of captures of CVBS is CVBS (a `.cvbs` file), as for files.
+- **Measured** on a part of the NTSC capture kept as CVBS: the track as FFV1 is **34 %** of its size as raw samples, and `unpack` gives the `.cvbs` file back identical, byte for byte.
+- A Y/C pair (`.cvbsy`, `.cvbsc`) and the audio of a CVBS capture (WAV files) are not tracks yet.

@@ -226,5 +226,7 @@ QString StackProject::referenceFile(QString fileName)
         if (next.isEmpty()) return fileName;
         fileName = next;
     }
+    // A capture of CVBS kept in an LDX file has the format of a .cvbs file
+    if (LdxCapture::isLdxName(fileName) && LdxCapture::isCvbs(fileName)) return fileName + ".cvbs";
     return fileName;
 }

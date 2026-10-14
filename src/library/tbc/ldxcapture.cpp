@@ -20,6 +20,7 @@
 #ifdef LDDECODE_WITH_LDX
 #include "ldx.h"
 #include "ldxcodec.h"
+#include "cvbs.h"
 #endif
 
 namespace {
@@ -42,6 +43,14 @@ struct LdxCapture::Private
     qint32 trackId = 0;
     qint64 fields = 0;
     QJsonObject trackParameters;
+
+    // A cvbs track holds frames, which are read as the two fields of the TBC they map to
+    bool cvbs = false;
+    Cvbs::Geometry geometry;
+    std::unique_ptr<Cvbs::SampleConverter> converter;
+    quint16 padValue = 0;
+    qint64 cachedFrame = -1;
+    QVector<quint16> cachedFields[2];
 
     // The audio: a PCM track, the first sample of each of its blocks, and the block read last
     quint32 audioTrack = 0;
@@ -84,6 +93,28 @@ QString LdxCapture::trackName(const QString &path, qint32 track)
     return track > 0 ? QString("%1#%2").arg(path).arg(track) : path;
 }
 
+bool LdxCapture::isCvbs(const QString &name)
+{
+#ifdef LDDECODE_WITH_LDX
+    QString path;
+    qint32 track;
+    split(name, path, track);
+    Ldx::Reader reader;
+    QString error;
+    if (!reader.open(path, error) || reader.profile() < 1) return false;
+    const QVector<Ldx::Track> tracks = reader.tracks();
+    for (const Ldx::Track &candidate: tracks) {
+        if (track > 0 ? candidate.number == static_cast<quint32>(track) : (candidate.kind == Ldx::Kind::Tbc || candidate.kind == Ldx::Kind::Cvbs)) {
+            return candidate.kind == Ldx::Kind::Cvbs;
+        }
+    }
+    return false;
+#else
+    Q_UNUSED(name);
+    return false;
+#endif
+}
+
 bool LdxCapture::listCaptures(const QString &path, QVector<qint32> &tracks, QStringList &names, QString &error)
 {
 #ifdef LDDECODE_WITH_LDX
@@ -94,7 +125,7 @@ bool LdxCapture::listCaptures(const QString &path, QVector<qint32> &tracks, QStr
         return false;
     }
     for (const Ldx::Track &track: reader.tracks()) {
-        if (track.kind != Ldx::Kind::Tbc) continue;
+        if (track.kind != Ldx::Kind::Tbc && track.kind != Ldx::Kind::Cvbs) continue;
         tracks.append(static_cast<qint32>(track.number));
         names.append(track.name);
     }
@@ -159,7 +190,7 @@ bool LdxCapture::open(const QString &name, QString &error)
     const Ldx::Track *chosen = nullptr;
     const QVector<Ldx::Track> tracks = d->reader.tracks();
     for (const Ldx::Track &candidate: tracks) {
-        if (track > 0 ? candidate.number == static_cast<quint32>(track) : candidate.kind == Ldx::Kind::Tbc) {
+        if (track > 0 ? candidate.number == static_cast<quint32>(track) : (candidate.kind == Ldx::Kind::Tbc || candidate.kind == Ldx::Kind::Cvbs)) {
             chosen = &candidate;
             break;
         }
@@ -168,18 +199,21 @@ bool LdxCapture::open(const QString &name, QString &error)
         error = track > 0 ? QObject::tr("%1 has no track %2").arg(path).arg(track) : QObject::tr("%1 has no TBC track").arg(path);
         return false;
     }
-    if (chosen->kind != Ldx::Kind::Tbc) {
-        error = QObject::tr("Track %1 of %2 is %3, and only TBC tracks are read for now")
+    if (chosen->kind != Ldx::Kind::Tbc && chosen->kind != Ldx::Kind::Cvbs) {
+        error = QObject::tr("Track %1 of %2 is %3, and only TBC and CVBS tracks are read as video")
                     .arg(chosen->number).arg(path, Ldx::kindName(chosen->kind));
         return false;
     }
-    if (chosen->codec != Ldx::Codec::Raw && chosen->codec != Ldx::Codec::Flac) {
-        error = QObject::tr("Track %1 of %2 is %3 coded, which this build does not read yet")
-                    .arg(chosen->number).arg(path, Ldx::codecName(chosen->codec));
+    if (chosen->codec == Ldx::Codec::Unknown) {
+        error = QObject::tr("Track %1 of %2 is coded in a way this program does not know").arg(chosen->number).arg(path);
         return false;
     }
     if (chosen->codec == Ldx::Codec::Flac && !Ldx::flacAvailable()) {
         error = QObject::tr("Track %1 of %2 is FLAC, and this program was built without ffmpeg, which reads it").arg(chosen->number).arg(path);
+        return false;
+    }
+    if (chosen->codec == Ldx::Codec::Ffv1 && !Ldx::ffv1Available()) {
+        error = QObject::tr("Track %1 of %2 is FFV1, and this program was built without ffmpeg, which reads it").arg(chosen->number).arg(path);
         return false;
     }
     if (!d->reader.buildIndex(error)) return false;
@@ -187,6 +221,21 @@ bool LdxCapture::open(const QString &name, QString &error)
     d->trackId = static_cast<qint32>(chosen->number);
     d->trackParameters = chosen->parameters;
     d->fields = d->reader.blockCount(chosen->number);
+
+    if (chosen->kind == Ldx::Kind::Cvbs) {
+        // Frames: two fields each, of the length of a TBC field
+        const QString system = chosen->parameters.value("system").toString();
+        const VideoSystem videoSystem = system == "PAL" ? PAL : (system == "NTSC" ? NTSC : PAL_M);
+        d->geometry = Cvbs::geometry(videoSystem);
+        if (static_cast<qint64>(chosen->parameters.value("frameSamples").toDouble()) != d->geometry.frameSamples) {
+            error = QObject::tr("The frames of track %1 of %2 are not those of %3 CVBS").arg(chosen->number).arg(path, system);
+            return false;
+        }
+        d->converter = std::make_unique<Cvbs::SampleConverter>(Cvbs::SampleEncoding::U10_4FSC, videoSystem);
+        d->padValue = static_cast<quint16>(Cvbs::standardLevels(videoSystem).blanking * 64);
+        d->cvbs = true;
+        d->fields *= 2;
+    }
     return true;
 #else
     Q_UNUSED(name);
@@ -226,6 +275,22 @@ QVector<quint16> LdxCapture::getField(qint32 fieldNumber)
 {
     QVector<quint16> field;
 #ifdef LDDECODE_WITH_LDX
+    if (d->cvbs) {
+        // The frame the field is of, split into its two fields (which are kept for the next one asked for)
+        if (fieldNumber < 1 || fieldNumber > d->fields) return field;
+        const qint64 frame = (fieldNumber - 1) / 2;
+        if (frame != d->cachedFrame) {
+            Ldx::Block block;
+            if (!d->reader.readBlock(static_cast<quint32>(d->trackId), frame, block) || block.data.size() != d->geometry.frameSamples * 2) return field;
+            d->cachedFields[0].resize(d->geometry.fieldLength());
+            d->cachedFields[1].resize(d->geometry.fieldLength());
+            // (the samples are 10-bit values in words, which the converter of the default encoding takes as they are)
+            Cvbs::frameToFields(reinterpret_cast<const qint16 *>(block.data.constData()), d->geometry, *d->converter, d->padValue,
+                                d->cachedFields[0].data(), d->cachedFields[1].data());
+            d->cachedFrame = frame;
+        }
+        return d->cachedFields[(fieldNumber - 1) % 2];
+    }
     Ldx::Block block;
     if (fieldNumber < 1 || fieldNumber > d->fields || !d->reader.readBlock(static_cast<quint32>(d->trackId), fieldNumber - 1, block)) return field;
     field.resize(block.data.size() / 2);
