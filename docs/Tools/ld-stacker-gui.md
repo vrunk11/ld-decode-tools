@@ -26,6 +26,8 @@ The stack shown is made with the same code as ld-disc-stacker, for the frame vie
 - **File > Open session** and **Export session** load and save a `.stack` file: a JSON file with the sources (file, on or off, offset), the stacking options, the output file and what the window shows. ld-disc-stacker takes it as it is (see its page), so a session made here can be stacked from the command line.
 - **File > Process** asks where to save the stack and the metadata format (SQLite or JSON), then stacks the sources that are on. The video is TBC or CVBS as the extension of the file says; when that is not the format of the sources, ld-tbc-to-cvbs or ld-cvbs-to-tbc converts the stack, and ld-sqlite-to-json or ld-json-converter converts the metadata if it is not in the format asked for. The tools are those beside ld-stacker-gui. A stack that does not finish is removed.
 
+The session can be opened in ld-analyse, which shows the stack as the frames are asked for, and decoded by ld-chroma-decoder, without the stack being written first.
+
 ### Not yet
 
 Matching sources by VBI frame number (mapping) in the GUI.

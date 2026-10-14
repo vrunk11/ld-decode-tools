@@ -11,6 +11,7 @@
  ******************************************************************************/
 
 #include "lddecodemetadata.h"
+#include "stackedvideo.h"
 
 #include "cvbs.h"
 #include "cvbsaudio.h"
@@ -720,6 +721,16 @@ void LdDecodeMetaData::clear()
 // Read all metadata, in whichever format the file is in
 bool LdDecodeMetaData::read(QString fileName)
 {
+    // A stacking session: the metadata of its stack
+    if (fileName.endsWith(".stack", Qt::CaseInsensitive)) {
+        QString error;
+        if (!StackedVideo::readMetadata(fileName, *this, error)) {
+            qCritical().noquote() << error;
+            return false;
+        }
+        return true;
+    }
+
     // CVBS core metadata, as written by decode-orc. Its companion, created
     // when the metadata is written back, is SQLite unless asked otherwise.
     if (Cvbs::isCoreMetadataFile(fileName)) {
@@ -752,6 +763,12 @@ bool LdDecodeMetaData::read(QString fileName)
 // Write all metadata, choosing the format from the file name or the input
 bool LdDecodeMetaData::write(QString fileName) const
 {
+    // The metadata of a stacking session is that of its sources: there is none to write
+    if (fileName.endsWith(".stack", Qt::CaseInsensitive)) {
+        qWarning() << "The metadata of a stacking session cannot be written";
+        return false;
+    }
+
     // A CVBS capture: the companion and the files decode-orc reads
     if (!Cvbs::dataFileForMetadata(fileName).isEmpty()) return writeCvbs(fileName);
 
@@ -788,6 +805,9 @@ LdDecodeMetaData::MetadataFormat LdDecodeMetaData::detectFormat(const QString &f
 // Find the metadata for a TBC file, preferring SQLite when both exist
 QString LdDecodeMetaData::findMetadataFile(const QString &tbcFileName)
 {
+    // A stacking session has the metadata of its stack in itself
+    if (tbcFileName.endsWith(".stack", Qt::CaseInsensitive)) return tbcFileName;
+
     const QString sqliteFileName = metadataFileName(tbcFileName, MetadataFormat::Sqlite);
     const QString jsonFileName = metadataFileName(tbcFileName, MetadataFormat::Json);
 

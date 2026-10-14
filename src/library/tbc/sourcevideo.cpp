@@ -23,6 +23,7 @@
 ************************************************************************/
 
 #include "sourcevideo.h"
+#include "stackedvideo.h"
 
 #include <cstdio>
 #include <QFileInfo>
@@ -142,6 +143,25 @@ bool SourceVideo::open(QString filename, qint32 _fieldLength, qint32 _fieldLineL
     // Open the source video file
     inputFile.setFileName(filename);
     isCvbs = false;
+    if (filename.endsWith(".stack", Qt::CaseInsensitive)) {
+        // A stacking session: the stack of its sources
+        auto session = std::make_unique<StackedVideo>();
+        QString error;
+        if (!session->open(filename, error)) {
+            qWarning().noquote() << error;
+            return false;
+        }
+        if (session->getFieldLength() != fieldLength) {
+            qWarning() << "The fields of the stack are not of the length the metadata says";
+            return false;
+        }
+        availableFields = session->getNumberOfFields();
+        stacked = std::move(session);
+        fieldCache.clear();
+        isSourceVideoOpen = true;
+        inputFilePos = 0;
+        return true;
+    }
     if (filename != "-" && Cvbs::isDataFileName(filename)) {
         if (!openCvbs(filename)) return false;
     } else if (filename == "-" || (QFileInfo::exists(filename) && !QFileInfo(filename).isFile())) {
@@ -197,7 +217,8 @@ void SourceVideo::close()
 
     tbcDebugStream() << "SourceVideo::close(): Called, closing the source video file and emptying the frame cache";
     stream.reset();
-    inputFile.close();
+    stacked.reset();
+    if (inputFile.isOpen()) inputFile.close();
     isSourceVideoOpen = false;
     inputFilePos = -1;
     isCvbs = false;
@@ -233,6 +254,8 @@ qint32 SourceVideo::getFieldLength()
 // If startFieldLine and endFieldLine are both -1, read the whole field.
 SourceVideo::Data SourceVideo::getVideoField(qint32 fieldNumber, qint32 startFieldLine, qint32 endFieldLine)
 {
+    if (stacked) return stacked->getField(fieldNumber, startFieldLine, endFieldLine);
+
     // Adjust the field number to index from zero
     fieldNumber--;
 

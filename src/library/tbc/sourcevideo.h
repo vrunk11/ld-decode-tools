@@ -34,6 +34,8 @@
 #include "cvbs.h"
 #include "streamreader.h"
 
+class StackedVideo;
+
 class SourceVideo
 {
 public:
@@ -50,6 +52,8 @@ public:
     SourceVideo(const SourceVideo &) = delete;
     SourceVideo& operator=(const SourceVideo &) = delete;
 
+    // A .stack file (a stacking session) is read as the TBC file of the stack of its sources, which are
+    // stacked as the fields are asked for (see StackedVideo); its metadata is read by LdDecodeMetaData.
     // File handling methods. A .cvbs, .cvbsy or .cvbsc file is read as TBC
     // fields: each stored frame becomes two fields of _fieldLength samples.
     // "-" (standard input), or a named pipe, is read as a stream: see StreamReader.
@@ -108,6 +112,9 @@ private:
     // Stream input (standard input or a named pipe)
     StreamReader::Options streamOptions;
     std::shared_ptr<StreamReader> stream;
+
+    // A stacking session (.stack)
+    std::unique_ptr<StackedVideo> stacked;
 
     // CVBS input (.cvbs, .cvbsy, .cvbsc): whole frames, split into fields
     bool isCvbs;

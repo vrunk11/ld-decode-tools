@@ -121,6 +121,12 @@ bool MetadataOptions::selectInput(const QString &tbcFileName, bool useInputFile,
         return true;
     }
 
+    // A stacking session (.stack) has the metadata of its stack in itself
+    if (tbcFileName.endsWith(".stack", Qt::CaseInsensitive)) {
+        metadataFileName = tbcFileName;
+        return true;
+    }
+
     const QString sqliteFileName = LdDecodeMetaData::metadataFileName(tbcFileName, MetadataFormat::Sqlite);
     const QString jsonFileName = LdDecodeMetaData::metadataFileName(tbcFileName, MetadataFormat::Json);
     const bool hasSqlite = QFileInfo::exists(sqliteFileName);

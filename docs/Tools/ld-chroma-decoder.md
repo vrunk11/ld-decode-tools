@@ -9,6 +9,8 @@ Syntax:
 
 `ld-chroma-decoder [options] <input TBC file name> [output file name]`
 
+The input can also be a `.stack` stacking session: the stack of its sources is made as the frames are decoded, with the same result as stacking to a file with ld-disc-stacker and decoding that. The metadata is that of the first source that is on (without dropouts or VITS measurements).
+
 > [!NOTE]
 > This is mostly automated with FFmpeg profiles today with [tbc-video-export](https://github.com/JuniorIsAJitterbug/tbc-video-export#readme).
 

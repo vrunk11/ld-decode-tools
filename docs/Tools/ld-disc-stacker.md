@@ -68,3 +68,5 @@ The sources that are switched on in the session are stacked, with the stacking o
 The sources are not matched by their VBI frame numbers but lined up by an offset in frames each. The first source that is on is the reference: the stack has its frames, and its offset means nothing. The frame `f` of the stack is made from the frame `f - offset` of every other source, which has no frame there if that falls outside it. This is for captures that cannot be mapped; it needs no VBI data and no mapping with ld-discmap.
 
 With no offsets, a session gives the same stack as the usual way with `--no-map` when the sources are in step.
+
+A session can also be read without stacking it to a file: ld-analyse opens a `.stack` file and shows the stack as the frames are asked for, and ld-chroma-decoder decodes one, with the same picture as the file this tool writes.

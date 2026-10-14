@@ -6,6 +6,8 @@ The primary file-type is TBC (time-base corrected) video files containing the ra
 
 TBC files are usually identified by the `.tbc` & `_chroma.tbc` file-extensions. The Y/C pair that decode-orc writes, `.tbcy` (luma) and `.tbcc` (chroma), is opened too (either file of the pair opens both); its metadata is that of the `.tbc` (`.tbc.db` or `.tbc.json`).
 
+A `.stack` stacking session can be opened too, and shows the stack of its sources as they are stacked (see below).
+
 The application also presents source and tool-chain metadata (supplied by the TBC's metadata file, `.tbc.db` or `.tbc.json`; for a CVBS capture, `.meta` and its companion `.cvbs.db` or `.cvbs.json`) that provide additional details about the TBC file's contents such as VBI data and TV System.
 
 
@@ -507,3 +509,7 @@ Unticking 'Enable adaptive filter' disables the 3D filter's heuristic, making it
 # The Help menu
 
 The help menu contains an about option that displays information about the application.
+
+## Opening a stacking session
+
+A `.stack` stacking session (see [ld-stacker-gui](ld-stacker-gui.md) and [ld-disc-stacker](ld-disc-stacker.md)) can be opened in its place: the stack of its sources is made as the frames are asked for, so it is shown, played and decoded without being written to a file first. It is the same stack that ld-disc-stacker writes for the session, and decoding it gives the same picture as decoding the file. The metadata is that of the first source that is on, with no dropouts (the stack has filled them) and no VITS measurements (use the SNR measure from the video for the SNR); the metadata of a session cannot be saved.

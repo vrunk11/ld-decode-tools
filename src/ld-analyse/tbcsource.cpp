@@ -106,6 +106,9 @@ QString TbcSource::getMetadataFormatName()
 {
     if (!sourceReady) return QString();
 
+    // A stacking session: the stack has the metadata of its first source
+    if (currentMetadataFilename.endsWith(".stack", Qt::CaseInsensitive)) return QStringLiteral("of the first source of the stack");
+
     const QString format = ldDecodeMetaData.getFormat() == LdDecodeMetaData::MetadataFormat::Json ? QStringLiteral("JSON")
                                                                                                    : QStringLiteral("SQLite");
     if (!ldDecodeMetaData.isCvbs()) return format;
@@ -1478,6 +1481,11 @@ void TbcSource::finishBackgroundLoad()
 
 bool TbcSource::startBackgroundSave(QString metadataFilename)
 {
+    if (metadataFilename.endsWith(".stack", Qt::CaseInsensitive)) {
+        lastIOError = "A stacking session has no metadata of its own to save: it is read from its sources";
+        return false;
+    }
+
     tbcDebugStream() << "TbcSource::startBackgroundSave(): Saving to" << metadataFilename;
     emit busy("Saving metadata...");
 
