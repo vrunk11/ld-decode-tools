@@ -1,27 +1,29 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- ld-stacker-gui: discs seen from above, close up. The one in the middle is partly covered by the two on
-     either side, which run off the edge of the picture; the one in front is yellow, like a CDV.
-     Few shapes and a heavy outline, so that it holds when it is small (ld-stacker-gui-small.svg is the same
-     on the grid of 16 pixels). -->
+<!-- ld-stacker-gui: discs seen from above, close up. The one in the middle is partly covered by the two
+     around it, which run off the picture, so the picture has an outline; the one in front is yellow, like a
+     CDV. Few shapes and a heavy outline, so that it holds when it is small (ld-stacker-gui-small.svg is the
+     same on the grid of 16 pixels). -->
 <svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <defs><clipPath id="c"><rect width="64" height="64"/></clipPath></defs>
+  <defs><clipPath id="c"><rect x="1.5" y="1.5" width="61" height="61" rx="10"/></clipPath></defs>
   <g clip-path="url(#c)">
+    <rect width="64" height="64" fill="#F4F5F2"/>
     <g stroke="#555753" stroke-width="3">
-      <circle cx="9" cy="11" r="28" fill="#A1A59B"/>
+      <circle cx="24" cy="48" r="20" fill="#CFD2CB"/>
     </g>
-    <circle cx="9" cy="11" r="14" fill="none" stroke="#555753" stroke-width="1.6" stroke-opacity="0.5"/>
-    <circle cx="9" cy="11" r="5" fill="#2E3436"/>
+    <circle cx="24" cy="48" r="10" fill="none" stroke="#555753" stroke-width="1.6" stroke-opacity="0.5"/>
+    <circle cx="24" cy="48" r="4" fill="#2E3436"/>
 
     <g stroke="#555753" stroke-width="3">
-      <circle cx="35" cy="33" r="22" fill="#CFD2CB"/>
+      <circle cx="12" cy="14" r="24" fill="#A1A59B"/>
     </g>
-    <circle cx="35" cy="33" r="11" fill="none" stroke="#555753" stroke-width="1.6" stroke-opacity="0.5"/>
-    <circle cx="35" cy="33" r="4.2" fill="#2E3436"/>
+    <circle cx="12" cy="14" r="12" fill="none" stroke="#555753" stroke-width="1.6" stroke-opacity="0.5"/>
+    <circle cx="12" cy="14" r="5" fill="#2E3436"/>
 
     <g stroke="#555753" stroke-width="3">
-      <circle cx="56" cy="55" r="28" fill="#F2C94C"/>
+      <circle cx="50" cy="34" r="24" fill="#F2C94C"/>
     </g>
-    <circle cx="56" cy="55" r="14" fill="none" stroke="#555753" stroke-width="1.6" stroke-opacity="0.5"/>
-    <circle cx="56" cy="55" r="5" fill="#2E3436"/>
+    <circle cx="50" cy="34" r="12" fill="none" stroke="#555753" stroke-width="1.6" stroke-opacity="0.5"/>
+    <circle cx="50" cy="34" r="5" fill="#2E3436"/>
   </g>
+  <rect x="1.5" y="1.5" width="61" height="61" rx="10" fill="none" stroke="#555753" stroke-width="3"/>
 </svg>
