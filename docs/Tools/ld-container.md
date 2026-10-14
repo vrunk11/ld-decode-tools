@@ -10,7 +10,7 @@ This is a first slice: the tracks are raw (no FLAC or FFV1 yet), and the tool re
 ld-container pack input.tbc -o file.ldx [--pcm file.pcm] [--pcm-rate 44100] [--start field] [--fields count] [--name name]
 ld-container add file.ldx input.tbc -o new.ldx [same options]
 ld-container remove file.ldx --id 3 -o new.ldx
-ld-container stack file.ldx session.stack -o new.ldx
+ld-container stack file.ldx session.stack -o new.ldx [--embed]
 ld-container info file.ldx
 ld-container unpack file.ldx -o directory
 ```
@@ -18,7 +18,7 @@ ld-container unpack file.ldx -o directory
 - `pack` writes a `tbc` track (one block per field), a `metadata` track holding the ld-decode metadata as JSON, and a `pcm` track if `--pcm` is given. `--start` and `--fields` pack a part of the capture. The history of the file records the packing.
 - `add` gives a capture a track of its own (with its own metadata track and audio), for the sources of a stack or for several captures of the same VHS tape. The file is written again, to the output, with the new track at the next free id.
 - `remove` takes out the track with an id, and the metadata and audio that are about it. The id is not given to another track later. If the file keeps a session, the sources of the session that are the removed track are taken out of it, and the tool says so.
-- `stack` keeps a stacking session in the file (as the attachment `session.stack`). Its sources are **tracks of the file, named by their id** (`"track": 3`) instead of paths, so that the file does not depend on where any capture is on a disk. Every track the session names must be in the file.
+- `stack` keeps a stacking session in the file (as the attachment `session.stack`). A source of the session is a **track of the file, named by its id** (`"track": 3`), a **link** to a file or to a track of another LDX file (`"file": "other.ldx", "track": 2`), or, with `--embed`, a `.tbc` that the tool **brings into the file** as a track (with its metadata, and its audio if a `.pcm` of the same name is beside it) and then names by its id. Without `--embed` the files stay links, written relative to where the LDX file is, so that nothing is copied. Every track the session names in the file, or in another LDX file that is there, must exist.
 - `info` lists the tracks (id, kind, codec, depth, name, parameters, the number and size of their blocks), the attachments (and the tracks a session uses), the next free id, and the history.
 - `unpack` writes one file per track (`name.<id>.tbc`, `name.<id>.pcm`, the metadata as `name.<id>.tbc.json`) and the attachments (`session.stack`).
 
