@@ -62,6 +62,13 @@ public:
     void addTrack(Track &track);
     void setHistory(const QJsonArray &entries);
 
+    // The id the next track added to a file gets. It only goes up: the id of a removed track is not given again.
+    // By default it is one above the highest id of the tracks.
+    void setNextTrackId(quint32 id);
+
+    // A file kept in the LDX file (the session of a stack, for instance), written before the data
+    void addAttachment(const QString &name, const QString &mediaType, const QByteArray &data);
+
     bool open(const QString &fileName, QString &error);
 
     // Blocks are written in the order of their time, all tracks together
@@ -87,6 +94,14 @@ public:
     int profile() const;                    // the LDX_PROFILE of the file, 0 if it has none
     QVector<Track> tracks() const;
     QJsonArray history() const;
+    quint32 nextTrackId() const;
+
+    struct Attachment {
+        QString name;
+        QString mediaType;
+        QByteArray data;
+    };
+    QVector<Attachment> attachments() const;
 
     // The next block of the file, in the order it was written. False at the end.
     bool nextBlock(Block &block);
