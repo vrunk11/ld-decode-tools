@@ -39,6 +39,7 @@
 #include <matroska/KaxTags.h>
 #include <matroska/KaxTrackAudio.h>
 #include <matroska/KaxTrackEntryData.h>
+#include <matroska/KaxTrackVideo.h>
 #include <matroska/KaxTracks.h>
 
 using namespace libebml;
@@ -69,6 +70,25 @@ const KindName kindNames[] = {
 bool isSampleKind(Kind kind)
 {
     return kind == Kind::Tbc || kind == Kind::Cvbs || kind == Kind::Rf || kind == Kind::Pcm;
+}
+
+// The frames of a cvbs track: the samples of a frame, and the lines they make (a line is a row of the image of FFV1)
+struct CvbsShape {
+    int width = 0;
+    qint64 samples = 0;
+    int height = 0;
+    quint16 pad = 0;
+    bool ok() const { return width > 0 && samples > 0; }
+};
+
+CvbsShape cvbsShape(const Track &track)
+{
+    CvbsShape shape;
+    shape.width = track.parameters.value("lineWidth").toInt();
+    shape.samples = static_cast<qint64>(track.parameters.value("frameSamples").toDouble());
+    shape.pad = static_cast<quint16>(track.parameters.value("padValue").toInt(0));
+    if (shape.ok()) shape.height = ffv1Height(shape.samples, shape.width);
+    return shape;
 }
 
 QByteArray trackDescription(const Track &track)
@@ -138,6 +158,8 @@ struct Writer::Private
     KaxTracks *trackList = nullptr;
     std::map<quint32, KaxTrackEntry *> entries;            // by the id (number) of the track
     std::map<int, QByteArray> flacPrivates;                // what the FLAC tracks give the decoder before the data, by channels
+    std::map<quint32, std::unique_ptr<Ffv1Encoder>> ffv1Encoders;   // one for each FFV1 track
+    std::map<quint32, QByteArray> ffv1Privates;            // what the decoder of an FFV1 track is given before the data
     quint32 nextId = 1;                                    // the id the next track gets
     struct Attached {
         QString name;
@@ -196,6 +218,22 @@ struct Writer::Private
                     flacPrivates[channels] = flacCodecPrivate(channels, error);
                     if (flacPrivates[channels].isEmpty()) return false;
                 }
+            } else if (track.codec == Codec::Ffv1) {
+                if (track.kind != Kind::Cvbs) {
+                    error = QObject::tr("FFV1 is for the frames of a cvbs track, and not for a track of %1").arg(kindName(track.kind));
+                    return false;
+                }
+                const CvbsShape shape = cvbsShape(track);
+                if (!shape.ok()) {
+                    error = QObject::tr("A cvbs track needs the length of a line and the samples of a frame in its parameters (lineWidth, frameSamples)");
+                    return false;
+                }
+                if (!ffv1Encoders.count(track.number)) {
+                    auto encoder = std::make_unique<Ffv1Encoder>();
+                    if (!encoder->open(shape.width, shape.height, error)) return false;
+                    ffv1Privates[track.number] = encoder->extradata();
+                    ffv1Encoders[track.number] = std::move(encoder);
+                }
             } else if (track.codec != Codec::Raw) {
                 error = QObject::tr("The %1 codec is not written by this build yet").arg(codecName(track.codec));
                 return false;
@@ -218,7 +256,15 @@ struct Writer::Private
             GetChild<KaxTrackFlagLacing>(entry).SetValue(track.codec == Codec::Flac ? 1 : 0);
             if (!track.name.isEmpty()) GetChild<KaxTrackName>(entry).SetValueUTF8(track.name.toUtf8().constData());
 
-            if (isSampleKind(track.kind)) {
+            if (track.codec == Codec::Ffv1) {
+                // FFV1: a video track, whose frames are the images of the frames of CVBS
+                const CvbsShape shape = cvbsShape(track);
+                GetChild<KaxTrackType>(entry).SetValue(track_video);
+                GetChild<KaxCodecID>(entry).SetValue("V_FFV1");
+                KaxTrackVideo &video = GetChild<KaxTrackVideo>(entry);
+                GetChild<KaxVideoPixelWidth>(video).SetValue(shape.width);
+                GetChild<KaxVideoPixelHeight>(video).SetValue(shape.height);
+            } else if (isSampleKind(track.kind)) {
                 GetChild<KaxTrackType>(entry).SetValue(track_audio);
                 GetChild<KaxCodecID>(entry).SetValue(track.codec == Codec::Flac ? "A_FLAC" : PcmCodecId);
                 KaxTrackAudio &audio = GetChild<KaxTrackAudio>(entry);
@@ -230,7 +276,8 @@ struct Writer::Private
                 GetChild<KaxCodecID>(entry).SetValue(QByteArray("D_LDX/" + kindName(track.kind).toUpper().toLatin1()).constData());
             }
             // (a FLAC track has what its decoder needs, and the description of every track is also in a tag)
-            const QByteArray description = track.codec == Codec::Flac ? flacPrivates[channelsOf(track)] : trackDescription(track);
+            const QByteArray description = track.codec == Codec::Flac ? flacPrivates[channelsOf(track)]
+                                           : (track.codec == Codec::Ffv1 ? ffv1Privates[track.number] : trackDescription(track));
             GetChild<KaxCodecPrivate>(entry).CopyBuffer(reinterpret_cast<const binary *>(description.constData()), description.size());
             entry.SetGlobalTimecodeScale(TimecodeScaleNs);
         }
@@ -432,12 +479,34 @@ bool Writer::writeBlock(quint32 track, qint64 timeNs, const QByteArray &data)
         // The frames of the block: itself, or, for FLAC, what the encoder gives
         std::vector<QByteArray> frames;
         const Track *info = d->trackInfo(track);
+        if (info && info->kind == Kind::Cvbs) {
+            // A block of a cvbs track is one frame, whatever the codec
+            const CvbsShape frameShape = cvbsShape(*info);
+            if (frameShape.ok() && data.size() != frameShape.samples * 2) {
+                d->error = QObject::tr("A frame of this cvbs track is %1 samples").arg(frameShape.samples);
+                return false;
+            }
+        }
         if (info && info->codec == Codec::Flac) {
             QString encodeError;
             if (!flacEncode(data, Private::channelsOf(*info), info->kind == Kind::Tbc, frames, encodeError)) {
                 d->error = encodeError;
                 return false;
             }
+        } else if (info && info->codec == Codec::Ffv1) {
+            // A frame of CVBS: one packet
+            const CvbsShape shape = cvbsShape(*info);
+            if (data.size() != shape.samples * 2) {
+                d->error = QObject::tr("A frame of this cvbs track is %1 samples").arg(shape.samples);
+                return false;
+            }
+            QByteArray packet;
+            QString encodeError;
+            if (!d->ffv1Encoders[track]->encode(ffv1Pad(data, shape.width, shape.height, shape.pad), packet, encodeError)) {
+                d->error = encodeError;
+                return false;
+            }
+            frames.push_back(packet);
         } else {
             frames.push_back(data);
         }
@@ -538,6 +607,8 @@ struct Reader::Private
     std::map<quint64, QByteArray> descriptions;       // what each track is, by the uid of the track, from the tags
     std::map<quint32, QByteArray> flacPrivates;       // what the decoder of a FLAC track is given first
     std::map<quint32, std::unique_ptr<FlacDecoder>> decoders;
+    std::map<quint32, QByteArray> ffv1Privates;
+    std::map<quint32, std::unique_ptr<Ffv1Decoder>> ffv1Decoders;
     uint64 timecodeScale = 1000000;            // Matroska default
     std::deque<Block> queue;
 
@@ -577,6 +648,11 @@ struct Reader::Private
                 track.codec = Codec::Flac;
                 if (auto *priv = FindChild<KaxCodecPrivate>(entry)) {
                     flacPrivates[track.number] = QByteArray(reinterpret_cast<const char *>(priv->GetBuffer()), static_cast<int>(priv->GetSize()));
+                }
+            } else if (codecId == QLatin1String("V_FFV1")) {
+                track.codec = Codec::Ffv1;
+                if (auto *priv = FindChild<KaxCodecPrivate>(entry)) {
+                    ffv1Privates[track.number] = QByteArray(reinterpret_cast<const char *>(priv->GetBuffer()), static_cast<int>(priv->GetSize()));
                 }
             } else if (auto *priv = FindChild<KaxCodecPrivate>(entry)) {
                 const QJsonObject object = QJsonDocument::fromJson(QByteArray(reinterpret_cast<const char *>(priv->GetBuffer()),
@@ -635,6 +711,25 @@ struct Reader::Private
                 }
             }
             return decoder->decode(frames, info->kind == Kind::Tbc, out, error);
+        }
+        if (info && info->codec == Codec::Ffv1) {
+            const CvbsShape shape = cvbsShape(*info);
+            if (!shape.ok() || frames.size() != 1) {
+                error = QObject::tr("An FFV1 block is one frame, and the track says how big it is");
+                return false;
+            }
+            std::unique_ptr<Ffv1Decoder> &decoder = ffv1Decoders[track];
+            if (!decoder) {
+                decoder = std::make_unique<Ffv1Decoder>();
+                if (!decoder->open(shape.width, shape.height, ffv1Privates[track], error)) {
+                    decoder.reset();
+                    return false;
+                }
+            }
+            QByteArray image;
+            if (!decoder->decode(frames.front(), image, error)) return false;
+            out = ffv1Unpad(image, shape.samples);
+            return true;
         }
         out.clear();
         for (const QByteArray &frame: frames) out.append(frame);

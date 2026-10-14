@@ -548,6 +548,56 @@ static void testFfv1()
     }
 }
 
+// The frames of a CVBS capture as a track: raw and FFV1 give back the same samples, in order and by place
+static void testCvbsTracks(const QString &directory)
+{
+    std::cerr << "Testing cvbs tracks\n";
+    struct Shape { int width; qint64 samples; const char *system; };
+    for (const Shape shape: { Shape { 910, 477750, "NTSC" }, Shape { 1135, 709379, "PAL" } }) {
+        for (const Ldx::Codec codec: { Ldx::Codec::Raw, Ldx::Codec::Ffv1 }) {
+            if (codec == Ldx::Codec::Ffv1 && !Ldx::ffv1Available()) continue;
+            const QString path = directory + "/cvbs.ldx";
+            Ldx::Writer writer;
+            Ldx::Track track;
+            track.kind = Ldx::Kind::Cvbs;
+            track.codec = codec;
+            track.depth = 10;
+            track.name = "a cvbs capture";
+            track.parameters["system"] = shape.system;
+            track.parameters["lineWidth"] = shape.width;
+            track.parameters["frameSamples"] = static_cast<double>(shape.samples);
+            track.parameters["padValue"] = 252;
+            writer.addTrack(track);
+            QString error;
+            CHECK(writer.open(path, error));
+            for (int n = 0; n < 4; n++) CHECK(writer.writeBlock(1, n * 33366000LL, cvbsFrame(shape.samples, shape.width, n)));
+            // A frame of the wrong size is refused
+            CHECK(!writer.writeBlock(1, 4 * 33366000LL, QByteArray(100, 0)));
+            CHECK(writer.finish(error));
+            if (codec == Ldx::Codec::Ffv1) CHECK(QFileInfo(path).size() < 4 * shape.samples * 2 / 2);
+
+            Ldx::Reader reader;
+            CHECK(reader.open(path, error));
+            CHECK(reader.tracks().size() == 1 && reader.tracks()[0].kind == Ldx::Kind::Cvbs && reader.tracks()[0].codec == codec);
+            CHECK(reader.tracks()[0].parameters["lineWidth"].toInt() == shape.width);
+            Ldx::Block block;
+            int index = 0;
+            while (reader.nextBlock(block)) {
+                CHECK(block.data == cvbsFrame(shape.samples, shape.width, index));
+                index++;
+            }
+            CHECK(index == 4);
+
+            Ldx::Reader random;
+            CHECK(random.open(path, error) && random.buildIndex(error));
+            CHECK(random.blockCount(1) == 4);
+            for (const int wanted: { 3, 0, 2, 2 }) {
+                CHECK(random.readBlock(1, wanted, block) && block.data == cvbsFrame(shape.samples, shape.width, wanted));
+            }
+        }
+    }
+}
+
 static void testNotAnLdxFile(const QString &path)
 {
     std::cerr << "Testing a file that is not an LDX file\n";
@@ -576,6 +626,7 @@ int main(int argc, char *argv[])
     testFlacTracks(directory.filePath("flac.ldx"));
     testUnsignedSamples(directory.path());
     testFfv1();
+    testCvbsTracks(directory.path());
     testNotAnLdxFile(directory.filePath("garbage.ldx"));
 
     std::cerr << "All tests passed\n";
