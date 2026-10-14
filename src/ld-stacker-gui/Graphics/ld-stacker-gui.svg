@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- ld-stacker-gui: three discs seen from above, each over the one behind it. Few shapes and a heavy outline,
+     so that it holds when it is small (ld-stacker-gui-small.svg is the same on the grid of 16 pixels). -->
+<svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <g stroke="#555753" stroke-width="3.2">
+    <circle cx="18" cy="18" r="16" fill="#A1A59B"/>
+  </g>
+  <circle cx="18" cy="18" r="8.5" fill="none" stroke="#555753" stroke-width="1.6" stroke-opacity="0.55"/>
+  <circle cx="18" cy="18" r="3.4" fill="#2E3436"/>
+
+  <g stroke="#555753" stroke-width="3.2">
+    <circle cx="32" cy="32" r="16" fill="#CFD2CB"/>
+  </g>
+  <circle cx="32" cy="32" r="8.5" fill="none" stroke="#555753" stroke-width="1.6" stroke-opacity="0.55"/>
+  <circle cx="32" cy="32" r="3.4" fill="#2E3436"/>
+
+  <g stroke="#555753" stroke-width="3.2">
+    <circle cx="46" cy="46" r="16" fill="#B7E08A"/>
+  </g>
+  <circle cx="46" cy="46" r="8.5" fill="none" stroke="#555753" stroke-width="1.6" stroke-opacity="0.55"/>
+  <circle cx="46" cy="46" r="3.4" fill="#2E3436"/>
+</svg>
