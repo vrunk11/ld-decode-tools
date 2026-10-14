@@ -157,6 +157,7 @@ private:
     QPushButton *aspectButton = nullptr;
     QComboBox *viewCombo = nullptr;   // Frame, Split, Field 1, Field 2
     bool displayAspect = true;
+    bool tintRows = true;           // the rows of the sources are tinted with the colour of the source
     bool fieldView = false;         // one field of the frame, not the frame
     bool fieldSplit = false;        // in field view: both fields one above the other
     qint32 fieldIndex = 0;          // in field view, which field of the frame: 0 the first, 1 the second

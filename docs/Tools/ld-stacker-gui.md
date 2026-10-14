@@ -18,6 +18,7 @@ Give it TBC files, or a `.stack` session file saved earlier, or drop them on the
 - **Stacking mode**: auto or one of the modes of ld-disc-stacker. In auto the status bar says which one the number of sources gives. Edit > Stacking options sets the rest: the threshold of the smart modes, differential dropout detection, pass-through, the integrity check (used when processing to a file) and the field order.
 - **Status bar**: how many sources contribute to the frame, the mode, and what is shown.
 - **View > Stack output**: a window with the stack, which stays in view while the main window shows a source.
+- **View > Tint the source rows**: each row of the list of sources has a frame, and a faint tint of the colour of its source (a dark transparent one); the row picked has a frame of that colour. The tint can be turned off here, and is kept between sessions.
 - **View > Theme and Style**: the colour themes and widget styles of ld-analyse (Auto, Light, Dark, Soft light, Dim, Dark grey, and a custom theme to edit with Customize...), kept between sessions. `--force-dark-theme` forces the dark theme for one session.
 
 The stack shown is made with the same code as ld-disc-stacker, for the frame viewed only.

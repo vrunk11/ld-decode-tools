@@ -181,7 +181,14 @@ void MainWindow::buildUi()
     sourceList->setDefaultDropAction(Qt::MoveAction);
     sourceList->setSelectionMode(QAbstractItemView::SingleSelection);
     sourceList->setContextMenuPolicy(Qt::CustomContextMenu);
-    sourceList->setSpacing(2);
+    sourceList->setSpacing(6);
+    // The row picked shows it by its own frame: the list's highlight is made invisible (with its palette, not a
+    // style sheet, which would keep the list from following the theme)
+    {
+        QPalette listPalette = sourceList->palette();
+        listPalette.setColor(QPalette::All, QPalette::Highlight, Qt::transparent);
+        sourceList->setPalette(listPalette);
+    }
     sourceList->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     side->setMinimumWidth(300);
     sideLayout->addWidget(sourceList, 1);
@@ -474,6 +481,16 @@ void MainWindow::buildMenus()
             if (stackWindow->isVisible() && lastStackResult.view == "stack") showStackPicture(lastStackResult);
         });
     }
+    QAction *tintAction = view->addAction(tr("Tint the source rows"));
+    tintAction->setCheckable(true);
+    tintRows = QSettings().value("tintRows", true).toBool();
+    tintAction->setChecked(tintRows);
+    tintAction->setToolTip(tr("Give each row of the list of sources a faint tint of the colour of its source"));
+    connect(tintAction, &QAction::toggled, this, [this](bool on) {
+        tintRows = on;
+        QSettings().setValue("tintRows", on);
+        rebuildSourceList();
+    });
     view->addSeparator();
     setupAppearanceMenus(view);
 }
@@ -691,6 +708,26 @@ void MainWindow::rebuildSourceList()
         const QString id = source.id;
 
         QWidget *row = new QWidget;
+
+        // A frame round the row, and a faint tint of the colour of the source (a dark transparent one), which
+        // the View menu can turn off; the row picked has a frame of that colour
+        {
+            const QColor sourceColor = colorFor(id);
+            QColor line = palette().color(QPalette::Text);
+            line.setAlpha(110);
+            const bool picked = id == selected;
+            QString fill = "transparent";
+            if (tintRows) {
+                QColor tint = sourceColor;
+                tint.setAlphaF(source.enabled ? 0.22 : 0.08);
+                fill = QString("rgba(%1, %2, %3, %4)").arg(tint.red()).arg(tint.green()).arg(tint.blue()).arg(tint.alpha());
+            }
+            const QString border = picked ? sourceColor.name() : QString("rgba(%1, %2, %3, %4)").arg(line.red()).arg(line.green()).arg(line.blue()).arg(line.alpha());
+            row->setObjectName("sourceRow");
+            row->setAttribute(Qt::WA_StyledBackground, true);
+            row->setStyleSheet(QString("#sourceRow { border: %1px solid %2; border-radius: 6px; background-color: %3; }")
+                               .arg(picked ? 2 : 1).arg(border).arg(fill));
+        }
         QVBoxLayout *layout = new QVBoxLayout(row);
         layout->setContentsMargins(6, 4, 6, 4);
         layout->setSpacing(4);
@@ -762,7 +799,7 @@ void MainWindow::rebuildSourceList()
 
         QListWidgetItem *item = new QListWidgetItem;
         item->setData(Qt::UserRole, id);
-        item->setSizeHint(row->sizeHint());
+        item->setSizeHint(row->sizeHint() + QSize(0, 2));
         sourceList->addItem(item);
         sourceList->setItemWidget(item, row);
         if (id == selected) sourceList->setCurrentItem(item);
@@ -1380,6 +1417,7 @@ void MainWindow::setupAppearanceMenus(QMenu *menu)
 void MainWindow::updateAppearance()
 {
     isDarkTheme = applyAppearance(styleName, themeMode, customPalette);
+    rebuildSourceList();
     for (QWidget *widget: QApplication::allWidgets()) widget->update();
     applyZoom();
 }
