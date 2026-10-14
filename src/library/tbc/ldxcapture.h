@@ -39,6 +39,9 @@ public:
     // The name of a track of a file
     static QString trackName(const QString &path, qint32 track);
 
+    // Whether the capture a name gives is CVBS (a cvbs track) and not a TBC
+    static bool isCvbs(const QString &name);
+
     // The TBC tracks of an LDX file, with their names: the captures it holds
     static bool listCaptures(const QString &path, QVector<qint32> &tracks, QStringList &names, QString &error);
 
