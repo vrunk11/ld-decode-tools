@@ -1014,7 +1014,7 @@ void MainWindow::updateGuiLoaded()
 		statusText += (tbcSource.getVideoParameters().tapeFormat + " ");
 	}
     statusText += tbcSource.getSystemDescription();
-    statusText += tr(" source loaded with ");
+    statusText += tbcSource.getIsStack() ? tr(" stack (%1) loaded with ").arg(tbcSource.getStackDescription()) : tr(" source loaded with ");
 
     if (tbcSource.getIsLive()) {
         statusText = tr("Live input (%1)").arg(tbcSource.getSystemDescription());

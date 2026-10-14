@@ -72,6 +72,7 @@ void FrameBackend::addSource(const QString &id, const QString &file, bool revers
     SourceInfo info;
     info.id = id;
     info.file = file;
+    info.cvbs = Cvbs::isDataFileName(StackProject::referenceFile(file));
 
     auto loaded = std::make_shared<Loaded>();
 

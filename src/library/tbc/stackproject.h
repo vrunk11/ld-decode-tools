@@ -64,6 +64,10 @@ public:
     QString newSourceId() const;
     // The source with this id, or -1
     qint32 indexOfSource(const QString &id) const;
+
+    // The file that gives the format (TBC or CVBS) of a source: the file itself, or, for a .stack session (which
+    // is read as the stack of its sources), the first source of it that is on, down to a real file
+    static QString referenceFile(QString fileName);
 };
 
 #endif // STACKPROJECT_H

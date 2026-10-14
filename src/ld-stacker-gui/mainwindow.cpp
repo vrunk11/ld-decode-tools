@@ -356,9 +356,11 @@ void MainWindow::buildUi()
     // The status bar: what contributes, and how
     statusSources = new QLabel;
     statusMode = new QLabel;
+    statusFormat = new QLabel;
     statusShowing = new QLabel;
     statusBar()->addWidget(statusSources);
     statusBar()->addWidget(statusMode);
+    statusBar()->addPermanentWidget(statusFormat);
     statusBar()->addPermanentWidget(statusShowing);
 
     // Wiring
@@ -515,7 +517,7 @@ void MainWindow::addSourcesDialog()
     QSettings settings;
     const QString directory = settings.value("sourceDirectory").toString();
     const QStringList files = QFileDialog::getOpenFileNames(this, tr("Add sources"), directory,
-                                                            tr("TBC files and stacks (*.tbc *.stack);;All files (*)"));
+                                                            tr("TBC, CVBS and stack files (*.tbc *.cvbs *.stack);;TBC (*.tbc);;CVBS (*.cvbs);;Stacking sessions (*.stack);;All files (*)"));
     if (files.isEmpty()) return;
     settings.setValue("sourceDirectory", QFileInfo(files.first()).absolutePath());
     addSources(files);
@@ -672,6 +674,17 @@ void MainWindow::on_sourceLoaded(const SourceInfo &info)
                 const QString existing = otherState.info.system == NTSC ? "NTSC" : (otherState.info.system == PAL ? "PAL" : "PAL-M");
                 removeSource(info.id);
                 QMessageBox::warning(this, tr("Add source"), tr("%1 is %2, but the sources already here are %3: PAL and NTSC cannot be stacked together.").arg(name, system, existing));
+                return;
+            }
+        }
+        for (const StackSource &other: project.sources) {
+            if (other.id == info.id) continue;
+            const SourceState otherState = states.value(other.id);
+            if (otherState.loaded && otherState.info.cvbs != info.cvbs) {
+                const QString name = QFileInfo(info.file).fileName();
+                removeSource(info.id);
+                QMessageBox::warning(this, tr("Add source"), tr("%1 is %2, but the sources already here are %3: TBC and CVBS cannot be stacked together.")
+                                     .arg(name, info.cvbs ? "CVBS" : "TBC", otherState.info.cvbs ? "CVBS" : "TBC"));
                 return;
             }
         }
@@ -1183,6 +1196,16 @@ void MainWindow::on_stackSnrReady(quint64 generation, const QVector<StackSnrPoin
 
 void MainWindow::updateStatus()
 {
+    // What the sources are: the video system, and TBC or CVBS
+    QString format;
+    for (const StackSource &source: project.sources) {
+        const SourceState state = states.value(source.id);
+        if (!state.loaded) continue;
+        format = tr("%1 %2").arg(state.info.system == PAL ? "PAL" : (state.info.system == NTSC ? "NTSC" : "PAL-M"), state.info.cvbs ? tr("CVBS") : tr("TBC"));
+        break;
+    }
+    statusFormat->setText(format);
+
     qint32 on = 0, loaded = 0;
     for (const StackSource &source: project.sources) {
         if (states.value(source.id).loaded) loaded++;

@@ -165,6 +165,7 @@ private:
     bool fitPicture = false;        // and its first picture is to be shown at its original size
     QLabel *statusSources = nullptr;
     QLabel *statusMode = nullptr;
+    QLabel *statusFormat = nullptr;
     QLabel *statusShowing = nullptr;
 
     ThemeMode themeMode = ThemeMode::Auto;

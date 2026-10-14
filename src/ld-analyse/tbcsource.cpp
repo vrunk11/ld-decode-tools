@@ -12,6 +12,7 @@
 #include <limits>
 
 #include "tbcsource.h"
+#include "stackproject.h"
 #include "cvbs.h"
 #include "tbcfiles.h"
 #include "tbc/logging.h"
@@ -89,6 +90,21 @@ bool TbcSource::getIsSourceLoaded()
 bool TbcSource::getIsStack()
 {
     return sourceReady && currentMetadataFilename.endsWith(".stack", Qt::CaseInsensitive);
+}
+
+// What a stacking session is made of
+QString TbcSource::getStackDescription()
+{
+    if (!getIsStack()) return QString();
+    StackProject session;
+    QString error;
+    if (!session.load(currentMetadataFilename, error)) return QString();
+    qint32 on = 0;
+    for (const StackSource &source: session.sources) {
+        if (source.enabled) on++;
+    }
+    const bool cvbs = Cvbs::isDataFileName(StackProject::referenceFile(currentMetadataFilename));
+    return QObject::tr("%1 sources, %2").arg(on).arg(cvbs ? "CVBS" : "TBC");
 }
 
 // Method returns the filename of the current TBC source

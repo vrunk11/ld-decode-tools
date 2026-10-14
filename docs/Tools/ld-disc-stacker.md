@@ -75,6 +75,6 @@ A `.stack` file can also be one of the inputs, among others (2 inputs or more an
 ld-disc-stacker --no-map first-two.stack third.tbc output.tbc
 ```
 
-A session can have a session among its sources in the same way. The inner stack has no dropouts left for the outer one to see, and its metadata is that of its first source. The sources of a session are all TBC or all CVBS, as for any stack.
+A session can have a session among its sources in the same way. The inner stack has no dropouts left for the outer one to see, and its metadata is that of its first source. The sources of a session are all TBC or all CVBS, as for any stack: a mix is refused, and a session stacked to a file gives a file of the format of its sources (CVBS sources stack to a .cvbs file, as in the usual way).
 
 A session can also be read without stacking it to a file: ld-analyse opens a `.stack` file and shows the stack as the frames are asked for, and ld-chroma-decoder decodes one, with the same picture as the file this tool writes.

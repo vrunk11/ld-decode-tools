@@ -182,3 +182,19 @@ bool StackProject::save(const QString &fileName, QString &error) const
     }
     return true;
 }
+
+QString StackProject::referenceFile(QString fileName)
+{
+    for (qint32 depth = 0; depth < 8 && fileName.endsWith(".stack", Qt::CaseInsensitive); depth++) {
+        StackProject session;
+        QString error;
+        if (!session.load(fileName, error)) return fileName;
+        QString next;
+        for (const StackSource &source: session.sources) {
+            if (source.enabled) { next = source.file; break; }
+        }
+        if (next.isEmpty()) return fileName;
+        fileName = next;
+    }
+    return fileName;
+}

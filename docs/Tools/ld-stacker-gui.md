@@ -5,7 +5,7 @@ A GUI for [ld-disc-stacker](ld-disc-stacker.md), in the style of ld-analyse: it 
 ld-stacker-gui [files...]
 ```
 
-Give it TBC files, or a `.stack` session file saved earlier, or drop them on the window. The sources must all be TBC (CVBS and TBC are not mixed) and of one video system: PAL and NTSC cannot be stacked together, and a source of the other one is refused.
+Give it TBC files or CVBS files (`.cvbs`), or a `.stack` session file saved earlier, or drop them on the window. The sources must all be TBC or all CVBS (the two are not mixed) and of one video system: PAL and NTSC cannot be stacked together, and a source of the other one is refused.
 
 ### Window
 
@@ -16,7 +16,7 @@ Give it TBC files, or a `.stack` session file saved earlier, or drop them on the
 - **Frame navigation**: first, previous, next and last frame, the frame number, a slider; the left and right keys step.
 - **Frame, split or field**: a list beside the aspect ratio button (key F goes through it) chooses what the picture is: Frame, Split (both fields of the frame, the first above the second), or Field 1 or Field 2 (one field with its lines doubled). The navigation is by frame in all of them, and the choice is kept in the session.
 - **Stacking mode**: auto or one of the modes of ld-disc-stacker. In auto the status bar says which one the number of sources gives. Edit > Stacking options sets the rest: the threshold of the smart modes, differential dropout detection, pass-through, the integrity check (used when processing to a file) and the field order.
-- **Status bar**: how many sources contribute to the frame, the mode, and what is shown.
+- **Status bar**: how many sources contribute to the frame, the mode, and what is shown. On the right it says the video system and the format of the sources: for example NTSC TBC or NTSC CVBS.
 - **View > Stack output**: a window with the stack, which stays in view while the main window shows a source.
 - **View > Tint the source rows**: the list of sources is a list: a line under each row and a bar of the colour of the source on its left, and a faint tint of that colour (a dark transparent one) across the row, stronger for the row picked. The tint can be turned off here, and is kept between sessions. The SNR window of a source has a bar of its colour at the top, and its icon is of that colour, so that the windows can be told apart.
 - **View > Theme and Style**: the colour themes and widget styles of ld-analyse (Auto, Light, Dark, Soft light, Dim, Dark grey, and a custom theme to edit with Customize...), kept between sessions. `--force-dark-theme` forces the dark theme for one session.
@@ -26,7 +26,7 @@ The stack shown is made with the same code as ld-disc-stacker, for the frame vie
 ### Menu
 
 - **File > Open session** and **Export session** load and save a `.stack` file: a JSON file with the sources (file, on or off, offset), the stacking options, the output file and what the window shows. ld-disc-stacker takes it as it is (see its page), so a session made here can be stacked from the command line.
-- **File > Process** asks where to save the stack and the metadata format (SQLite or JSON), then stacks the sources that are on. The video is TBC or CVBS as the extension of the file says; when that is not the format of the sources, ld-tbc-to-cvbs or ld-cvbs-to-tbc converts the stack, and ld-sqlite-to-json or ld-json-converter converts the metadata if it is not in the format asked for. The tools are those beside ld-stacker-gui. A stack that does not finish is removed.
+- **File > Process** asks where to save the stack and the metadata format (SQLite or JSON), then stacks the sources that are on. The video is TBC or CVBS as the extension of the file says (.tbc or .cvbs); when that is not the format of the sources, ld-tbc-to-cvbs or ld-cvbs-to-tbc converts the stack, and ld-sqlite-to-json or ld-json-converter converts the metadata if it is not in the format asked for. The tools are those beside ld-stacker-gui. A stack that does not finish is removed.
 
 The session can be opened in ld-analyse, which shows the stack as the frames are asked for, and decoded by ld-chroma-decoder, without the stack being written first.
 

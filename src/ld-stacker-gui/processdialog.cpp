@@ -24,6 +24,7 @@
 #include <QStandardPaths>
 #include <QVBoxLayout>
 
+#include "cvbs.h"
 #include "lddecodemetadata.h"
 
 ProcessDialog::ProcessDialog(const StackProject &stackProject, const QString &suggestedOutput, QWidget *parent)
@@ -93,7 +94,8 @@ ProcessDialog::ProcessDialog(const StackProject &stackProject, const QString &su
 
 bool ProcessDialog::isCvbs(const QString &file)
 {
-    return file.endsWith(".cvbs", Qt::CaseInsensitive);
+    // (a .stack source has the format of its first source)
+    return Cvbs::isDataFileName(StackProject::referenceFile(file));
 }
 
 QString ProcessDialog::metadataFile(const QString &video, bool json)
@@ -222,6 +224,11 @@ void ProcessDialog::start()
             temporary.append(stacked);
             temporary.append(stackerMetadataDb);
             temporary.append(stackerMetadataJson);
+            // (a CVBS file has the files of decode-orc beside it)
+            if (inputCvbs) {
+                temporary.append(Cvbs::metaFileName(stacked));
+                temporary.append(Cvbs::dropoutsFileName(stacked));
+            }
         }
     } });
 

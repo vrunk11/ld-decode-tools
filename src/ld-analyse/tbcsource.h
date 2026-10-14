@@ -126,6 +126,8 @@ public:
     bool getIsSourceLoaded();
     // A stacking session (.stack): the stack of its sources, whose metadata has no SNR
     bool getIsStack();
+    // "N sources, TBC" or "N sources, CVBS" for a stacking session, empty for another source
+    QString getStackDescription();
     void saveSourceMetadata();
     QString getCurrentSourceFilename();
     QString getCurrentMetadataFilename();

@@ -86,8 +86,18 @@ bool StackedVideo::open(const QString &stackFile, QString &error)
     if (!project.load(stackFile, error)) return false;
 
     sources.clear();
+    bool firstIsCvbs = false;
     for (const StackSource &entry: project.sources) {
         if (!entry.enabled) continue;
+
+        // TBC and CVBS are not mixed
+        const bool isCvbs = Cvbs::isDataFileName(StackProject::referenceFile(entry.file));
+        if (sources.empty()) {
+            firstIsCvbs = isCvbs;
+        } else if (isCvbs != firstIsCvbs) {
+            error = QObject::tr("%1 is not of the same format (TBC or CVBS) as the first source: they cannot be stacked together").arg(entry.file);
+            return false;
+        }
 
         auto source = std::make_unique<Source>();
         source->offset = sources.empty() ? 0 : entry.offset;    // the reference has none

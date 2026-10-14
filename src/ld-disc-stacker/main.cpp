@@ -333,6 +333,15 @@ int main(int argc, char *argv[])
     // The output stays in the container of the first input (TBC or CVBS)
     if (!checkSameVideoContainer(inputFilenames[0], outputFilename)) return -1;
 
+    // The inputs are all TBC or all CVBS (a .stack input has the format of its first source)
+    for (qint32 i = 1; i < totalNumberOfInputFiles; i++) {
+        if (Cvbs::isDataFileName(StackProject::referenceFile(inputFilenames[i])) != Cvbs::isDataFileName(StackProject::referenceFile(inputFilenames[0]))) {
+            qCritical().noquote() << inputFilenames[i] << "is not of the same format (TBC or CVBS) as" << inputFilenames[0]
+                                  << "- TBC and CVBS sources cannot be stacked together";
+            return -1;
+        }
+    }
+
     // Check that none of the input filenames are repeated
     for (qint32 i = 0; i < totalNumberOfInputFiles; i++) {
         for (qint32 j = 0; j < totalNumberOfInputFiles; j++) {
