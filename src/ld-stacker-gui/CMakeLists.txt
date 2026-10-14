@@ -8,12 +8,14 @@ set(ld-stacker-gui_SOURCES
     processdialog.cpp
 )
 
+qt_add_resources(ld-stacker-gui_SOURCES ld-stacker-gui-resources.qrc)
+
 add_executable(ld-stacker-gui ${ld-stacker-gui_SOURCES})
 
 target_include_directories(ld-stacker-gui PRIVATE ${FFTW_INCLUDE_DIR})
 
 target_link_libraries(ld-stacker-gui PRIVATE
-    Qt::Core Qt::Gui Qt::Widgets
+    Qt::Core Qt::Gui Qt::Widgets Qt::Svg
     lddecode-library
     lddecode-chroma
     lddecode-gui

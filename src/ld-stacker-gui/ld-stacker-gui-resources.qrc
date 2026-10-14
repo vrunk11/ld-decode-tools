@@ -1,0 +1,12 @@
+<RCC>
+    <qresource prefix="/icons">
+        <file alias="start-frame.svg">../ld-analyse/Graphics/start-frame.svg</file>
+        <file alias="prev-frame.svg">../ld-analyse/Graphics/prev-frame.svg</file>
+        <file alias="next-frame.svg">../ld-analyse/Graphics/next-frame.svg</file>
+        <file alias="end-frame.svg">../ld-analyse/Graphics/end-frame.svg</file>
+        <file alias="zoom-in.svg">../ld-analyse/Graphics/zoom-in.svg</file>
+        <file alias="zoom-out.svg">../ld-analyse/Graphics/zoom-out.svg</file>
+        <file alias="zoom-original.svg">../ld-analyse/Graphics/zoom-original.svg</file>
+        <file alias="snr.svg">Graphics/snr.svg</file>
+    </qresource>
+</RCC>

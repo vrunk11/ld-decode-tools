@@ -259,19 +259,21 @@ void MainWindow::buildUi()
     QWidget *navigation = new QWidget;
     QHBoxLayout *navigationLayout = new QHBoxLayout(navigation);
     navigationLayout->setContentsMargins(8, 6, 8, 2);
-    const auto makeButton = [this](const QString &text, const QString &tip, bool repeat) {
+    // A button with an icon (those of ld-analyse), and its name as the tip
+    const auto makeButton = [this](const QString &icon, const QString &tip, bool repeat) {
         QToolButton *button = new QToolButton;
-        button->setText(text);
+        button->setIcon(QIcon(icon));
+        button->setIconSize(QSize(22, 22));
         button->setToolTip(tip);
         button->setAutoRepeat(repeat);
         button->setAutoRepeatDelay(500);
         button->setAutoRepeatInterval(30);
         return button;
     };
-    firstButton = makeButton("|<", tr("First frame"), false);
-    previousButton = makeButton("<", tr("Previous frame"), true);
-    nextButton = makeButton(">", tr("Next frame"), true);
-    lastButton = makeButton(">|", tr("Last frame"), false);
+    firstButton = makeButton(":/icons/start-frame.svg", tr("First frame"), false);
+    previousButton = makeButton(":/icons/prev-frame.svg", tr("Previous frame"), true);
+    nextButton = makeButton(":/icons/next-frame.svg", tr("Next frame"), true);
+    lastButton = makeButton(":/icons/end-frame.svg", tr("Last frame"), false);
     frameSpin = new QSpinBox;
     frameSpin->setRange(1, 1);
     frameSpin->setKeyboardTracking(false);
@@ -313,8 +315,8 @@ void MainWindow::buildUi()
     optionsLayout->addWidget(stackButton);
     optionsLayout->addWidget(chromaButton);
     optionsLayout->addStretch(1);
-    QToolButton *zoomOut = makeButton("-", tr("Zoom out"), true);
-    QToolButton *zoomIn = makeButton("+", tr("Zoom in"), true);
+    QToolButton *zoomOut = makeButton(":/icons/zoom-out.svg", tr("Zoom out"), true);
+    QToolButton *zoomIn = makeButton(":/icons/zoom-in.svg", tr("Zoom in"), true);
     zoomSpin = new QSpinBox;
     zoomSpin->setRange(25, 600);
     zoomSpin->setSingleStep(25);
@@ -327,6 +329,7 @@ void MainWindow::buildUi()
     aspectButton = new QPushButton;
     optionsLayout->addWidget(aspectButton);
     originalSizeButton = new QPushButton(tr("Original size"));
+    originalSizeButton->setIcon(QIcon(":/icons/zoom-original.svg"));
     originalSizeButton->setToolTip(tr("Zoom to 100% and resize the window to show the whole picture"));
     optionsLayout->addWidget(originalSizeButton);
     mainLayout->addWidget(options);
@@ -488,6 +491,8 @@ void MainWindow::addSourcesDialog()
 
 void MainWindow::addSources(const QStringList &files)
 {
+    // The first source imported shows at its original size; those after it change nothing
+    if (project.sources.isEmpty()) fitFirstSource = true;
     for (const QString &file: files) {
         StackSource source;
         source.file = QFileInfo(file).absoluteFilePath();
@@ -528,6 +533,7 @@ void MainWindow::loadSession(const QString &fileName)
         QMessageBox::warning(this, tr("Open session"), error);
         return;
     }
+    fitFirstSource = false;   // a session has its own zoom
 
     // What was loaded is let go of
     for (const StackSource &source: project.sources) {
@@ -632,6 +638,11 @@ void MainWindow::on_sourceLoaded(const SourceInfo &info)
         chromaDialog->setSystem(info.system, true);
     }
 
+    if (info.ok && fitFirstSource) {
+        fitFirstSource = false;
+        fitPicture = true;
+    }
+
     SourceState &state = states[info.id];
     state.info = info;
     state.loaded = info.ok;
@@ -685,7 +696,8 @@ void MainWindow::rebuildSourceList()
         top->addWidget(name, 1);
 
         QToolButton *snrButton = new QToolButton;
-        snrButton->setText(tr("SNR"));
+        snrButton->setIcon(QIcon(":/icons/snr.svg"));
+        snrButton->setIconSize(QSize(22, 22));
         snrButton->setToolTip(tr("The SNR of this source over the disc, in a window"));
         top->addWidget(snrButton);
         connect(snrButton, &QToolButton::clicked, this, [this, id]() { openSnrWindow(id); });
@@ -937,6 +949,12 @@ void MainWindow::on_frameReady(const FrameResult &result)
             currentImage = result.image;
             imageLabel->setText(QString());
             applyZoom();
+            // The first picture of the first source: at its original size, and the window to match
+            if (fitPicture) {
+                fitPicture = false;
+                setZoom(1.0);
+                resizeToImage();
+            }
         }
     }
 

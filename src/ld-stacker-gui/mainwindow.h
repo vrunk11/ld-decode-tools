@@ -155,6 +155,8 @@ private:
     QPushButton *originalSizeButton = nullptr;
     QPushButton *aspectButton = nullptr;
     bool displayAspect = true;
+    bool fitFirstSource = false;    // the next source to be loaded is the first one imported
+    bool fitPicture = false;        // and its first picture is to be shown at its original size
     QLabel *statusSources = nullptr;
     QLabel *statusMode = nullptr;
     QLabel *statusShowing = nullptr;
