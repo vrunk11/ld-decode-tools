@@ -558,6 +558,9 @@ int main(int argc, char *argv[])
             qInfo().noquote() << "The LDX stream sent no metadata: assuming" << Cvbs::presetName(ldxStream->system())
                               << "video at the standard levels that runs until the input ends";
         }
+        // Metadata without fields is the start of metadata that come field by field with the video
+        if (metaData.getNumberOfFields() == 0) metaData.makeLive();
+        ldxStream->provideFields(metaData);
         streamOptions.cvbs = ldxStream->isCvbs();
     } else if (hasNoMetadata) {
         // Piped input with no metadata: the video system must be said, the rest has defaults

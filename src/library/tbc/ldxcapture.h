@@ -16,6 +16,7 @@
 #include <QString>
 #include <QStringList>
 #include <QVector>
+#include <map>
 #include <memory>
 
 // A capture kept in an LDX file (docs/Specifications/container-format.md), as the tools see it: a name that
@@ -26,6 +27,20 @@
 //     capture.ldx#3      the track 3
 //
 // (When the library is built without LDX support, every call fails and says so.)
+// The current metadata of a capture, from the blocks of its metadata track: a block with the parameters of the video
+// is the metadata (the last one is current), and the blocks of single fields (a stream whose metadata came field by
+// field) are put in it, the last block of a field being its current metadata.
+class LdxMetadataMerger
+{
+public:
+    void add(const QByteArray &data);
+    QByteArray current() const;
+
+private:
+    QByteArray base;
+    std::map<int, QByteArray> fieldJson;
+};
+
 class LdxCapture
 {
 public:

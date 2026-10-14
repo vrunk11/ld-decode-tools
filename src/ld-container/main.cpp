@@ -19,7 +19,9 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QJsonArray>
 #include <QJsonDocument>
+#include <QJsonObject>
 #include <QMap>
 #include <QSet>
 #include <QTemporaryDir>
@@ -31,6 +33,7 @@
 #include <vector>
 
 #include "ldx.h"
+#include "ldxcapture.h"
 #include "cvbs.h"
 #include "lddecodemetadata.h"
 #include "tbc/logging.h"
@@ -107,6 +110,30 @@ public:
 private:
     Ldx::Block block;
     bool done = false;
+};
+
+// The metadata of each field, each just before its video: the blocks have the time of the video they are about
+class FieldMetadataSource : public BlockSource
+{
+public:
+    FieldMetadataSource(quint32 track, const std::vector<QByteArray> &json, VideoSystem system, qint64 start, int unitFields)
+        : track(track), json(json), system(system), start(start), unitFields(unitFields) {}
+    bool peek(Ldx::Block &block) override
+    {
+        if (index >= json.size()) return false;
+        block.track = track;
+        block.timeNs = fieldTimeNs(start + (static_cast<qint64>(index) / unitFields) * unitFields, system) - fieldTimeNs(start, system);
+        block.data = json[index];
+        return true;
+    }
+    void pop() override { index++; }
+private:
+    quint32 track;
+    const std::vector<QByteArray> &json;
+    VideoSystem system;
+    qint64 start;
+    int unitFields;
+    size_t index = 0;
 };
 
 // The fields of a TBC file, or the frames of a CVBS file (which are two fields each, and whose samples are given as
@@ -263,6 +290,7 @@ struct Capture {
     Ldx::Track audio;
     bool hasAudio = false;
     QByteArray metadataJson;
+    std::vector<QByteArray> fieldJson;      // with live metadata: the metadata of each field
     VideoSystem system = PAL;
     bool cvbs = false;                      // the frames of a CVBS file, and not the fields of a TBC
     qint64 unitBytes = 0;                   // what is read from the file for a block: a field, or a frame
@@ -305,6 +333,7 @@ struct CaptureOptions {
     double pcmRate = 44100;
     QString name;               // the name of the capture, the name of its file when empty
     QString codec = "raw";      // how the video and the audio are kept
+    bool live = false;          // the metadata of the fields go before their video, one block each (see the pipes of the specification)
 };
 
 CaptureOptions captureOptions(const QCommandLineParser &parser)
@@ -404,6 +433,20 @@ bool readCapture(const CaptureOptions &options, const QString &input, Capture &c
             part.appendField(metadata.getField(static_cast<qint32>(capture.start + number)));
         }
         written = &part;
+    }
+
+    LdDecodeMetaData parameters;
+    if (options.live) {
+        // The parameters of the video now, the fields as they come
+        parameters.setVideoParameters(video);
+        parameters.setPcmAudioParameters(metadata.getPcmAudioParameters());
+        parameters.setIsFirstFieldFirst(metadata.getIsFirstFieldFirst());
+        for (qint64 number = 1; number <= capture.fields; number++) {
+            LdDecodeMetaData::Field field = const_cast<LdDecodeMetaData *>(written)->getField(static_cast<qint32>(number));
+            field.seqNo = static_cast<qint32>(number);
+            capture.fieldJson.push_back(LdDecodeMetaData::fieldToJson(field));
+        }
+        written = &parameters;
     }
 
     QTemporaryDir temporary;
@@ -595,6 +638,7 @@ int pack(const QStringList &arguments)
     parser.addOption(QCommandLineOption({ "o", "output" }, "The LDX file to write", "file"));
     parser.addOption(QCommandLineOption("efm", "The EFM t-values of the capture (.efm) to add", "file"));
     parser.addOption(QCommandLineOption("ac3", "The AC3 data of the capture to add", "file"));
+    parser.addOption(QCommandLineOption("live-metadata", "Send the metadata field by field, each just before its video, as a producer does that does not have them all at the start"));
     addCaptureOptions(parser);
     parser.process(arguments);
     if (parser.positionalArguments().size() != 1 || !parser.isSet("output")) {
@@ -609,7 +653,9 @@ int pack(const QStringList &arguments)
     }
 
     Capture capture;
-    if (!readCapture(captureOptions(parser), input, capture)) return 1;
+    CaptureOptions captured = captureOptions(parser);
+    captured.live = parser.isSet("live-metadata");
+    if (!readCapture(captured, input, capture)) return 1;
 
     Ldx::Writer writer;
     addCaptureTracks(writer, capture);
@@ -648,7 +694,8 @@ int pack(const QStringList &arguments)
     OnceSource metadata(capture.metadata.number, capture.metadataJson);
     FieldSource fields(*capture.tbc, capture.video.number, capture.system, capture.unitBytes, capture.start, capture.fields, capture.unitFields, capture.convert);
     PcmSource pcm(capture.hasAudio ? *capture.pcm : *capture.tbc, capture.audio.number, capture.pcmRate, fields.endTimeNs());
-    std::vector<BlockSource *> sources { &metadata, &fields };
+    FieldMetadataSource fieldMetadata(capture.metadata.number, capture.fieldJson, capture.system, capture.start, capture.unitFields);
+    std::vector<BlockSource *> sources { &metadata, &fieldMetadata, &fields };
     if (capture.hasAudio) sources.push_back(&pcm);
     std::vector<std::unique_ptr<ChunkSource>> chunkSources;
     for (ByteTrack &bytes: byteTracks) {
@@ -1067,16 +1114,16 @@ int extractTrack(const QStringList &arguments)
 
     // The metadata of a capture: the last block is the current one. Anything else, all its blocks in turn.
     const bool lastOnly = chosen->kind == Ldx::Kind::Metadata;
-    QByteArray last;
+    LdxMetadataMerger last;
     Ldx::Block block;
     while (reader.nextBlock(block)) {
         if (block.track != id) continue;
-        if (lastOnly) last = block.data; else if (file.write(block.data) != block.data.size()) {
+        if (lastOnly) last.add(block.data); else if (file.write(block.data) != block.data.size()) {
             err << "Could not write the data\n";
             return 1;
         }
     }
-    if (lastOnly) file.write(last);
+    if (lastOnly) file.write(last.current());
     file.flush();
     return 0;
 }
@@ -1290,7 +1337,7 @@ int unpack(const QStringList &arguments)
     }
 
     // (the current metadata are the last block of their track: what was added to the file is more recent than what was there)
-    std::map<quint32, QByteArray> current;
+    std::map<quint32, LdxMetadataMerger> current;
     QSet<quint32> keepLast;
     for (const Ldx::Track &track: reader.tracks()) {
         if (track.kind == Ldx::Kind::Metadata) keepLast.insert(track.number);
@@ -1300,7 +1347,7 @@ int unpack(const QStringList &arguments)
         const auto found = files.find(block.track);
         if (found == files.end()) continue;
         if (keepLast.contains(block.track)) {
-            current[block.track] = block.data;
+            current[block.track].add(block.data);
         } else if (converters.count(block.track)) {
             // The 10-bit values of a frame, as the words of the file
             const auto converter = converters[block.track];
@@ -1314,7 +1361,7 @@ int unpack(const QStringList &arguments)
             found->second->write(block.data);
         }
     }
-    for (const auto &kept: current) files[kept.first]->write(kept.second);
+    for (const auto &kept: current) files[kept.first]->write(kept.second.current());
 
     // The core metadata of a CVBS file, which says how its samples are kept
     for (const auto &cvbs: cvbsTracks) {

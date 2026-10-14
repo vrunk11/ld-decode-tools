@@ -7,7 +7,7 @@ This is a first slice: the tracks are raw (no FLAC or FFV1 yet), and the tool re
 ## Usage
 
 ```
-ld-container pack input.tbc -o file.ldx [--pcm file.pcm] [--codec flac|ffv1|auto] [--efm file.efm] [--ac3 file.ac3] [--pcm-rate 44100] [--start field] [--fields count] [--name name]
+ld-container pack input.tbc -o file.ldx [--pcm file.pcm] [--codec flac|ffv1|auto] [--live-metadata] [--efm file.efm] [--ac3 file.ac3] [--pcm-rate 44100] [--start field] [--fields count] [--name name]
 ld-container add file.ldx input.tbc -o new.ldx [same options]
 ld-container remove file.ldx --id 3 -o new.ldx
 ld-container stack file.ldx session.stack -o new.ldx [--embed]
@@ -26,6 +26,7 @@ ld-container unpack file.ldx -o directory
 - `extract` writes the data of one track as it is, to a file or, without `-o`, to the standard output, to be piped (`ld-container extract capture.ldx --id 4 | ld-process-efm ...`). For a metadata track it writes the current block, the last one.
 - `verify` reads every block of the file in the order it was written and by its place in its track (the way the tools read a capture), and says if the two disagree.
 - `unpack` writes one file per track (`name.<id>.tbc`, `name.<id>.pcm`, the metadata as `name.<id>.tbc.json`) and the attachments (`session.stack`).
+- `pack --live-metadata` sends the metadata as a producer fed by a pipe does: the parameters of the video first, then the metadata of each field in a block of its own, just before its video (specification, section 19). The tools that read a stream take the fields from them as they come; it is how the chain `ld-decode | tool | tool | ld-analyse -` can add metadata along the way.
 - `pack --efm` and `--ac3` add the EFM and AC3 files as tracks (cut in chunks, stamped over the time of the video, put end to end they are the file).
 
 An LDX file is a Matroska file: `ffprobe` lists its tracks, and `ffmpeg -i file.ldx -map 0:0 -f s16le out.bin` writes the samples of the first track as raw 16-bit data, identical to the fields that were packed.

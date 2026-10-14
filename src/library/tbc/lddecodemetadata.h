@@ -19,6 +19,7 @@
 #include <QDebug>
 #include <array>
 #include <memory>
+#include <functional>
 
 #include "dropouts.h"
 
@@ -263,6 +264,17 @@ public:
     qint32 fieldsForFrame(qint32 frameNumber) const { return 2 * frameNumber + (generatedReversed ? 2 : 0); }
     // True for metadata made by initialiseDefault
     bool isGenerated() const { return generated; }
+    // Where the metadata of a field comes from when it is not on hand with the video, as in a pipe whose producer sends
+    // the metadata of each field just before its video: ensureFields asks for the field (by its sequence number, from 1),
+    // and keeps the default one if the provider has none (false).
+    // Metadata that has the parameters of the video but no fields yet: they are made, with their metadata from the
+    // provider, as ensureFields asks for them (see initialiseDefault)
+    void makeLive() { generated = true; }
+    typedef std::function<bool(qint32 seqNo, Field &field)> FieldProvider;
+    void setFieldProvider(FieldProvider provider) { fieldProvider = std::move(provider); }
+    // One field as JSON (a member of "fields" in ld-decode metadata), and back. False if it is not one.
+    static QByteArray fieldToJson(const Field &field);
+    static bool fieldFromJson(const QByteArray &json, Field &field);
 
     // Read metadata; the format is detected from the file contents. CVBS core
     // metadata (<base>.meta) is read too, with the fields it does not hold
@@ -361,6 +373,7 @@ private:
     MetadataFormat format = MetadataFormat::Sqlite;
     bool isFirstFieldFirst;
     bool generatedReversed = false;
+    FieldProvider fieldProvider;
     VideoParameters videoParameters;
     PcmAudioParameters pcmAudioParameters;
     QVector<Field> fields;

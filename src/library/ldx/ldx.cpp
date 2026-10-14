@@ -1028,11 +1028,14 @@ struct Reader::Private
             error = QObject::tr("The file has no cues, which are its index");
             return false;
         }
-        // In the order of time, one entry for each block
+        // In the order of time, one entry for each block (several blocks of a track may have the same time)
         for (auto &entry: index) {
-            std::stable_sort(entry.second.begin(), entry.second.end(), [](const IndexEntry &a, const IndexEntry &b) { return a.timeNs < b.timeNs; });
+            std::sort(entry.second.begin(), entry.second.end(), [](const IndexEntry &a, const IndexEntry &b) {
+                if (a.timeNs != b.timeNs) return a.timeNs < b.timeNs;
+                if (a.clusterPosition != b.clusterPosition) return a.clusterPosition < b.clusterPosition;     // (blocks of the same time: as written)
+                return a.relativePosition < b.relativePosition; });
             entry.second.erase(std::unique(entry.second.begin(), entry.second.end(), [](const IndexEntry &a, const IndexEntry &b) {
-                return a.timeNs == b.timeNs && a.clusterPosition == b.clusterPosition; }), entry.second.end());
+                return a.timeNs == b.timeNs && a.clusterPosition == b.clusterPosition && a.relativePosition == b.relativePosition; }), entry.second.end());
         }
         return true;
     }

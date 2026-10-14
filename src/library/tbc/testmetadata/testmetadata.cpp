@@ -54,6 +54,44 @@ void testVideoSystem() {
     assert(!b);
 }
 
+// Metadata of fields that arrive one by one, as from a pipe: one field as JSON and back, and the provider of ensureFields
+void testFieldProvider() {
+    std::cerr << "Testing field metadata that comes field by field\n";
+
+    LdDecodeMetaData::Field sent;
+    sent.seqNo = 3;
+    sent.isFirstField = false;
+    sent.syncConf = 77;
+    sent.fieldPhaseID = 2;
+    sent.medianBurstIRE = 20.5;
+    const QByteArray json = LdDecodeMetaData::fieldToJson(sent);
+    LdDecodeMetaData::Field got;
+    if (!LdDecodeMetaData::fieldFromJson(json, got) || got.seqNo != 3 || got.syncConf != 77 || got.fieldPhaseID != 2
+        || got.isFirstField || got.medianBurstIRE != 20.5) {
+        std::cerr << "FAIL: a field does not come back from its JSON\n";
+        std::exit(1);
+    }
+    LdDecodeMetaData::Field bad;
+    if (LdDecodeMetaData::fieldFromJson(QByteArray("{not json"), bad)) {
+        std::cerr << "FAIL: JSON that is not a field was taken\n";
+        std::exit(1);
+    }
+
+    LdDecodeMetaData metaData;
+    metaData.initialiseDefault(PAL);
+    metaData.setFieldProvider([&](qint32 seqNo, LdDecodeMetaData::Field &field) {
+        if (seqNo != 3) return false;           // only the third field has metadata
+        field = sent;
+        return true;
+    });
+    metaData.ensureFields(4);
+    if (metaData.getNumberOfFields() != 4 || metaData.getField(3).syncConf != 77 || metaData.getField(3).fieldPhaseID != 2
+        || metaData.getField(2).syncConf == 77 || metaData.getField(4).seqNo != 4) {
+        std::cerr << "FAIL: ensureFields did not take the fields from the provider\n";
+        std::exit(1);
+    }
+}
+
 int main(int argc, char *argv[])
 {
     // Initialise Qt
@@ -89,6 +127,7 @@ int main(int argc, char *argv[])
     if (positionalArguments.count() == 0) {
         // Run unit tests
         testVideoSystem();
+        testFieldProvider();
         return 0;
     }
     if (positionalArguments.count() > 2) {
