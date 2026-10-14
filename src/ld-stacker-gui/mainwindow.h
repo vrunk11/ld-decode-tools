@@ -31,6 +31,8 @@
 #include "snrplot.h"
 #include "toolwindows.h"
 #include "stackproject.h"
+#include "theme.h"
+#include "themeeditordialog.h"
 
 class MainWindow : public QMainWindow
 {
@@ -77,6 +79,10 @@ private:
     void updateTimeline();
     void updatePlot();
     void viewChanged();
+    void setupAppearanceMenus(QMenu *menu);
+    void updateAppearance();
+    void customizeTheme();
+    void resizeToImage(qint32 passesLeft = 3);
     void startStackSnr();
     QVector<float> sourceCurve(qint32 index, bool white) const;
     void showStackPicture(const FrameResult &result);
@@ -145,9 +151,16 @@ private:
     QPushButton *chromaButton = nullptr;
     QPushButton *chromaSettingsButton = nullptr;
     QPushButton *enhanceButton = nullptr;
+    QPushButton *originalSizeButton = nullptr;
     QLabel *statusSources = nullptr;
     QLabel *statusMode = nullptr;
     QLabel *statusShowing = nullptr;
+
+    ThemeMode themeMode = ThemeMode::Auto;
+    QString styleName;
+    QString customPalette;
+    QAction *customThemeAction = nullptr;
+    bool isDarkTheme = false;
 
     bool panning = false;
     QPoint panStart;

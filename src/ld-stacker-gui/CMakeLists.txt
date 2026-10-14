@@ -16,6 +16,7 @@ target_link_libraries(ld-stacker-gui PRIVATE
     Qt::Core Qt::Gui Qt::Widgets
     lddecode-library
     lddecode-chroma
+    lddecode-gui
 )
 
 if(WIN32)

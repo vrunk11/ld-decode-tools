@@ -15,6 +15,8 @@
 #include <QElapsedTimer>
 
 #include <QAction>
+#include <QApplication>
+#include <QActionGroup>
 #include <QCheckBox>
 #include <QCloseEvent>
 #include <QDragEnterEvent>
@@ -67,6 +69,23 @@ MainWindow::MainWindow(const QStringList &arguments, QWidget *parent)
     : QMainWindow(parent)
 {
     setWindowTitle(tr("ld-stacker-gui"));
+
+    // Colour theme and widget style, as in ld-analyse: View > Theme and View > Style, kept in the settings.
+    // --force-dark-theme overrides the theme for this session without changing the setting.
+    {
+        QSettings settings;
+        customPalette = settings.value("customPalette").toString();
+        const qint32 savedTheme = settings.value("themeMode", static_cast<qint32>(ThemeMode::Auto)).toInt();
+        themeMode = (savedTheme >= static_cast<qint32>(ThemeMode::Auto) && savedTheme <= static_cast<qint32>(ThemeMode::DarkGrey))
+            ? static_cast<ThemeMode>(savedTheme) : ThemeMode::Auto;
+        if (themeMode == ThemeMode::Custom && customPalette.isEmpty()) themeMode = ThemeMode::Auto;
+        if (qApp->property("forceDarkTheme").toBool()) themeMode = ThemeMode::Dark;
+
+        // A saved style that is not installed here falls back to Auto
+        styleName = settings.value("styleName").toString();
+        if (!styleName.isEmpty() && !availableStyles().contains(styleName, Qt::CaseInsensitive)) styleName.clear();
+        isDarkTheme = applyAppearance(styleName, themeMode, customPalette);
+    }
 
     backend = new FrameBackend;
     backend->moveToThread(&backendThread);
@@ -316,6 +335,9 @@ void MainWindow::buildUi()
     optionsLayout->addWidget(zoomSpin);
     optionsLayout->addWidget(zoomIn);
     optionsLayout->addWidget(zoomMethodCombo);
+    originalSizeButton = new QPushButton(tr("Original size"));
+    originalSizeButton->setToolTip(tr("Zoom to 100% and resize the window to show the whole picture"));
+    optionsLayout->addWidget(originalSizeButton);
     mainLayout->addWidget(options);
 
     QSplitter *splitter = new QSplitter;
@@ -374,6 +396,10 @@ void MainWindow::buildUi()
     });
     connect(zoomIn, &QToolButton::clicked, this, [this]() { stepZoom(1); });
     connect(zoomOut, &QToolButton::clicked, this, [this]() { stepZoom(-1); });
+    connect(originalSizeButton, &QPushButton::clicked, this, [this]() {
+        setZoom(1.0);
+        resizeToImage();
+    });
     connect(zoomSpin, &QSpinBox::valueChanged, this, [this](qint32 percent) { setZoom(percent / 100.0); });
     connect(zoomMethodCombo, &QComboBox::currentIndexChanged, this, [this]() { applyZoom(); });
 
@@ -420,6 +446,8 @@ void MainWindow::buildMenus()
             stackWindow->hide();
         }
     });
+    view->addSeparator();
+    setupAppearanceMenus(view);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1161,4 +1189,142 @@ void MainWindow::dropEvent(QDropEvent *event)
     }
     if (!session.isEmpty()) loadSession(session);
     if (!files.isEmpty()) addSources(files);
+}
+
+// Resize the window so that the scroll area shows the whole picture, without scroll bars. What is around the
+// picture (margins, buttons, menus, status bar) depends on the style and fonts, so it is measured: the window
+// grows or shrinks by the difference between the size the picture wants and the one the scroll area has.
+void MainWindow::resizeToImage(qint32 passesLeft)
+{
+    if (isFullScreen() || isMaximized() || currentImage.isNull()) return;
+    if (layout()) layout()->activate();
+
+    const qint32 frame = 2 * scrollArea->frameWidth();
+    const QSize wanted = imageLabel->minimumSize() + QSize(frame, frame);
+    const QSize difference = wanted - scrollArea->size();
+    if (difference.isNull()) return;
+    resize(size() + difference);
+
+    // The resize takes effect, and the layout is redone, in the event loop: look again then
+    if (passesLeft > 0) QTimer::singleShot(0, this, [this, passesLeft]() { resizeToImage(passesLeft - 1); });
+}
+
+// View > Theme and View > Style, as in ld-analyse, with the current choices checked
+void MainWindow::setupAppearanceMenus(QMenu *menu)
+{
+    QSettings settings;
+
+    QMenu *themeMenu = new QMenu(tr("Theme"), this);
+    QActionGroup *themeGroup = new QActionGroup(this);
+    themeGroup->setExclusive(true);
+
+    const struct {
+        ThemeMode mode;
+        QString text;
+    } themeEntries[] = {
+        // The system's own appearance
+        { ThemeMode::Auto, tr("Auto (follow system)") },
+        { ThemeMode::Light, tr("Light") },
+        { ThemeMode::Dark, tr("Dark") },
+        // Fixed palettes
+        { ThemeMode::SoftLight, tr("Soft light") },
+        { ThemeMode::Dim, tr("Dim") },
+        { ThemeMode::DarkGrey, tr("Dark grey") },
+        { ThemeMode::Custom, tr("Custom") },
+    };
+
+    for (const auto &entry: themeEntries) {
+        if (entry.mode == ThemeMode::SoftLight) themeMenu->addSeparator();
+        QAction *action = themeMenu->addAction(entry.text);
+        action->setCheckable(true);
+        action->setChecked(entry.mode == themeMode);
+        themeGroup->addAction(action);
+        const ThemeMode mode = entry.mode;
+        if (mode == ThemeMode::Custom) {
+            // Only selectable once a custom theme has been saved
+            customThemeAction = action;
+            action->setEnabled(!customPalette.isEmpty());
+        }
+        connect(action, &QAction::triggered, this, [this, mode]() {
+            themeMode = mode;
+            QSettings().setValue("themeMode", static_cast<qint32>(mode));
+            updateAppearance();
+        });
+    }
+
+    themeMenu->addSeparator();
+    QAction *customizeAction = themeMenu->addAction(tr("Customize..."));
+    connect(customizeAction, &QAction::triggered, this, &MainWindow::customizeTheme);
+
+    QMenu *styleMenu = new QMenu(tr("Style"), this);
+    QActionGroup *styleGroup = new QActionGroup(this);
+    styleGroup->setExclusive(true);
+
+    // Auto first, then every style Qt finds on this machine
+    QStringList names = { QString() };
+    names += availableStyles();
+
+    for (const QString &name: names) {
+        QString text;
+        if (name.isEmpty()) {
+#ifdef Q_OS_WIN
+            text = tr("Auto (Classic look)");
+#else
+            text = tr("Auto (system)");
+#endif
+        } else {
+            text = styleDisplayName(name);
+        }
+
+        QAction *action = styleMenu->addAction(text);
+        action->setCheckable(true);
+        action->setChecked(name.compare(styleName, Qt::CaseInsensitive) == 0);
+        action->setData(name);
+        styleGroup->addAction(action);
+        connect(action, &QAction::triggered, this, [this, name]() {
+            styleName = name;
+            QSettings().setValue("styleName", name);
+            updateAppearance();
+        });
+    }
+
+    menu->addMenu(themeMenu);
+    menu->addMenu(styleMenu);
+}
+
+// Apply the theme and style now; what keeps colours of its own is redrawn
+void MainWindow::updateAppearance()
+{
+    isDarkTheme = applyAppearance(styleName, themeMode, customPalette);
+    for (QWidget *widget: QApplication::allWidgets()) widget->update();
+    applyZoom();
+}
+
+// View > Theme > Customize...: edit the custom theme with a live preview
+void MainWindow::customizeTheme()
+{
+    const ThemeMode previousMode = themeMode;
+    const QString previousPalette = customPalette;
+
+    ThemeEditorDialog editor(QApplication::palette(), this);
+    connect(&editor, &ThemeEditorDialog::previewChanged, this, [this](const QString &palette) {
+        isDarkTheme = applyAppearance(styleName, ThemeMode::Custom, palette);
+    });
+
+    QSettings settings;
+    if (editor.exec() == QDialog::Accepted) {
+        customPalette = editor.palette();
+        themeMode = ThemeMode::Custom;
+        settings.setValue("customPalette", customPalette);
+        settings.setValue("themeMode", static_cast<qint32>(themeMode));
+        if (customThemeAction) {
+            customThemeAction->setEnabled(true);
+            customThemeAction->setChecked(true);
+        }
+    } else {
+        themeMode = previousMode;
+        customPalette = previousPalette;
+    }
+
+    updateAppearance();
 }
