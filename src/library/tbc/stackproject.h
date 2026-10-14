@@ -1,6 +1,6 @@
 /******************************************************************************
  * stackproject.h
- * ld-stacker-gui - Disc stacking GUI
+ * ld-decode-tools TBC library
  *
  * SPDX-License-Identifier: GPL-3.0-or-later
  * SPDX-FileCopyrightText: 2026 ld-decode-tools contributors

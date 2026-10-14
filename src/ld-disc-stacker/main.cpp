@@ -36,6 +36,7 @@
 #include "targetvideo.h"
 #include "sourcevideo.h"
 #include "stackingpool.h"
+#include "stackproject.h"
 
 int main(int argc, char *argv[])
 {
@@ -141,11 +142,11 @@ int main(int argc, char *argv[])
 
     // Positional argument to specify input video file
     parser.addPositionalArgument("inputs", QCoreApplication::translate(
-                                     "main", "Specify input TBC files (- as first source for piped input)"));
+                                     "main", "Specify input TBC files (- as first source for piped input), or one .stack session file"));
 
     // Positional argument to specify output video file
     parser.addPositionalArgument("output", QCoreApplication::translate(
-                                     "main", "Specify output TBC file (omit or - for piped output)"));
+                                     "main", "Specify output TBC file (omit or - for piped output; with a .stack file, omit it to use the one in the session)"));
 
     // Process the command line options and arguments given by the user -----------------------------------------------
     parser.process(a);
@@ -231,6 +232,53 @@ int main(int argc, char *argv[])
     QVector<QString> inputFilenames;
     QString outputFilename = "-";
     QStringList positionalArguments = parser.positionalArguments();
+
+    // A .stack session file (made by ld-stacker-gui) gives the sources that are on, the offset of each,
+    // the stacking options and the output. What is given on the command line has the last word.
+    bool fromSession = false;
+    QVector<qint32> offsets;
+    if (!positionalArguments.isEmpty() && positionalArguments.at(0).endsWith(".stack", Qt::CaseInsensitive)) {
+        if (positionalArguments.count() > 2) {
+            qCritical("With a .stack session file, give at most the output TBC file after it");
+            return -1;
+        }
+
+        StackProject session;
+        QString sessionError;
+        if (!session.load(positionalArguments.at(0), sessionError)) {
+            qCritical().noquote() << sessionError;
+            return -1;
+        }
+
+        QStringList sessionArguments;
+        for (const StackSource &source: session.sources) {
+            if (!source.enabled) continue;
+            sessionArguments.append(source.file);
+            offsets.append(source.offset);
+        }
+        if (sessionArguments.count() < 2) {
+            qCritical("The session needs at least 2 sources that are on");
+            return -1;
+        }
+
+        QString sessionOutput = positionalArguments.count() == 2 ? positionalArguments.at(1) : session.outputFile;
+        if (sessionOutput.isEmpty()) {
+            qCritical("The session has no output file: give one after it");
+            return -1;
+        }
+        sessionArguments.append(sessionOutput);
+        positionalArguments = sessionArguments;
+        fromSession = true;
+
+        if (!parser.isSet(modeOption)) mode = session.stacking.mode;
+        if (!parser.isSet(smartThresholdOption)) smartThreshold = qBound(0, session.stacking.smartThreshold, 128) * 256;
+        if (!session.stacking.diffDod) noDiffDod = true;
+        if (session.stacking.passthrough) passThrough = true;
+        if (session.stacking.integrity) integrityCheck = true;
+        if (session.stacking.reverseFields) reverse = true;
+        qInfo().noquote() << "Stacking" << (sessionArguments.count() - 1) << "sources of the session, lined up by their offsets";
+    }
+
     qint32 totalNumberOfInputFiles = positionalArguments.count() - 1;
 
     // Ensure we don't have more than 32 sources
@@ -392,7 +440,7 @@ int main(int argc, char *argv[])
         }
 
         // Ensure source video has VBI data
-        if (!ldDecodeMetaData[i]->getFieldVbi(1).inUse) {
+        if (!fromSession && !ldDecodeMetaData[i]->getFieldVbi(1).inUse) {
             qInfo() << "Source video" << i << "does not appear to have valid VBI data in the metadata.";
             qInfo() << "Please try running ld-process-vbi on the source video and then try again";
             return 1;
@@ -406,12 +454,12 @@ int main(int argc, char *argv[])
             return 1;
         }
 
-        if (!videoParameters.isMapped && !noMap) {
+        if (!fromSession && !videoParameters.isMapped && !noMap) {
             qInfo() << "Source video" << i << "has not been mapped - run ld-discmap on all source videos and try again or use option \"no-map\"";
             qInfo() << "Disc stacking relies on accurate VBI frame numbering to match source frames together";
             return 1;
         }
-        else if(noMap)
+        else if(noMap && !fromSession)
         {
             if(!videoParameters.isMapped)
             {
@@ -425,6 +473,7 @@ int main(int argc, char *argv[])
     qint32 result = 0;
     StackingPool stackingPool(outputFilename, outputMetadataFilename, maxThreads,
                                 ldDecodeMetaData, sourceVideos, mode, smartThreshold, reverse, noDiffDod, passThrough, integrityCheck, verbose);
+    if (fromSession) stackingPool.setOffsets(offsets);
     if (!stackingPool.process()) result = 1;
 
     // Close open source video files

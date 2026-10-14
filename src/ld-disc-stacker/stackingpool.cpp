@@ -35,6 +35,12 @@ StackingPool::StackingPool(QString _outputFilename, QString _outputMetadataFilen
 {
 }
 
+void StackingPool::setOffsets(const QVector<qint32> &sourceOffsets)
+{
+    offsets = sourceOffsets;
+    useOffsets = true;
+}
+
 bool StackingPool::process()
 {
     qInfo() << "Performing final sanity checks...";
@@ -61,8 +67,8 @@ bool StackingPool::process()
     }
 
     qInfo() << "Scanning source videos for VBI frame number ranges...";
-    // Get the VBI frame range for all sources
-    if (!setMinAndMaxVbiFrames()) {
+    // Get the VBI frame range for all sources (not needed when the sources are lined up by offsets)
+    if (!useOffsets && !setMinAndMaxVbiFrames()) {
         qInfo() << "It was not possible to determine the VBI frame number range for the source video - cannot continue!";
         return false;
     }
@@ -153,7 +159,7 @@ bool StackingPool::getInputFrame(qint32& frameNumber,
 
     // Get the current VBI frame number based on the first source
     qint32 currentVbiFrame = -1;
-    if (numberOfSources > 1) currentVbiFrame = convertSequentialFrameNumberToVbi(frameNumber, 0);
+    if (numberOfSources > 1 && !useOffsets) currentVbiFrame = convertSequentialFrameNumberToVbi(frameNumber, 0);
 
     for (qint32 sourceNo = 0; sourceNo < numberOfSources; sourceNo++) {
         // Determine the fields for the input frame
@@ -166,6 +172,15 @@ bool StackingPool::getInputFrame(qint32& frameNumber,
             secondFieldNumber[sourceNo] = ldDecodeMetaData[sourceNo]->getSecondFieldNumber(frameNumber);
             if(verbose){tbcDebugStream().nospace() << "Source #0 fields are " <<
                                   firstFieldNumber[sourceNo] << "/" << secondFieldNumber[sourceNo];}
+        } else if (useOffsets) {
+            // Lined up by offset: the frame of this source that falls on the reference's frame
+            const qint32 ownFrame = sourceFrameFor(frameNumber, sourceNo, -1);
+            if (ownFrame >= 1) {
+                firstFieldNumber[sourceNo] = ldDecodeMetaData[sourceNo]->getFirstFieldNumber(ownFrame);
+                secondFieldNumber[sourceNo] = ldDecodeMetaData[sourceNo]->getSecondFieldNumber(ownFrame);
+            } else if (verbose) {
+                tbcDebugStream().nospace() << "Source #" << sourceNo << " has no frame at offset " << offsets.value(sourceNo, 0);
+            }
         } else if (currentVbiFrame >= sourceMinimumVbiFrame[sourceNo] && currentVbiFrame <= sourceMaximumVbiFrame[sourceNo]) {
             // Use VBI frame number mapping to get the same frame from the
             // current additional source
@@ -207,7 +222,9 @@ bool StackingPool::getInputFrame(qint32& frameNumber,
 
     // Figure out which of the available sources can be used to correct the current frame
     availableSourcesForFrame.clear();
-    if (numberOfSources > 1) {
+    if (useOffsets) {
+        availableSourcesForFrame = getAvailableSourcesByOffset(frameNumber);
+    } else if (numberOfSources > 1) {
         availableSourcesForFrame = getAvailableSourcesForFrame(currentVbiFrame);
     } else {
         availableSourcesForFrame.append(0);
@@ -459,6 +476,32 @@ bool StackingPool::isIntegrityOk(const SourceVideo::Data& inputFields,const LdDe
     return true;
 }
 
+// The frame of a source that falls on a frame of the reference (source 0) when the sources are lined up by
+// offsets, or -1 if the source has none there
+qint32 StackingPool::sourceFrameFor(qint32 frameNumber, qint32 sourceNo, qint32 /*currentVbiFrame*/)
+{
+    const qint32 ownFrame = sourceNo == 0 ? frameNumber : frameNumber - offsets.value(sourceNo, 0);
+    if (ownFrame < 1 || ownFrame > ldDecodeMetaData[sourceNo]->getNumberOfFrames()) return -1;
+    return ownFrame;
+}
+
+// The sources that have a frame (not a padded one) at a frame of the reference, lined up by offsets
+QVector<qint32> StackingPool::getAvailableSourcesByOffset(qint32 frameNumber)
+{
+    QVector<qint32> availableSourcesForFrame;
+    for (qint32 sourceNo = 0; sourceNo < sourceVideos.size(); sourceNo++) {
+        const qint32 ownFrame = sourceFrameFor(frameNumber, sourceNo, -1);
+        if (ownFrame < 1) continue;
+        const qint32 firstFieldNumber = ldDecodeMetaData[sourceNo]->getFirstFieldNumber(ownFrame);
+        const qint32 secondFieldNumber = ldDecodeMetaData[sourceNo]->getSecondFieldNumber(ownFrame);
+        if (firstFieldNumber < 1 || secondFieldNumber < 1) continue;
+        if (!ldDecodeMetaData[sourceNo]->getField(firstFieldNumber).pad && !ldDecodeMetaData[sourceNo]->getField(secondFieldNumber).pad) {
+            availableSourcesForFrame.append(sourceNo);
+        }
+    }
+    return availableSourcesForFrame;
+}
+
 // Method that returns a vector of the sources that contain data for the required VBI frame number
 QVector<qint32> StackingPool::getAvailableSourcesForFrame(qint32 vbiFrameNumber)
 {
@@ -543,7 +586,7 @@ void StackingPool::correctPhaseIDs()
 template<int field>
 void StackingPool::replaceFieldMetaData(qint32 frameNumber)
 {
-    const qint32 currentVbiFrame = convertSequentialFrameNumberToVbi(frameNumber, 0);
+    const qint32 currentVbiFrame = useOffsets ? -1 : convertSequentialFrameNumberToVbi(frameNumber, 0);
 
     qint32 fieldNumber = 0;
     if constexpr (field == 1) {
@@ -555,18 +598,25 @@ void StackingPool::replaceFieldMetaData(qint32 frameNumber)
     const LdDecodeMetaData::Field &currentField = ldDecodeMetaData[0]->getField(fieldNumber);
     if (currentField.pad) {
         for (int sourceNo = 1; sourceNo < ldDecodeMetaData.size(); ++sourceNo) {
-            if (currentVbiFrame < sourceMinimumVbiFrame[sourceNo] || currentVbiFrame > sourceMaximumVbiFrame[sourceNo]) {
-                continue;
-            }
-            const qint32 currentSourceFrameNumber = convertVbiFrameNumberToSequential(currentVbiFrame, sourceNo);
-            if (ldDecodeMetaData[sourceNo]->getNumberOfFrames() < currentSourceFrameNumber) {
-                continue;
+            // The frame of the other source that goes with this one
+            qint32 otherFrame = frameNumber;
+            if (useOffsets) {
+                otherFrame = sourceFrameFor(frameNumber, sourceNo, -1);
+                if (otherFrame < 1) continue;
+            } else {
+                if (currentVbiFrame < sourceMinimumVbiFrame[sourceNo] || currentVbiFrame > sourceMaximumVbiFrame[sourceNo]) {
+                    continue;
+                }
+                const qint32 currentSourceFrameNumber = convertVbiFrameNumberToSequential(currentVbiFrame, sourceNo);
+                if (ldDecodeMetaData[sourceNo]->getNumberOfFrames() < currentSourceFrameNumber) {
+                    continue;
+                }
             }
             qint32 otherFieldNumber = 0;
             if constexpr (field == 1) {
-                otherFieldNumber = ldDecodeMetaData[sourceNo]->getFirstFieldNumber(frameNumber);
+                otherFieldNumber = ldDecodeMetaData[sourceNo]->getFirstFieldNumber(otherFrame);
             } else {
-                otherFieldNumber = ldDecodeMetaData[sourceNo]->getSecondFieldNumber(frameNumber);
+                otherFieldNumber = ldDecodeMetaData[sourceNo]->getSecondFieldNumber(otherFrame);
             }
             if (ldDecodeMetaData[sourceNo]->getField(otherFieldNumber).pad) {
                 continue;

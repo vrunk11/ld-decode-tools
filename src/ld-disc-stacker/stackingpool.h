@@ -46,6 +46,11 @@ public:
 
     bool process();
 
+    // Line the sources up by an offset in frames each (as a stacking session does), instead of by their
+    // VBI frame numbers: source 0 is the reference, and source n has its frame f - offset[n] at the
+    // reference's frame f. Needs no VBI data or mapping.
+    void setOffsets(const QVector<qint32> &sourceOffsets);
+
     // Member functions used by worker threads
     bool getInputFrame(qint32& frameNumber,
                        QVector<qint32> &firstFieldNumber, QVector<SourceVideo::Data> &firstFieldVideoData, QVector<LdDecodeMetaData::Field> &firstFieldMetadata,
@@ -102,6 +107,9 @@ private:
     TargetVideo targetVideo;
 
     // Local source information
+    QVector<qint32> offsets;
+    bool useOffsets = false;
+
     QVector<bool> sourceDiscTypeCav;
     QVector<qint32> sourceMinimumVbiFrame;
     QVector<qint32> sourceMaximumVbiFrame;
@@ -110,6 +118,8 @@ private:
     qint32 convertSequentialFrameNumberToVbi(qint32 sequentialFrameNumber, qint32 sourceNumber);
     qint32 convertVbiFrameNumberToSequential(qint32 vbiFrameNumber, qint32 sourceNumber);
     QVector<qint32> getAvailableSourcesForFrame(qint32 vbiFrameNumber);
+    qint32 sourceFrameFor(qint32 frameNumber, qint32 sourceNo, qint32 currentVbiFrame);
+    QVector<qint32> getAvailableSourcesByOffset(qint32 frameNumber);
     bool writeOutputField(const SourceVideo::Data &fieldData);
     void correctPhaseIDs();
     bool isIntegrityOk(const SourceVideo::Data& inputFields,const LdDecodeMetaData::VideoParameters& videoParameters);
