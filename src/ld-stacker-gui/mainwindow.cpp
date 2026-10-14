@@ -216,23 +216,7 @@ void MainWindow::buildUi()
     tabBar->setUsesScrollButtons(true);
     tabBar->setElideMode(Qt::ElideNone);
     tabBar->setDrawBase(true);
-    // The stack is a button, on or off, beside the tabs of the sources: on, the picture is the stack, off it
-    // is the source of the tab chosen, so that the two can be compared by switching it
-    QWidget *tabRow = new QWidget;
-    QHBoxLayout *tabRowLayout = new QHBoxLayout(tabRow);
-    tabRowLayout->setContentsMargins(4, 4, 4, 0);
-    tabRowLayout->setSpacing(6);
-    stackButton = new QToolButton;
-    stackButton->setText(tr("Stack"));
-    stackButton->setIcon(dotIcon(STACK_COLOR));
-    stackButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-    stackButton->setCheckable(true);
-    stackButton->setChecked(true);
-    stackButton->setMinimumWidth(110);
-    stackButton->setToolTip(tr("On: the picture is the stack. Off: it is the source of the tab chosen. (key 0)"));
-    tabRowLayout->addWidget(stackButton);
-    tabRowLayout->addWidget(tabBar, 1);
-    mainLayout->addWidget(tabRow);
+    mainLayout->addWidget(tabBar);
 
     imageLabel = new QLabel(tr("Add sources to start"));
     imageLabel->setAlignment(Qt::AlignCenter);
@@ -292,6 +276,19 @@ void MainWindow::buildUi()
     chromaButton->setCheckable(true);
     chromaButton->setToolTip(tr("Decode the pictures to colour (with a 2D decoder)"));
     optionsLayout->addWidget(modeCombo);
+    // The stack is a button, on or off: on, the picture is the stack, off it is the source of the tab chosen,
+    // so that the two are compared by switching it
+    stackButton = new QPushButton(tr("Stack"));
+    stackButton->setIcon(dotIcon(STACK_COLOR));
+    stackButton->setCheckable(true);
+    stackButton->setChecked(true);
+    stackButton->setMinimumWidth(120);
+    // Clearly on or off, whatever the theme
+    const QString toggleStyle = "QPushButton:checked { background: palette(highlight); color: palette(highlighted-text); }";
+    stackButton->setStyleSheet(toggleStyle);
+    chromaButton->setStyleSheet(toggleStyle);
+    stackButton->setToolTip(tr("On: the picture is the stack. Off: it is the source of the tab chosen. (key 0 or S)"));
+    optionsLayout->addWidget(stackButton);
     optionsLayout->addWidget(chromaButton);
     chromaSettingsButton = new QPushButton(tr("Chroma settings..."));
     chromaSettingsButton->setToolTip(tr("The configuration of the chroma decoder"));
@@ -351,7 +348,7 @@ void MainWindow::buildUi()
         }
         viewChanged();
     });
-    connect(stackButton, &QToolButton::toggled, this, [this](bool on) {
+    connect(stackButton, &QPushButton::toggled, this, [this](bool on) {
         project.showStack = on;
         viewChanged();
     });

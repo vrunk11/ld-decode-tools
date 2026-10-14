@@ -122,7 +122,7 @@ private:
 
     QListWidget *sourceList = nullptr;
     QTabBar *tabBar = nullptr;
-    QToolButton *stackButton = nullptr;
+    QPushButton *stackButton = nullptr;
     QScrollArea *scrollArea = nullptr;
     QLabel *imageLabel = nullptr;
     SnrPlot *snrPlot = nullptr;
