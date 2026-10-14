@@ -26,6 +26,7 @@
 #include "correctorpool.h"
 #include "vbidecoder.h"
 #include "tbc/logging.h"
+#include "ldxcapture.h"
 
 CorrectorPool::CorrectorPool(QString _outputFilename, QString _outputMetadataFilename,
                              qint32 _maxThreads, QVector<LdDecodeMetaData *> &_ldDecodeMetaData, QVector<SourceVideo *> &_sourceVideos,
@@ -40,6 +41,9 @@ bool CorrectorPool::process()
 {
     qInfo() << "Performing final sanity checks...";
     // Open the target video (a CVBS output keeps the input's sample encoding)
+    const LdDecodeMetaData::VideoParameters &outputParameters = ldDecodeMetaData[0]->getVideoParameters();
+    targetVideo.setLdxVideo(outputParameters.fieldWidth, outputParameters.fieldHeight, outputParameters.sampleRate, QString(),
+                            LdxCapture::historyEntry("process", "dropout correction of " + QString::number(sourceVideos.size()) + " source(s)"));
     if (!targetVideo.open(outputFilename, ldDecodeMetaData[0]->getVideoParameters().system,
                           ldDecodeMetaData[0]->getCvbsFileMetadata().sampleEncoding)) {
         return false;
@@ -111,11 +115,11 @@ bool CorrectorPool::process()
     qInfo() << "Dropout correction complete -" << lastFrameNumber << "frames in" << totalSecs << "seconds (" <<
                lastFrameNumber / totalSecs << "FPS )";
 
-    qInfo() << "Creating metadata file for drop-out corrected TBC...";
-    ldDecodeMetaData[0]->write(outputMetadataFilename);
+    // Close the target video (an LDX output is finished before its metadata are added to it)
+    if (!targetVideo.close()) return false;
 
-    // Close the target video
-    targetVideo.close();
+    qInfo() << "Creating metadata file for drop-out corrected TBC...";
+    if (!ldDecodeMetaData[0]->write(outputMetadataFilename)) return false;
 
     return true;
 }

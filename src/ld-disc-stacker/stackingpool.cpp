@@ -25,6 +25,7 @@
 #include "stackingpool.h"
 #include "vbidecoder.h"
 #include "tbc/logging.h"
+#include "ldxcapture.h"
 
 StackingPool::StackingPool(QString _outputFilename, QString _outputMetadataFilename,
                              qint32 _maxThreads, QVector<LdDecodeMetaData *> &_ldDecodeMetaData, QVector<SourceVideo *> &_sourceVideos,
@@ -45,6 +46,9 @@ bool StackingPool::process()
 {
     qInfo() << "Performing final sanity checks...";
     // Open the target video (a CVBS output keeps the input's sample encoding)
+    const LdDecodeMetaData::VideoParameters &outputParameters = ldDecodeMetaData[0]->getVideoParameters();
+    targetVideo.setLdxVideo(outputParameters.fieldWidth, outputParameters.fieldHeight, outputParameters.sampleRate, QString(),
+                            LdxCapture::historyEntry("process", "stacking of " + QString::number(sourceVideos.size()) + " sources"));
     if (!targetVideo.open(outputFilename, ldDecodeMetaData[0]->getVideoParameters().system,
                           ldDecodeMetaData[0]->getCvbsFileMetadata().sampleEncoding)) {
         return false;
@@ -112,11 +116,11 @@ bool StackingPool::process()
     {
         qInfo() << "Stacking found " << skippedFrame << "corrupted frame";
     }
-    qInfo() << "Creating metadata file for stacked TBC...";
-    correctMetaData().write(outputMetadataFilename);
+    // Close the target video (an LDX output is finished before its metadata are added to it)
+    if (!targetVideo.close()) return false;
 
-    // Close the target video
-    targetVideo.close();
+    qInfo() << "Creating metadata file for stacked TBC...";
+    if (!correctMetaData().write(outputMetadataFilename)) return false;
 
     return true;
 }

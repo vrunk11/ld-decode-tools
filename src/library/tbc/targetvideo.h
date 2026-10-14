@@ -12,6 +12,7 @@
 #define TARGETVIDEO_H
 
 #include <QFile>
+#include <QJsonObject>
 #include <QString>
 #include <QVector>
 #include <memory>
@@ -30,6 +31,15 @@ public:
     TargetVideo(const TargetVideo &) = delete;
     TargetVideo &operator=(const TargetVideo &) = delete;
 
+    // An output that is an LDX file (name.ldx): the video is a TBC track of it, with a track for its metadata (which the
+    // tool writes afterwards to the same name, see LdDecodeMetaData::write) and, if asked, one for the analogue audio. Say
+    // what the video is, and what the tool did (the entry of the history, see LdxCapture::historyEntry), before open().
+    void setLdxVideo(qint32 fieldWidth, qint32 fieldHeight, double sampleRate, const QString &name, const QJsonObject &historyEntry);
+    void setLdxAudio(double sampleRate);
+    // 16-bit stereo audio of the fields written so far, for an LDX output (anything else: false, the tool writes its own file)
+    bool writeAudio(const QByteArray &samples);
+    bool isLdx() const;
+
     // Open the output; "-" is stdout. The video system and sample encoding
     // matter only for CVBS output.
     bool open(const QString &fileName, VideoSystem system,
@@ -43,6 +53,8 @@ public:
 
     bool isCvbs() const { return cvbs; }
 
+    struct LdxOutput;
+
 private:
     QFile file;
     bool cvbs = false;
@@ -51,6 +63,13 @@ private:
     QVector<quint16> pendingField;
     bool hasPendingField = false;
     QVector<qint16> frameData;
+    std::shared_ptr<LdxOutput> ldx;
+    QJsonObject ldxHistory;
+    qint32 ldxFieldWidth = 0, ldxFieldHeight = 0;
+    double ldxSampleRate = 0;
+    QString ldxName;
+    double ldxAudioRate = 0;
+    VideoSystem ldxSystem = PAL;
 };
 
 // Processing tools keep their output in the input's container (TBC or CVBS),

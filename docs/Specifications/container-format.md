@@ -221,3 +221,18 @@ An LDX file can be sent down a pipe, one producer to one consumer (`ld-container
 - the metadata of **each field** are one block each, **a JSON object as a member of `fields` is** (`seqNo` from 1 in the stream, `isFirstField`, `syncConf`, `fieldPhaseID`, `vbi`, `dropOuts`...), stamped with the time of the field and **sent just before its video**. A consumer has the metadata of a field by the time it has the field. A field without a block has the defaults of the system.
 
 A tool in the middle of the chain passes the blocks it does not know along unchanged, and it may **replace** the metadata of a field (a later block for the same `seqNo` wins, as the last metadata block of a file does) or add members to them, as long as the block goes before the video it is about. A tool that adds metadata to the stream sends the changed block of a field before that field's video, and so has to hold back the video of that field only until it has computed them (not the whole stream). A file that is written from such a stream keeps all the blocks; `ld-container unpack` and the tools that open a file use the last block of each field.
+
+## 20. The history of a file
+
+The history is a JSON array in the `LDX_HISTORY` tag, in the header of a file or a stream (and, for a tool that adds to a file, in the last tags of it, which are the current ones). Each tool that changes a capture adds **one entry** with the same members, so that a later tool can use the history without knowing the tool that wrote it:
+
+| member | what it is |
+|---|---|
+| `tool` | the name of the program (`ld-dropout-correct`, `ld-container`...) |
+| `version` | the build of the program (its commit) |
+| `command` | what it did: `pack`, `process`, `metadata`, `recompress`, `add`, `remove`, `stack`... |
+| `time` | when, in UTC (ISO 8601) |
+| `detail` | a sentence for a person (optional) |
+| `arguments` | the arguments of the program as they were given, so that the work can be done again or looked at (optional) |
+
+A tool may add members of its own (the files it read, the options it took, what it counted); a reader ignores those it does not know. The entries are in the order of the work, the oldest first; a stream keeps those that came in, and the tool in the chain adds its own before it sends the stream on. The library makes an entry with `LdxCapture::historyEntry`, and `ld-container history file.ldx` shows the history (`--json` gives the array). The history is a record and not a lock: it says what was done, and nothing in a file depends on it.

@@ -47,6 +47,12 @@ public:
     LdxCapture();
     ~LdxCapture();
 
+    // A line of the history of an LDX file, which says who did what, when and with what, to be used later (to know how
+    // a capture was made, to do it again, to tell a tool what it has to do): the tool and its version, the command, the
+    // time (UTC), the arguments of the program, and whatever the tool adds (the files it read and wrote, the options it
+    // took, what it counted) in extra, as members of the entry.
+    static QJsonObject historyEntry(const QString &command, const QString &detail = QString(), const QJsonObject &extra = QJsonObject());
+
     // Whether a name is that of an LDX file or of one of its tracks
     static bool isLdxName(const QString &name);
     // The path and the track (0 when none is named) of a name

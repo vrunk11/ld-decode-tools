@@ -34,3 +34,7 @@ Arguments:
 ## LDX files
 
 The input can be an LDX file (`capture.ldx`, or `capture.ldx#3` for one of its tracks): the video and the metadata are read from it, and the analogue audio from its `pcm` track. The output stays TBC and PCM files.
+
+### LDX output
+
+The output can be an LDX file (`out.ldx`): the video is a track of it, with a track for the metadata (the tool adds them when it is done) and, for `ld-discmap`, one for the analogue audio instead of the `.pcm` file. The history of the file records the work, with the arguments of the tool (`ld-container history out.ldx`).

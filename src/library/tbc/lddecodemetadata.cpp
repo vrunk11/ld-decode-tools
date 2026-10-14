@@ -911,6 +911,8 @@ QString LdDecodeMetaData::findMetadataFile(const QString &tbcFileName)
 
 QString LdDecodeMetaData::metadataFileName(const QString &tbcFileName, MetadataFormat _format)
 {
+    // An LDX file keeps its metadata in itself
+    if (LdxCapture::isLdxName(tbcFileName)) return tbcFileName;
     if (Cvbs::isDataFileName(tbcFileName)) return Cvbs::companionFileName(tbcFileName, _format == MetadataFormat::Json);
     // decode-orc's <name>.tbcy and <name>.tbcc have the metadata of <name>.tbc
     return TbcFiles::metadataBaseName(tbcFileName) + (_format == MetadataFormat::Json ? ".json" : ".db");

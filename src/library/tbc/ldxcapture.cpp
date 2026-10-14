@@ -69,6 +69,22 @@ struct LdxCapture::Private
 LdxCapture::LdxCapture() : d(new Private) {}
 LdxCapture::~LdxCapture() = default;
 
+QJsonObject LdxCapture::historyEntry(const QString &command, const QString &detail, const QJsonObject &extra)
+{
+    QJsonObject entry = extra;
+    entry["tool"] = QCoreApplication::applicationName().isEmpty() ? QStringLiteral("a tool of ld-decode-tools") : QCoreApplication::applicationName();
+#ifdef APP_COMMIT
+    entry["version"] = QStringLiteral(APP_COMMIT);
+#endif
+    entry["command"] = command;
+    entry["time"] = QDateTime::currentDateTimeUtc().toString(Qt::ISODate);
+    if (!detail.isEmpty()) entry["detail"] = detail;
+    QStringList arguments = QCoreApplication::instance() ? QCoreApplication::arguments() : QStringList();
+    if (!arguments.isEmpty()) arguments.removeFirst();
+    if (!arguments.isEmpty() && !entry.contains("arguments")) entry["arguments"] = QJsonArray::fromStringList(arguments);
+    return entry;
+}
+
 bool LdxCapture::isLdxName(const QString &name)
 {
     QString path;
@@ -405,12 +421,7 @@ bool LdxCapture::writeMetadata(const QString &name, const QByteArray &json, QStr
 
     Ldx::Writer writer;
     if (!writer.openAppend(path, error)) return false;
-    QJsonObject entry;
-    entry["tool"] = QCoreApplication::applicationName().isEmpty() ? QStringLiteral("a tool of ld-decode-tools") : QCoreApplication::applicationName();
-    entry["command"] = "metadata";
-    entry["detail"] = QString("the metadata of track %1").arg(track);
-    entry["time"] = QDateTime::currentDateTimeUtc().toString(Qt::ISODate);
-    writer.addHistory(entry);
+    writer.addHistory(historyEntry("metadata", QString("the metadata of track %1").arg(track)));
     if (!writer.writeBlock(metadataTrack, after, json)) {
         error = writer.lastError().isEmpty() ? QObject::tr("Could not add the metadata to %1").arg(path) : writer.lastError();
         return false;
