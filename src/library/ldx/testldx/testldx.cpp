@@ -200,6 +200,105 @@ static void testIdsAndAttachments(const QString &path)
     CHECK(!reader.nextBlock(block));
 }
 
+// A file that is already written is added to: blocks go at the end, what was there is kept, and the cues are written again
+static void testAppend(const QString &path)
+{
+    std::cerr << "Testing adding to a file\n";
+
+    QVector<Ldx::Block> written;
+    {
+        Ldx::Writer writer;
+        Ldx::Track video;
+        video.kind = Ldx::Kind::Tbc;
+        writer.addTrack(video);
+        Ldx::Track metadata;
+        metadata.kind = Ldx::Kind::Metadata;
+        metadata.depth = 0;
+        writer.addTrack(metadata);
+        writer.addAttachment("session.stack", "application/json", "{}");
+        QJsonObject entry;
+        entry["tool"] = "first";
+        writer.setHistory(QJsonArray { entry });
+        QString error;
+        CHECK(writer.open(path, error));
+        auto put = [&](quint32 track, qint64 timeNs, int size, int seed) {
+            Ldx::Block block;
+            block.track = track;
+            block.timeNs = timeNs;
+            block.data = pattern(size, seed);
+            CHECK(writer.writeBlock(block.track, block.timeNs, block.data));
+            written.append(block);
+        };
+        put(2, 0, 1000, 1);
+        for (int i = 0; i < 8; i++) put(1, i * 16683000LL, 100000, i);
+        CHECK(writer.finish(error));
+    }
+
+    // Add a newer block of the metadata, and a field
+    {
+        Ldx::Writer writer;
+        QString error;
+        CHECK(writer.openAppend(path, error));
+        QJsonObject entry;
+        entry["tool"] = "second";
+        writer.addHistory(entry);
+        Ldx::Block block;
+        block.track = 2;
+        block.timeNs = 8 * 16683000LL;
+        block.data = pattern(2000, 77);
+        CHECK(writer.writeBlock(block.track, block.timeNs, block.data));
+        written.append(block);
+        Ldx::Block field;
+        field.track = 1;
+        field.timeNs = 8 * 16683000LL + 1000;
+        field.data = pattern(100000, 78);
+        CHECK(writer.writeBlock(field.track, field.timeNs, field.data));
+        written.append(field);
+        CHECK(writer.finish(error));
+    }
+
+    // In the order of the file, everything is there
+    Ldx::Reader reader;
+    QString error;
+    CHECK(reader.open(path, error));
+    Ldx::Block block;
+    int index = 0;
+    while (reader.nextBlock(block)) {
+        CHECK(index < written.size());
+        CHECK(block.track == written[index].track && block.data == written[index].data);
+        index++;
+    }
+    CHECK(index == written.size());
+    // The history is that of the last tags in the file, and the attachment is still there
+    CHECK(reader.history().size() == 2 && reader.history().at(1).toObject()["tool"].toString() == "second");
+    QByteArray session;
+    CHECK(reader.attachment("session.stack", session) && session == "{}");
+
+    // By place in the track: the new blocks follow the old ones
+    Ldx::Reader random;
+    CHECK(random.open(path, error));
+    CHECK(random.buildIndex(error));
+    CHECK(random.blockCount(1) == 9 && random.blockCount(2) == 2);
+    Ldx::Block found;
+    CHECK(random.readBlock(2, 0, found) && found.data == pattern(1000, 1));
+    CHECK(random.readBlock(2, 1, found) && found.data == pattern(2000, 77));
+    CHECK(random.readBlock(1, 3, found) && found.data == pattern(100000, 3));
+    CHECK(random.readBlock(1, 8, found) && found.data == pattern(100000, 78));
+    CHECK(random.lastTimeNs() == 8 * 16683000LL + 1000);
+
+    // Added to again, the file is still whole
+    Ldx::Writer again;
+    CHECK(again.openAppend(path, error));
+    CHECK(again.writeBlock(2, 9 * 16683000LL, pattern(10, 5)));
+    CHECK(again.finish(error));
+    Ldx::Reader last;
+    CHECK(last.open(path, error));
+    CHECK(last.buildIndex(error));
+    CHECK(last.blockCount(2) == 3);
+    CHECK(last.readBlock(2, 2, found) && found.data == pattern(10, 5));
+    CHECK(last.readBlock(1, 0, found) && found.data == pattern(100000, 0));
+}
+
 static void testNotAnLdxFile(const QString &path)
 {
     std::cerr << "Testing a file that is not an LDX file\n";
@@ -223,6 +322,7 @@ int main(int argc, char *argv[])
     testBlockSizes(directory.path());
     testRoundTrip(directory.filePath("test.ldx"));
     testIdsAndAttachments(directory.filePath("ids.ldx"));
+    testAppend(directory.filePath("append.ldx"));
     testNotAnLdxFile(directory.filePath("garbage.ldx"));
 
     std::cerr << "All tests passed\n";

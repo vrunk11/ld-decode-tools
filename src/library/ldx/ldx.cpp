@@ -10,6 +10,7 @@
 
 #include "ldx.h"
 
+#include <QFile>
 #include <QJsonDocument>
 #include <QRandomGenerator>
 
@@ -160,7 +161,40 @@ struct Writer::Private
     std::vector<BlockCue> clusterBlocks;       // the blocks of the cluster being written
     std::vector<CueRecord> cueRecords;         // of all the blocks written, for the cues at the end
     bool finished = false;
+    bool appending = false;                    // a file that was already written is being added to
+    QString path;
     QString error;
+
+    // The entries of the tracks, for the file to be written or, when added to, for the blocks to name
+    void buildEntries()
+    {
+        KaxTrackEntry *previous = nullptr;
+        for (const Track &track: tracks) {
+            KaxTrackEntry &entry = previous ? GetNextChild<KaxTrackEntry>(*trackList, *previous) : GetChild<KaxTrackEntry>(*trackList);
+            previous = &entry;
+            entries[track.number] = &entry;
+
+            GetChild<KaxTrackNumber>(entry).SetValue(track.number);
+            GetChild<KaxTrackUID>(entry).SetValue(track.uid);
+            GetChild<KaxTrackFlagLacing>(entry).SetValue(0);
+            if (!track.name.isEmpty()) GetChild<KaxTrackName>(entry).SetValueUTF8(track.name.toUtf8().constData());
+
+            if (isSampleKind(track.kind)) {
+                GetChild<KaxTrackType>(entry).SetValue(track_audio);
+                GetChild<KaxCodecID>(entry).SetValue(PcmCodecId);
+                KaxTrackAudio &audio = GetChild<KaxTrackAudio>(entry);
+                GetChild<KaxAudioSamplingFreq>(audio).SetValue(StandInSampleRate);
+                GetChild<KaxAudioChannels>(audio).SetValue(1);
+                GetChild<KaxAudioBitDepth>(audio).SetValue(16);
+            } else {
+                GetChild<KaxTrackType>(entry).SetValue(33);     // metadata: the codec says what is in it
+                GetChild<KaxCodecID>(entry).SetValue(QByteArray("D_LDX/" + kindName(track.kind).toUpper().toLatin1()).constData());
+            }
+            const QByteArray description = trackDescription(track);
+            GetChild<KaxCodecPrivate>(entry).CopyBuffer(reinterpret_cast<const binary *>(description.constData()), description.size());
+            entry.SetGlobalTimecodeScale(TimecodeScaleNs);
+        }
+    }
 
     void flushCluster()
     {
@@ -253,32 +287,7 @@ bool Writer::open(const QString &fileName, QString &error)
         info.Render(*d->output, false);
 
         d->trackList = &GetChild<KaxTracks>(*d->segment);
-        KaxTrackEntry *previous = nullptr;
-        for (const Track &track: d->tracks) {
-            KaxTrackEntry &entry = previous ? GetNextChild<KaxTrackEntry>(*d->trackList, *previous) : GetChild<KaxTrackEntry>(*d->trackList);
-            previous = &entry;
-            d->entries[track.number] = &entry;
-
-            GetChild<KaxTrackNumber>(entry).SetValue(track.number);
-            GetChild<KaxTrackUID>(entry).SetValue(track.uid);
-            GetChild<KaxTrackFlagLacing>(entry).SetValue(0);
-            if (!track.name.isEmpty()) GetChild<KaxTrackName>(entry).SetValueUTF8(track.name.toUtf8().constData());
-
-            if (isSampleKind(track.kind)) {
-                GetChild<KaxTrackType>(entry).SetValue(track_audio);
-                GetChild<KaxCodecID>(entry).SetValue(PcmCodecId);
-                KaxTrackAudio &audio = GetChild<KaxTrackAudio>(entry);
-                GetChild<KaxAudioSamplingFreq>(audio).SetValue(StandInSampleRate);
-                GetChild<KaxAudioChannels>(audio).SetValue(1);
-                GetChild<KaxAudioBitDepth>(audio).SetValue(16);
-            } else {
-                GetChild<KaxTrackType>(entry).SetValue(33);     // metadata: the codec says what is in it
-                GetChild<KaxCodecID>(entry).SetValue(QByteArray("D_LDX/" + kindName(track.kind).toUpper().toLatin1()).constData());
-            }
-            const QByteArray description = trackDescription(track);
-            GetChild<KaxCodecPrivate>(entry).CopyBuffer(reinterpret_cast<const binary *>(description.constData()), description.size());
-            entry.SetGlobalTimecodeScale(TimecodeScaleNs);
-        }
+        d->buildEntries();
         d->trackList->Render(*d->output, false);
 
         // Space for tracks to be added to the file later
@@ -314,6 +323,62 @@ bool Writer::open(const QString &fileName, QString &error)
         d->cues.SetGlobalTimecodeScale(TimecodeScaleNs);
     } catch (const std::exception &exception) {
         error = QObject::tr("Could not write %1: %2").arg(fileName, QString::fromLocal8Bit(exception.what()));
+        return false;
+    }
+    return true;
+}
+
+void Writer::addHistory(const QJsonObject &entry)
+{
+    d->history.append(entry);
+}
+
+bool Writer::openAppend(const QString &fileName, QString &error)
+{
+    try {
+        // What the file holds now
+        Reader reader;
+        if (!reader.open(fileName, error)) return false;
+        if (reader.profile() < 1) {
+            error = QObject::tr("%1 is not an LDX file").arg(fileName);
+            return false;
+        }
+        if (!reader.buildIndex(error)) return false;
+        for (const Track &track: reader.tracks()) {
+            if (track.codec != Codec::Raw) {
+                error = QObject::tr("The %1 codec is not written by this build yet").arg(codecName(track.codec));
+                return false;
+            }
+            d->tracks.append(track);
+        }
+        d->history = reader.history();
+        d->nextId = reader.nextTrackId();
+        for (const Reader::BlockRef &ref: reader.blockRefs()) {
+            d->cueRecords.push_back({ ref.timeNs, ref.track, ref.clusterPosition, ref.relativePosition });
+        }
+        const quint64 cuesAt = reader.cuesPosition();
+        const quint64 segmentAt = reader.segmentPosition();
+        if (cuesAt == 0 || segmentAt == 0) {
+            error = QObject::tr("%1 has no cues to add after").arg(fileName);
+            return false;
+        }
+
+        d->path = fileName;
+        d->appending = true;
+        d->output.reset(new StdIOCallback(fileName.toLocal8Bit().constData(), MODE_SAFE));
+
+        // The segment as it is in the file (its head is written again, the same, to be known by the clusters)
+        d->segment.reset(new KaxSegment);
+        d->output->setFilePointer(static_cast<int64>(segmentAt));
+        d->segment->WriteHead(*d->output, 8);
+        d->trackList = &GetChild<KaxTracks>(*d->segment);
+        d->buildEntries();
+
+        // What is added goes where the cues were
+        d->output->setFilePointer(static_cast<int64>(cuesAt));
+        d->cues.SetGlobalTimecodeScale(TimecodeScaleNs);
+    } catch (const std::exception &exception) {
+        error = QObject::tr("Could not add to %1: %2").arg(fileName, QString::fromLocal8Bit(exception.what()));
         return false;
     }
     return true;
@@ -356,6 +421,17 @@ bool Writer::finish(QString &error)
     if (!d->output || d->finished) return true;
     try {
         d->flushCluster();
+        // A file that was added to: its history, with what was added, as tags at the end (the last ones are the current ones)
+        if (d->appending) {
+            KaxTags &tags = GetChild<KaxTags>(*d->segment);
+            KaxTag &tag = GetChild<KaxTag>(tags);
+            GetChild<KaxTagTargets>(tag);
+            KaxTagSimple *simple = nullptr;
+            setSimpleTag(tag, simple, "LDX_PROFILE", QByteArray::number(ProfileVersion));
+            setSimpleTag(tag, simple, "LDX_HISTORY", QJsonDocument(d->history).toJson(QJsonDocument::Compact));
+            setSimpleTag(tag, simple, "LDX_NEXT_TRACK_ID", QByteArray::number(d->nextId));
+            tags.Render(*d->output, false);
+        }
         // The cues, at the end: where the blocks of each track are
         if (!d->cueRecords.empty()) {
             KaxCues cues;
@@ -375,6 +451,8 @@ bool Writer::finish(QString &error)
         d->segment->ForceSize(end - d->segment->GetElementPosition() - d->segment->HeadSize());
         d->segment->OverwriteHead(*d->output);
         d->output->close();
+        // The cues are longer than before: nothing of the old ones is left
+        if (d->appending) QFile(d->path).resize(static_cast<qint64>(end));
         d->finished = true;
     } catch (const std::exception &exception) {
         error = QObject::tr("Could not finish the file: %1").arg(QString::fromLocal8Bit(exception.what()));
@@ -411,6 +489,7 @@ struct Reader::Private
     static constexpr quint64 NoPosition = ~static_cast<quint64>(0);
     std::map<quint32, std::vector<IndexEntry>> index;
     bool indexed = false;
+    quint64 cuesAt = 0;
 
     ~Private()
     {
@@ -491,6 +570,7 @@ struct Reader::Private
         while ((element = scan.FindNextElement(segmentElement->Generic().Context, upper, 0xFFFFFFFFL, true, 1)) != nullptr && upper <= 0) {
             std::unique_ptr<EbmlElement> owned(element);
             if (EbmlId(*element) == EBML_ID(KaxCues)) {
+                cuesAt = element->GetElementPosition();
                 int up = 0;
                 EbmlElement *dummy = nullptr;
                 element->Read(scan, EBML_CONTEXT(element), up, dummy, true);
@@ -756,6 +836,36 @@ bool Reader::buildIndex(QString &error)
     }
     d->indexed = true;
     return true;
+}
+
+QVector<Reader::BlockRef> Reader::blockRefs() const
+{
+    QVector<BlockRef> refs;
+    for (const auto &track: d->index) {
+        for (const Private::IndexEntry &entry: track.second) {
+            refs.append({ track.first, entry.timeNs, entry.clusterPosition, entry.relativePosition == Private::NoPosition ? 0 : entry.relativePosition });
+        }
+    }
+    return refs;
+}
+
+quint64 Reader::cuesPosition() const
+{
+    return d->cuesAt;
+}
+
+quint64 Reader::segmentPosition() const
+{
+    return d->segmentElement ? static_cast<quint64>(d->segmentElement->GetElementPosition()) : 0;
+}
+
+qint64 Reader::lastTimeNs() const
+{
+    qint64 last = 0;
+    for (const auto &track: d->index) {
+        if (!track.second.empty()) last = qMax(last, track.second.back().timeNs);
+    }
+    return last;
 }
 
 qint64 Reader::blockCount(quint32 track) const
