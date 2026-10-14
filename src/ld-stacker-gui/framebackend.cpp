@@ -53,6 +53,14 @@ FrameBackend::FrameBackend(QObject *parent)
     qRegisterMetaType<SourceInfo>("SourceInfo");
     qRegisterMetaType<FrameRequest>("FrameRequest");
     qRegisterMetaType<FrameResult>("FrameResult");
+
+    // As ld-analyse sets them: 2D decoders, which need only the frame itself, and 16-bit colour
+    palConfiguration = palColour.getConfiguration();
+    palConfiguration.chromaFilter = PalColour::transform2DFilter;
+    ntscConfiguration = ntscColour.getConfiguration();
+    ntscConfiguration.dimensions = 2;
+    outputConfiguration.pixelFormat = OutputWriter::PixelFormat::RGB48;
+    outputConfiguration.paddingAmount = 1;
 }
 
 void FrameBackend::addSource(const QString &id, const QString &file, bool reverseFields)
@@ -132,6 +140,73 @@ QImage FrameBackend::weave(const SourceVideo::Data &first, const SourceVideo::Da
     return image;
 }
 
+void FrameBackend::configureDecoders(LdDecodeMetaData::VideoParameters videoParameters)
+{
+    // Set up again only when the video is not what the decoders were set up for
+    const QString key = QString("%1/%2/%3/%4/%5/%6/%7/%8/%9/%10/%11").arg(videoParameters.system).arg(videoParameters.fieldWidth)
+        .arg(videoParameters.fieldHeight).arg(videoParameters.black16bIre).arg(videoParameters.white16bIre)
+        .arg(videoParameters.colourBurstStart).arg(videoParameters.colourBurstEnd).arg(videoParameters.activeVideoStart)
+        .arg(videoParameters.activeVideoEnd).arg(videoParameters.firstActiveFrameLine).arg(videoParameters.lastActiveFrameLine);
+    if (key == decoderKey) return;
+    decoderKey = key;
+
+    if (videoParameters.system == PAL || videoParameters.system == PAL_M) palColour.updateConfiguration(videoParameters, palConfiguration);
+    else ntscColour.updateConfiguration(videoParameters, ntscConfiguration);
+    outputWriter.updateConfiguration(videoParameters, outputConfiguration);
+}
+
+// The picture of a frame as ld-analyse shows it with the chroma decoder on: the active picture in
+// colour, in a frame that is black around it
+QImage FrameBackend::chromaPicture(Loaded &source, qint32 ownFrame, const SourceVideo::Data *stackedFirst, const SourceVideo::Data *stackedSecond)
+{
+    const LdDecodeMetaData::VideoParameters videoParameters = source.metadata.getVideoParameters();
+    configureDecoders(videoParameters);
+    const bool isPal = videoParameters.system == PAL || videoParameters.system == PAL_M;
+
+    const qint32 lookBehind = isPal ? palConfiguration.getLookBehind() : ntscConfiguration.getLookBehind();
+    const qint32 lookAhead = isPal ? palConfiguration.getLookAhead() : ntscConfiguration.getLookAhead();
+
+    QVector<SourceField> fields;
+    qint32 startIndex, endIndex;
+    SourceField::loadFields(source.video, source.metadata, ownFrame, 1, lookBehind, lookAhead, fields, startIndex, endIndex);
+
+    if (stackedFirst && stackedSecond && endIndex - startIndex == 2) {
+        fields[startIndex].data = *stackedFirst;
+        fields[startIndex + 1].data = *stackedSecond;
+        if (isPal && videoParameters.isSubcarrierLocked) {
+            // As the fields are read for the decoder: 4fSC PAL has the second field two samples out
+            fields[startIndex + 1].data.remove(0, 2);
+            for (qint32 i = 0; i < 2; i++) fields[startIndex + 1].data.append(videoParameters.black16bIre);
+        }
+    }
+
+    QVector<ComponentFrame> componentFrames(1);
+    if (isPal) palColour.decodeFrames(fields, startIndex, endIndex, componentFrames);
+    else ntscColour.decodeFrames(fields, startIndex, endIndex, componentFrames);
+
+    OutputFrame outputFrame;
+    outputWriter.convert(componentFrames[0], outputFrame);
+    const quint16 *rgb48 = reinterpret_cast<const quint16 *>(outputFrame.data());
+
+    const qint32 frameWidth = videoParameters.fieldWidth;
+    const qint32 frameHeight = videoParameters.fieldHeight * 2 - 1;
+    const qint32 inputHeight = videoParameters.lastActiveFrameLine - videoParameters.firstActiveFrameLine;
+    const qint32 inputWidth = videoParameters.activeVideoEnd - videoParameters.activeVideoStart;
+
+    QImage image(frameWidth, frameHeight, QImage::Format_RGB32);
+    image.fill(Qt::black);
+    for (qint32 y = 0; y < inputHeight; y++) {
+        const qint32 row = y + videoParameters.firstActiveFrameLine;
+        if (row < 0 || row >= frameHeight) continue;
+        QRgb *out = reinterpret_cast<QRgb *>(image.scanLine(row)) + videoParameters.activeVideoStart;
+        const quint16 *in = rgb48 + static_cast<qsizetype>(y) * inputWidth * 3;
+        for (qint32 x = 0; x < inputWidth; x++) {
+            out[x] = qRgb(in[x * 3] / 256, in[x * 3 + 1] / 256, in[x * 3 + 2] / 256);
+        }
+    }
+    return image;
+}
+
 void FrameBackend::render(const FrameRequest &request)
 {
     // Overtaken by a newer request: not worth the time
@@ -179,7 +254,8 @@ void FrameBackend::render(const FrameRequest &request)
                     secondData = source.video.getVideoField(second);
                     firstData = source.video.getVideoField(first);
                 }
-                result.image = weave(firstData, secondData, videoParameters.fieldWidth, videoParameters.fieldHeight);
+                result.image = request.chroma ? chromaPicture(source, frames[i], nullptr, nullptr)
+                                              : weave(firstData, secondData, videoParameters.fieldWidth, videoParameters.fieldHeight);
             }
         }
         emit frameReady(result);
@@ -244,7 +320,12 @@ void FrameBackend::render(const FrameRequest &request)
                     request.settings.passthrough, outputSecond, outputSecondDropOuts, mode,
                     request.settings.smartThreshold, false);
 
-    result.image = weave(outputFirst, outputSecond, videoParameters.fieldWidth, videoParameters.fieldHeight);
+    if (request.chroma) {
+        Loaded &referenceSource = *sources.value(request.entries[usable[0]].id);
+        result.image = chromaPicture(referenceSource, frames[usable[0]], &outputFirst, &outputSecond);
+    } else {
+        result.image = weave(outputFirst, outputSecond, videoParameters.fieldWidth, videoParameters.fieldHeight);
+    }
 
     // The SNR of the stack is not in any metadata: it is measured from the stacked fields
     double whiteTotal = 0, blackTotal = 0;

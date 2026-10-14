@@ -146,13 +146,14 @@ void MainWindow::buildUi()
         QAction *remove = menu.addAction(tr("Remove"));
         if (menu.exec(sourceList->viewport()->mapToGlobal(position)) == remove) removeSource(item->data(Qt::UserRole).toString());
     });
-    connect(sourceList, &QListWidget::currentItemChanged, this, [this](QListWidgetItem *item) {
-        // The row picked is the tab shown (not when the list sets its own current row as it is filled)
-        if (!item || !sourceList->hasFocus()) return;
-        const QString id = item->data(Qt::UserRole).toString();
-        const qint32 index = project.indexOfSource(id);
+    // A row clicked is the tab shown (the list picks a current row of its own as it is filled, which is not a choice)
+    const auto showRow = [this](QListWidgetItem *item) {
+        if (!item) return;
+        const qint32 index = project.indexOfSource(item->data(Qt::UserRole).toString());
         if (index >= 0 && tabBar->currentIndex() != index + 1) tabBar->setCurrentIndex(index + 1);
-    });
+    };
+    connect(sourceList, &QListWidget::itemClicked, this, showRow);
+    connect(sourceList, &QListWidget::itemActivated, this, showRow);
     QShortcut *deleteKey = new QShortcut(QKeySequence::Delete, sourceList);
     connect(deleteKey, &QShortcut::activated, this, [this]() {
         if (sourceList->currentItem()) removeSource(sourceList->currentItem()->data(Qt::UserRole).toString());
@@ -227,8 +228,7 @@ void MainWindow::buildUi()
     modeCombo->setToolTip(tr("Stacking mode"));
     chromaButton = new QPushButton(tr("Chroma"));
     chromaButton->setCheckable(true);
-    chromaButton->setEnabled(false);
-    chromaButton->setToolTip(tr("Chroma decoding of the pictures: not available yet"));
+    chromaButton->setToolTip(tr("Decode the pictures to colour (with a 2D decoder)"));
     optionsLayout->addWidget(modeCombo);
     optionsLayout->addWidget(chromaButton);
     optionsLayout->addStretch(1);
@@ -291,6 +291,10 @@ void MainWindow::buildUi()
     connect(modeCombo, &QComboBox::currentIndexChanged, this, [this](qint32 index) {
         project.stacking.mode = index - 1;
         sourcesChanged();
+    });
+    connect(chromaButton, &QPushButton::toggled, this, [this](bool on) {
+        project.chroma = on;
+        requestFrame();
     });
     connect(zoomIn, &QToolButton::clicked, this, [this]() { setZoom(zoom * 1.25); });
     connect(zoomOut, &QToolButton::clicked, this, [this]() { setZoom(zoom / 1.25); });
@@ -413,6 +417,10 @@ void MainWindow::loadSession(const QString &fileName)
         modeCombo->setCurrentIndex(qBound(0, project.stacking.mode + 1, modeCombo->count() - 1));
     }
     setZoom(project.zoom);
+    {
+        const QSignalBlocker blocker(chromaButton);
+        chromaButton->setChecked(project.chroma);
+    }
     setWindowTitle(tr("ld-stacker-gui - %1").arg(QFileInfo(fileName).fileName()));
 
     rebuildSourceList();
@@ -683,6 +691,7 @@ void MainWindow::requestFrame()
     request.serial = ++serial;
     request.frame = frame;
     request.view = currentView();
+    request.chroma = project.chroma;
     request.settings = project.stacking;
     for (const StackSource &source: project.sources) {
         FrameRequest::Entry entry;

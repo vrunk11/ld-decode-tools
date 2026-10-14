@@ -20,6 +20,10 @@
 #include <memory>
 
 #include "lddecodemetadata.h"
+#include "comb.h"
+#include "outputwriter.h"
+#include "palcolour.h"
+#include "sourcefield.h"
 #include "sourcevideo.h"
 #include "stackproject.h"
 
@@ -50,6 +54,7 @@ struct FrameRequest {
     quint64 serial = 0;
     qint32 frame = 1;
     QString view = "stack";       // "stack" or the id of a source
+    bool chroma = false;          // the picture is chroma decoded
     QVector<Entry> entries;       // in the order of the list
     StackSettings settings;
 };
@@ -104,8 +109,21 @@ private:
     // Frame number of a source for a frame of the stack, or -1 if the source has none there
     qint32 sourceFrame(Loaded &source, qint32 frame, qint32 offset);
     static QImage weave(const SourceVideo::Data &first, const SourceVideo::Data &second, qint32 width, qint32 fieldHeight);
+    // The picture of a frame decoded to colour. For the stack, the two fields stacked are given and
+    // replace those of the source the frame is read from.
+    QImage chromaPicture(Loaded &source, qint32 ownFrame, const SourceVideo::Data *stackedFirst, const SourceVideo::Data *stackedSecond);
+    void configureDecoders(LdDecodeMetaData::VideoParameters videoParameters);
 
     QMap<QString, std::shared_ptr<Loaded>> sources;
+
+    // The chroma decoders, set up for the video parameters of the last picture
+    PalColour palColour;
+    Comb ntscColour;
+    OutputWriter outputWriter;
+    PalColour::Configuration palConfiguration;
+    Comb::Configuration ntscConfiguration;
+    OutputWriter::Configuration outputConfiguration;
+    QString decoderKey;
 };
 
 #endif // FRAMEBACKEND_H
