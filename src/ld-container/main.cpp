@@ -268,6 +268,7 @@ void addCaptureOptions(QCommandLineParser &parser)
     parser.addOption(QCommandLineOption("start", "First field to pack (default 0)", "field", "0"));
     parser.addOption(QCommandLineOption("fields", "Number of fields to pack (default all)", "count", "0"));
     parser.addOption(QCommandLineOption("name", "Name of the capture (default: the name of the file)", "name"));
+    parser.addOption(QCommandLineOption("codec", "How the video and the audio are kept: raw (default) or flac", "codec", "raw"));
 }
 
 struct CaptureOptions {
@@ -276,6 +277,7 @@ struct CaptureOptions {
     QString pcm;                // the audio, if any
     double pcmRate = 44100;
     QString name;               // the name of the capture, the name of its file when empty
+    QString codec = "raw";      // how the video and the audio are kept
 };
 
 CaptureOptions captureOptions(const QCommandLineParser &parser)
@@ -286,6 +288,7 @@ CaptureOptions captureOptions(const QCommandLineParser &parser)
     options.pcm = parser.value("pcm");
     options.pcmRate = parser.value("pcm-rate").toDouble();
     options.name = parser.value("name");
+    options.codec = parser.value("codec");
     return options;
 }
 
@@ -348,8 +351,14 @@ bool readCapture(const CaptureOptions &options, const QString &input, Capture &c
     capture.metadataJson = jsonFile.readAll();
 
     const QString name = !options.name.isEmpty() ? options.name : QFileInfo(input).fileName();
+    const Ldx::Codec codec = Ldx::codecFromName(options.codec);
+    if (codec != Ldx::Codec::Raw && codec != Ldx::Codec::Flac) {
+        err << "The codec of the video and the audio is raw or flac, and not " << options.codec << "\n";
+        return false;
+    }
     capture.video.kind = Ldx::Kind::Tbc;
     capture.video.depth = 16;
+    capture.video.codec = codec;
     capture.video.name = name;
     capture.video.parameters["system"] = systemName(video.system);
     capture.video.parameters["sampleRate"] = video.sampleRate;
@@ -372,6 +381,7 @@ bool readCapture(const CaptureOptions &options, const QString &input, Capture &c
         capture.pcmRate = options.pcmRate;
         capture.audio.kind = Ldx::Kind::Pcm;
         capture.audio.depth = 16;
+        capture.audio.codec = codec;
         capture.audio.name = QFileInfo(capture.pcm->fileName()).fileName();
         capture.audio.parameters["sampleRate"] = capture.pcmRate;
         capture.audio.parameters["channels"] = 2;
@@ -695,6 +705,7 @@ int setStack(const QStringList &arguments)
     parser.addPositionalArgument("session", "The .stack file");
     parser.addOption(QCommandLineOption({ "o", "output" }, "The LDX file to write", "file"));
     parser.addOption(QCommandLineOption("embed", "Bring the sources that are .tbc files into the LDX file, as tracks (the others stay links)"));
+    parser.addOption(QCommandLineOption("codec", "With --embed, how the video and the audio brought in are kept: raw (default) or flac", "codec", "raw"));
     parser.process(arguments);
     if (parser.positionalArguments().size() != 2 || !parser.isSet("output")) {
         err << parser.helpText();
@@ -771,6 +782,7 @@ int setStack(const QStringList &arguments)
         } else if (parser.isSet("embed") && absolute.endsWith(".tbc", Qt::CaseInsensitive)) {
             // A .tbc: brought in as a track of this file, with its audio if a .pcm of the same name is beside it
             CaptureOptions options;
+            options.codec = parser.value("codec");
             options.name = object.value("label").toString().isEmpty() ? QFileInfo(absolute).fileName() : object.value("label").toString();
             const QString pcm = QFileInfo(absolute).dir().filePath(QFileInfo(absolute).completeBaseName() + ".pcm");
             if (QFileInfo::exists(pcm)) options.pcm = pcm;
@@ -865,6 +877,12 @@ int info(const QStringList &arguments)
         lastTime[block.track] = block.timeNs;
     }
 
+    qint64 holds = 0;
+    for (const qint64 size: bytes) holds += size;
+    const qint64 fileSize = QFileInfo(parser.positionalArguments().first()).size();
+    out << "File: " << fileSize << " bytes for " << holds << " bytes of data";
+    if (holds > 0) out << " (" << QString::number(100.0 * static_cast<double>(fileSize) / static_cast<double>(holds), 'f', 1) << " %)";
+    out << "\n";
     out << "Tracks (the next id is " << reader.nextTrackId() << "):\n";
     for (const Ldx::Track &track: reader.tracks()) {
         out << trackLine(track) << "\n";
@@ -954,6 +972,67 @@ int extractTrack(const QStringList &arguments)
     }
     if (lastOnly) file.write(last);
     file.flush();
+    return 0;
+}
+
+// ld-container recompress file.ldx --codec flac [--id 1] -o output.ldx
+int recompress(const QStringList &arguments)
+{
+    QCommandLineParser parser;
+    parser.setApplicationDescription("Keep the tracks of 16-bit samples (the TBC, the audio) of an LDX file as flac, or as raw again, without\n"
+                                     "changing what they hold. One track with --id, else all of them. The file is written again, to the output.");
+    parser.addHelpOption();
+    parser.addPositionalArgument("file", "The LDX file");
+    parser.addOption(QCommandLineOption("codec", "raw or flac", "codec"));
+    parser.addOption(QCommandLineOption("id", "Only the track with this id", "id"));
+    parser.addOption(QCommandLineOption({ "o", "output" }, "The LDX file to write", "file"));
+    parser.process(arguments);
+    if (parser.positionalArguments().size() != 1 || !parser.isSet("codec") || !parser.isSet("output")) {
+        err << parser.helpText();
+        return 1;
+    }
+    const Ldx::Codec codec = Ldx::codecFromName(parser.value("codec"));
+    if (codec != Ldx::Codec::Raw && codec != Ldx::Codec::Flac) {
+        err << "The codec is raw or flac\n";
+        return 1;
+    }
+    const QString source = parser.positionalArguments().first();
+    const QString output = parser.value("output");
+    if (sameFile(source, output)) {
+        err << "The output must not be the file that is read\n";
+        return 1;
+    }
+
+    Rewrite rewrite;
+    if (!openForRewrite(rewrite, source)) return 1;
+    int changed = 0;
+    for (Ldx::Track &track: rewrite.tracks) {
+        const bool samples = track.kind == Ldx::Kind::Tbc || track.kind == Ldx::Kind::Rf || track.kind == Ldx::Kind::Pcm;
+        if (!samples || (parser.isSet("id") && track.number != parser.value("id").toUInt())) continue;
+        if (track.codec != codec) changed++;
+        track.codec = codec;
+    }
+    if (parser.isSet("id") && changed == 0) {
+        err << "There is no track " << parser.value("id") << " of 16-bit samples to change in " << source << "\n";
+        return 1;
+    }
+
+    Ldx::Writer writer;
+    prepareWriter(rewrite, writer, {});
+    rewrite.history.append(historyEntry("recompress", QString("%1 as %2").arg(parser.isSet("id") ? "track " + parser.value("id") : QString("the tracks of samples"), parser.value("codec"))));
+    writer.setHistory(rewrite.history);
+
+    QString error;
+    if (!writer.open(output, error)) {
+        err << error << "\n";
+        return 1;
+    }
+    LdxSource old(rewrite.reader, {});
+    if (!mergeInto(writer, { &old }) || !writer.finish(error)) {
+        if (!error.isEmpty()) err << error << "\n";
+        return 1;
+    }
+    out << changed << " track(s) now " << parser.value("codec") << ", written to " << output << ": " << QFileInfo(output).size() << " bytes, from " << QFileInfo(source).size() << "\n";
     return 0;
 }
 
@@ -1116,6 +1195,7 @@ int main(int argc, char *argv[])
                "  stack    keep a stacking session in an .ldx file, its sources being tracks\n"
                "  unpack   write the tracks and attachments of an .ldx file out as separate files\n"
                "  info     show what an .ldx file holds\n"
+               "  recompress  keep the tracks of 16-bit samples as flac, or as raw again\n"
                "  verify   check that every block of an .ldx file reads back the same, in order and by place\n"
                "  extract  write the data of one track as it is, to a file or to the standard output (to be piped)\n\n"
                "Use ld-container <command> --help for the options of a command.\n";
@@ -1132,6 +1212,7 @@ int main(int argc, char *argv[])
     if (command == "unpack") return unpack(arguments);
     if (command == "info") return info(arguments);
     if (command == "verify") return verify(arguments);
+    if (command == "recompress") return recompress(arguments);
     if (command == "extract") return extractTrack(arguments);
     err << "Unknown command " << command << "\n";
     return 1;

@@ -37,7 +37,7 @@ A reader recognises the profile by the tag `LDX_PROFILE` (the version of this do
 
 ## 3. Streams
 
-Each stream is a **Matroska track**. A track has a *kind*, a *bit depth* (the useful bits of a sample), a *codec*, and parameters. They are written in the track's `CodecPrivate` as a JSON object (UTF-8), so that a tool that does not know the track can still list it.
+Each stream is a **Matroska track**. A track has a *kind*, a *bit depth* (the useful bits of a sample), a *codec*, and parameters. They are written as a JSON object (UTF-8) in a **tag of the track** (`LDX_TRACK`, whose target is the track), so that a tool that does not know the track can still list it. (A raw track also has it in its `CodecPrivate`, as the first files did; the `CodecPrivate` of a FLAC track is the data its decoder needs, so the tag is the way that works for all.)
 
 | Kind | Content | Unit of a block | Depth |
 |---|---|---|---|
@@ -170,7 +170,7 @@ The tools take an LDX file where they take a `.tbc`, and say which capture with 
 
 A source of a session that is a track of another file is the same name (`"file": "other.ldx", "track": 3` is `other.ldx#3`). The metadata of a capture are read from its metadata track, and the metadata of a session are those of its first source that is on, as for a `.stack` file. The tools do not write metadata into an LDX file: `ld-container` does.
 
-The first implementation reads `tbc` tracks that are raw. A `cvbs` track and the FLAC and FFV1 codecs are refused with a message that names them until they are written.
+The first implementation reads `tbc` tracks that are raw or FLAC. A `cvbs` track and the FFV1 codec are refused with a message that names them until they are written.
 
 ## 16. Adding to a file in place
 
@@ -181,3 +181,16 @@ A tool that adds blocks to a file that is already written does it where the file
 **EFM and AC3** are tracks of kind `efm` and `ac3` (8 bits). The file they come from has no time of its own, so it is cut in chunks of 64 KiB, which are stamped in proportion to where they are in the file over the time of the video; the chunks put end to end are the file. Their parameters say which track they go with.
 
 **Analogue audio** is a `pcm` track (16-bit stereo, the real sample rate in its parameters, blocks of whole samples one after the other). A tool that wants the samples from a number reads them from the track about the capture: the first sample of a block is found from its time and the sample rate.
+
+## 17. FLAC
+
+A track of 16-bit samples (`tbc`, `rf`, `pcm`) can be kept as FLAC (`"codec": "flac"` in the description of the track). It is the Matroska codec `A_FLAC`, so that its `CodecPrivate` is `fLaC` and the STREAMINFO block, and a player that knows Matroska lists the track.
+
+- **A block of the file holds one block of samples** (a field, a piece of audio) as the FLAC frames of the encoder, laced (EBML lacing). Frames are of 32,768 samples, so a block is at most 8 frames, **262,144 samples** per channel (a field of a TBC is 239,330). A longer block is refused.
+- **Unsigned samples** (`tbc`) are made signed before they are coded, by taking 32,768 from them (the top bit flipped), and the other way after, so that the wave does not jump where it crosses the middle of the range. A reader of FLAC that does not know this sees the samples with the top bit flipped.
+- **Stereo audio** (`pcm`, two channels) is coded as two FLAC channels together, not as one channel of samples that alternate.
+- **Sample rate**: the rate in the FLAC and Matroska data is a stand-in (48,000 Hz), as for raw tracks. The real rate is in the parameters of the track.
+- **ffmpeg** (libavcodec) encodes and decodes; the container is written by the library. A build without ffmpeg reads and writes raw tracks only, and says so for a FLAC track.
+- **Other programs**: `ffprobe` lists a FLAC track, and `ffmpeg` decodes it (`-af asetpts=N/SR/TB` to give the samples a continuous time, since a block holds more samples than its place in the file's time stands for).
+
+Measured on a NTSC capture, the tracks of the TBC and the audio together are about **69 to 71 %** of their raw size.
