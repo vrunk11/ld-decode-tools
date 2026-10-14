@@ -25,6 +25,7 @@
 #ifndef STACKINGPOOL_H
 #define STACKINGPOOL_H
 
+#include <QJsonArray>
 #include <QObject>
 #include <QAtomicInt>
 #include <QElapsedTimer>
@@ -58,6 +59,9 @@ public:
                        QVector<LdDecodeMetaData::VideoParameters> &videoParameters,
                        qint32& _mode, qint32& _smartThreshold, bool& _reverse, bool &_noDiffDod, bool &_passThrough,
                        bool &_verbose, QVector<qint32> &availableSourcesForFrame);
+
+    // What the output is when it is an LDX file or stream: the history of the source, and whether "-" is a stream
+    void setLdx(bool stream, const QJsonArray &history) { ldxStream = stream; sourceHistory = history; }
 
     bool setOutputFrame(qint32 frameNumber,
                         SourceVideo::Data firstTargetFieldData, SourceVideo::Data secondTargetFieldData,
@@ -106,6 +110,11 @@ private:
     QMap<qint32, OutputFrame> pendingOutputFrames;
     TargetVideo targetVideo;
 
+    // An output that is an LDX stream ("-"): each field goes with its own metadata
+    bool ldxStream = false;
+    QJsonArray sourceHistory;
+    qint32 streamFieldCount = 0;
+
     // Local source information
     QVector<qint32> offsets;
     bool useOffsets = false;
@@ -120,6 +129,7 @@ private:
     QVector<qint32> getAvailableSourcesForFrame(qint32 vbiFrameNumber);
     qint32 sourceFrameFor(qint32 frameNumber, qint32 sourceNo, qint32 currentVbiFrame);
     QVector<qint32> getAvailableSourcesByOffset(qint32 frameNumber);
+    QJsonArray historyWith(const QJsonObject &entry) const;
     bool writeOutputField(const SourceVideo::Data &fieldData);
     void correctPhaseIDs();
     bool isIntegrityOk(const SourceVideo::Data& inputFields,const LdDecodeMetaData::VideoParameters& videoParameters);

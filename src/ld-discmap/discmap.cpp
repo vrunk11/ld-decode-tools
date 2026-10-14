@@ -764,10 +764,22 @@ qint32 DiscMap::getSecondFieldAudioDataLength(qint32 frameNumber) const
 // Save the target metadata from the disc map
 bool DiscMap::saveTargetMetadata(QFileInfo outputFileInfo)
 {
+    LdDecodeMetaData targetMetadata;
+    if (!buildTargetMetadata(targetMetadata)) return false;
+
+    // Save the target video metadata
+    qInfo() << "Writing target metadata to disc...";
+    const bool written = targetMetadata.write(outputFileInfo.filePath());
+    qInfo() << "Target metadata written";
+
+    return written;
+}
+
+bool DiscMap::buildTargetMetadata(LdDecodeMetaData &targetMetadata)
+{
     qint32 notifyInterval = m_numberOfFrames / 50;
     if (notifyInterval < 1) notifyInterval = 1;
 
-    LdDecodeMetaData targetMetadata;
     LdDecodeMetaData::VideoParameters sourceVideoParameters = ldDecodeMetaData->getVideoParameters();
 
     // Indicate that the source has been mapped
@@ -885,11 +897,6 @@ bool DiscMap::saveTargetMetadata(QFileInfo outputFileInfo)
             qInfo() << "Created metadata for frame" << frameNumber << "of" << m_numberOfFrames;
         }
     }
-
-    // Save the target video metadata
-    qInfo() << "Writing target metadata to disc...";
-    targetMetadata.write(outputFileInfo.filePath());
-    qInfo() << "Target metadata written";
 
     return true;
 }

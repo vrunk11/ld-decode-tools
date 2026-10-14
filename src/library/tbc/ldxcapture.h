@@ -12,6 +12,7 @@
 #define LDXCAPTURE_H
 
 #include <QByteArray>
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QString>
 #include <QStringList>
@@ -52,6 +53,10 @@ public:
     // time (UTC), the arguments of the program, and whatever the tool adds (the files it read and wrote, the options it
     // took, what it counted) in extra, as members of the entry.
     static QJsonObject historyEntry(const QString &command, const QString &detail = QString(), const QJsonObject &extra = QJsonObject());
+
+    // The history of the capture a name gives, to which a tool adds its own entry when it writes a capture made from it:
+    // that of the LDX file or stream ("-"), empty for anything else
+    static QJsonArray historyOf(const QString &name);
 
     // Whether a name is that of an LDX file or of one of its tracks
     static bool isLdxName(const QString &name);

@@ -38,6 +38,7 @@
 #include "stackingpool.h"
 #include "stackproject.h"
 #include "ldxstream.h"
+#include "ldxcapture.h"
 
 int main(int argc, char *argv[])
 {
@@ -324,16 +325,13 @@ int main(int argc, char *argv[])
         }
     }
 
-    // If the output filename is "-" (piped output) - verify a metadata file has been specified
-    if (outputFilename == "-" && !metadataOptions.isOutputFileSet()) {
-        // Quit with error
-        qCritical("With piped output, you must also specify the output metadata file with --output-metadata");
-        return -1;
-    }
+    // The output "-" is an LDX stream (with the metadata of each field, in the stream), unless an output metadata file is
+    // given for a raw TBC
+    const bool ldxOutput = outputFilename == "-" && !metadataOptions.isOutputFileSet();
 
     // Check that none of the input filenames are used as the output file
     for (qint32 i = 0; i < totalNumberOfInputFiles; i++) {
-        if (inputFilenames[i] == outputFilename) {
+        if (inputFilenames[i] == outputFilename && outputFilename != "-") {
             // Quit with error
             qCritical("Input and output files cannot have the same filenames");
             return -1;
@@ -412,7 +410,11 @@ int main(int argc, char *argv[])
     // Metadata filename for output TBC, in the same format as the first input
     // (JSON in gives JSON out) unless named explicitly
     QString outputMetadataFilename;
-    if (!metadataOptions.selectOutput(LdDecodeMetaData::metadataFileName(outputFilename, ldDecodeMetaData[0]->getFormat()),
+    if (ldxOutput && ldDecodeMetaData[0]->isCvbs()) {
+        qCritical("CVBS video cannot be sent as an LDX stream yet: name an output file, or give --output-metadata for a raw stream");
+        return -1;
+    }
+    if (!ldxOutput && !metadataOptions.selectOutput(LdDecodeMetaData::metadataFileName(outputFilename, ldDecodeMetaData[0]->getFormat()),
                                       ldDecodeMetaData[0]->getFormat(), outputMetadataFilename)) {
         return -1;
     }
@@ -500,6 +502,7 @@ int main(int argc, char *argv[])
     StackingPool stackingPool(outputFilename, outputMetadataFilename, maxThreads,
                                 ldDecodeMetaData, sourceVideos, mode, smartThreshold, reverse, noDiffDod, passThrough, integrityCheck, verbose);
     if (fromSession) stackingPool.setOffsets(offsets);
+    stackingPool.setLdx(ldxOutput, LdxCapture::historyOf(inputFilenames[0]));
     if (!stackingPool.process()) result = 1;
 
     // Close open source video files

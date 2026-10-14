@@ -48,11 +48,15 @@ bool StackingPool::process()
     // Open the target video (a CVBS output keeps the input's sample encoding)
     const LdDecodeMetaData::VideoParameters &outputParameters = ldDecodeMetaData[0]->getVideoParameters();
     targetVideo.setLdxVideo(outputParameters.fieldWidth, outputParameters.fieldHeight, outputParameters.sampleRate, QString(),
-                            LdxCapture::historyEntry("process", "stacking of " + QString::number(sourceVideos.size()) + " sources"));
+                            historyWith(LdxCapture::historyEntry("process", "stacking of " + QString::number(sourceVideos.size()) + " sources")));
+    if (ldxStream) targetVideo.setLdxStream(ldDecodeMetaData[0]->parametersJson());
     if (!targetVideo.open(outputFilename, ldDecodeMetaData[0]->getVideoParameters().system,
                           ldDecodeMetaData[0]->getCvbsFileMetadata().sampleEncoding)) {
         return false;
     }
+
+    // In a stream the metadata of each field go with it, so the ones that do not depend on the stacking are made now
+    if (ldxStream) correctPhaseIDs();
 
     // If there is a leading field in the TBC which is out of field order, we need to copy it
     // to ensure the metadata files match up
@@ -119,8 +123,11 @@ bool StackingPool::process()
     // Close the target video (an LDX output is finished before its metadata are added to it)
     if (!targetVideo.close()) return false;
 
-    qInfo() << "Creating metadata file for stacked TBC...";
-    if (!correctMetaData().write(outputMetadataFilename)) return false;
+    // (a stream has sent its metadata with the fields)
+    if (!ldxStream) {
+        qInfo() << "Creating metadata file for stacked TBC...";
+        if (!correctMetaData().write(outputMetadataFilename)) return false;
+    }
 
     return true;
 }
@@ -314,6 +321,20 @@ bool StackingPool::setOutputFrame(qint32 frameNumber,
     while (pendingOutputFrames.contains(outputFrameNumber)) {
         const OutputFrame &outputFrame = pendingOutputFrames.value(outputFrameNumber);
 
+        // Clear any existing dropout data
+        ldDecodeMetaData[0]->clearFieldDropOuts(outputFrame.firstFieldSeqNo);
+        ldDecodeMetaData[0]->clearFieldDropOuts(outputFrame.secondFieldSeqNo);
+
+        // Write the new dropout data into the LdDecodeMetaData output
+        ldDecodeMetaData[0]->updateFieldDropOuts(outputFrame.firstTargetFieldDropOuts, outputFrame.firstFieldSeqNo);
+        ldDecodeMetaData[0]->updateFieldDropOuts(outputFrame.secondTargetFieldDropOuts, outputFrame.secondFieldSeqNo);
+
+        // In a stream the metadata of the two fields are final now, and go with them
+        if (ldxStream) {
+            replaceFieldMetaData<1>(outputFrameNumber);
+            replaceFieldMetaData<2>(outputFrameNumber);
+        }
+
         // Save the frame data to the output file (with the fields in the correct order)
         bool writeFail = false;
         if (outputFrame.firstFieldSeqNo < outputFrame.secondFieldSeqNo) {
@@ -333,14 +354,6 @@ bool StackingPool::setOutputFrame(qint32 frameNumber,
             targetVideo.close();
             return false;
         }
-
-        // Clear any existing dropout data
-        ldDecodeMetaData[0]->clearFieldDropOuts(outputFrame.firstFieldSeqNo);
-        ldDecodeMetaData[0]->clearFieldDropOuts(outputFrame.secondFieldSeqNo);
-
-        // Write the new dropout data into the LdDecodeMetaData output
-        ldDecodeMetaData[0]->updateFieldDropOuts(outputFrame.firstTargetFieldDropOuts, outputFrame.firstFieldSeqNo);
-        ldDecodeMetaData[0]->updateFieldDropOuts(outputFrame.secondTargetFieldDropOuts, outputFrame.secondFieldSeqNo);
 
         // Show debug
         tbcDebugStream().nospace() << "Processed frame " << outputFrameNumber;
@@ -551,7 +564,23 @@ QVector<qint32> StackingPool::getAvailableSourcesForFrame(qint32 vbiFrameNumber)
 // Returns true on success, false on failure.
 bool StackingPool::writeOutputField(const SourceVideo::Data &fieldData)
 {
+    if (ldxStream) {
+        // The metadata of the field that goes in this place of the output
+        const qint32 position = ++streamFieldCount;
+        if (position <= ldDecodeMetaData[0]->getNumberOfFields()) {
+            LdDecodeMetaData::Field field = ldDecodeMetaData[0]->getField(position);
+            field.seqNo = position;
+            return targetVideo.writeField(fieldData, LdDecodeMetaData::fieldToJson(field));
+        }
+    }
     return targetVideo.writeField(fieldData);
+}
+
+QJsonArray StackingPool::historyWith(const QJsonObject &entry) const
+{
+    QJsonArray history = sourceHistory;
+    history.append(entry);
+    return history;
 }
 
 void StackingPool::correctPhaseIDs()

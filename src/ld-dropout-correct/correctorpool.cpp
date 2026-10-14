@@ -43,7 +43,8 @@ bool CorrectorPool::process()
     // Open the target video (a CVBS output keeps the input's sample encoding)
     const LdDecodeMetaData::VideoParameters &outputParameters = ldDecodeMetaData[0]->getVideoParameters();
     targetVideo.setLdxVideo(outputParameters.fieldWidth, outputParameters.fieldHeight, outputParameters.sampleRate, QString(),
-                            LdxCapture::historyEntry("process", "dropout correction of " + QString::number(sourceVideos.size()) + " source(s)"));
+                            historyWith(LdxCapture::historyEntry("process", "dropout correction of " + QString::number(sourceVideos.size()) + " source(s)")));
+    if (ldxStream) targetVideo.setLdxStream(ldDecodeMetaData[0]->parametersJson());
     if (!targetVideo.open(outputFilename, ldDecodeMetaData[0]->getVideoParameters().system,
                           ldDecodeMetaData[0]->getCvbsFileMetadata().sampleEncoding)) {
         return false;
@@ -118,8 +119,11 @@ bool CorrectorPool::process()
     // Close the target video (an LDX output is finished before its metadata are added to it)
     if (!targetVideo.close()) return false;
 
-    qInfo() << "Creating metadata file for drop-out corrected TBC...";
-    if (!ldDecodeMetaData[0]->write(outputMetadataFilename)) return false;
+    // (a stream has sent its metadata with the fields)
+    if (!ldxStream) {
+        qInfo() << "Creating metadata file for drop-out corrected TBC...";
+        if (!ldDecodeMetaData[0]->write(outputMetadataFilename)) return false;
+    }
 
     return true;
 }
@@ -451,7 +455,23 @@ QVector<qint32> CorrectorPool::getAvailableSourcesForFrame(qint32 vbiFrameNumber
 // Returns true on success, false on failure.
 bool CorrectorPool::writeOutputField(const SourceVideo::Data &fieldData)
 {
+    if (ldxStream) {
+        // The metadata of the field that goes in this place of the output
+        const qint32 position = ++streamFieldCount;
+        if (position <= ldDecodeMetaData[0]->getNumberOfFields()) {
+            LdDecodeMetaData::Field field = ldDecodeMetaData[0]->getField(position);
+            field.seqNo = position;
+            return targetVideo.writeField(fieldData, LdDecodeMetaData::fieldToJson(field));
+        }
+    }
     return targetVideo.writeField(fieldData);
+}
+
+QJsonArray CorrectorPool::historyWith(const QJsonObject &entry) const
+{
+    QJsonArray history = sourceHistory;
+    history.append(entry);
+    return history;
 }
 
 // Getters for reporting

@@ -26,6 +26,7 @@
 #ifndef CORRECTORPOOL_H
 #define CORRECTORPOOL_H
 
+#include <QJsonArray>
 #include <QObject>
 #include <QAtomicInt>
 #include <QElapsedTimer>
@@ -53,6 +54,9 @@ public:
                        QVector<qint32> &secondFieldNumber, QVector<SourceVideo::Data> &secondFieldVideoData, QVector<LdDecodeMetaData::Field> &secondFieldMetadata,
                        QVector<LdDecodeMetaData::VideoParameters> &videoParameters,
                        bool& _reverse, bool& _intraField, bool& _overCorrect, QVector<qint32> &availableSourcesForFrame, QVector<double> &sourceFrameQuality);
+
+    // What the output is when it is an LDX file or stream: the history of the source, and whether "-" is a stream
+    void setLdx(bool stream, const QJsonArray &history) { ldxStream = stream; sourceHistory = history; }
 
     bool setOutputFrame(qint32 frameNumber,
                         SourceVideo::Data firstTargetFieldData, SourceVideo::Data secondTargetFieldData,
@@ -104,6 +108,11 @@ private:
     QMap<qint32, OutputFrame> pendingOutputFrames;
     TargetVideo targetVideo;
 
+    // An output that is an LDX stream ("-"): each field goes with its own metadata
+    bool ldxStream = false;
+    QJsonArray sourceHistory;
+    qint32 streamFieldCount = 0;
+
     // Local source information
     QVector<bool> sourceDiscTypeCav;
     QVector<qint32> sourceMinimumVbiFrame;
@@ -118,6 +127,7 @@ private:
     qint32 convertSequentialFrameNumberToVbi(qint32 sequentialFrameNumber, qint32 sourceNumber);
     qint32 convertVbiFrameNumberToSequential(qint32 vbiFrameNumber, qint32 sourceNumber);
     QVector<qint32> getAvailableSourcesForFrame(qint32 vbiFrameNumber);
+    QJsonArray historyWith(const QJsonObject &entry) const;
     bool writeOutputField(const SourceVideo::Data &fieldData);
 };
 

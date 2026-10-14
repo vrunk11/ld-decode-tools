@@ -26,6 +26,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <QFile>
+#include <QTemporaryDir>
 #include <QFileInfo>
 #include <QDebug>
 #include <QMap>
@@ -605,6 +606,23 @@ QByteArray LdDecodeMetaData::fieldToJson(const Field &field)
     field.write(writer);
     const std::string text = out.str();
     return QByteArray(text.data(), static_cast<qsizetype>(text.size()));
+}
+
+QByteArray LdDecodeMetaData::parametersJson() const
+{
+    LdDecodeMetaData parameters;
+    VideoParameters video = videoParameters;
+    video.numberOfSequentialFields = 0;         // (the fields come later)
+    parameters.setVideoParameters(video);
+    parameters.setPcmAudioParameters(pcmAudioParameters);
+    parameters.setIsFirstFieldFirst(isFirstFieldFirst);
+    QTemporaryDir directory;
+    if (!directory.isValid()) return QByteArray();
+    const QString path = directory.filePath("parameters.json");
+    if (!parameters.writeJson(path)) return QByteArray();
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly)) return QByteArray();
+    return file.readAll();
 }
 
 bool LdDecodeMetaData::fieldFromJson(const QByteArray &json, Field &field)

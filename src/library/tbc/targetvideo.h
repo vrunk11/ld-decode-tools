@@ -12,6 +12,7 @@
 #define TARGETVIDEO_H
 
 #include <QFile>
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QString>
 #include <QVector>
@@ -33,8 +34,14 @@ public:
 
     // An output that is an LDX file (name.ldx): the video is a TBC track of it, with a track for its metadata (which the
     // tool writes afterwards to the same name, see LdDecodeMetaData::write) and, if asked, one for the analogue audio. Say
-    // what the video is, and what the tool did (the entry of the history, see LdxCapture::historyEntry), before open().
-    void setLdxVideo(qint32 fieldWidth, qint32 fieldHeight, double sampleRate, const QString &name, const QJsonObject &historyEntry);
+    // what the video is, and the history of the capture with what the tool did (see LdxCapture::historyOf and historyEntry), before open().
+    void setLdxVideo(qint32 fieldWidth, qint32 fieldHeight, double sampleRate, const QString &name, const QJsonArray &history);
+    // The output "-" is an LDX stream instead of a raw TBC: it begins with the parameters of the video (ld-decode metadata
+    // with no fields, see LdDecodeMetaData::parametersJson) and then each field comes with its own metadata, as a block
+    // of JSON just before its video (writeField with the JSON). Before open().
+    void setLdxStream(const QByteArray &parametersJson);
+    bool isLdxStream() const { return ldxStreamOutput; }
+    bool writeField(const QVector<quint16> &fieldData, const QByteArray &metadataJson);
     void setLdxAudio(double sampleRate);
     // 16-bit stereo audio of the fields written so far, for an LDX output (anything else: false, the tool writes its own file)
     bool writeAudio(const QByteArray &samples);
@@ -64,7 +71,10 @@ private:
     bool hasPendingField = false;
     QVector<qint16> frameData;
     std::shared_ptr<LdxOutput> ldx;
-    QJsonObject ldxHistory;
+    QJsonArray ldxHistory;
+    bool ldxStreamOutput = false;
+    QByteArray ldxParameters;
+    quint32 ldxMetadataTrack = 0;
     qint32 ldxFieldWidth = 0, ldxFieldHeight = 0;
     double ldxSampleRate = 0;
     QString ldxName;
