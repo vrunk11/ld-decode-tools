@@ -507,6 +507,34 @@ QByteArray sessionWithout(const QByteArray &session, const QSet<quint32> &tracks
     return QJsonDocument(root).toJson(QJsonDocument::Indented);
 }
 
+// The standard input and output are a pipe: "-" for a file
+bool isStdio(const QString &name)
+{
+    return name == "-";
+}
+
+// What goes to the standard output is the data of a pipe: the messages go to the standard error then
+void messagesToStderr()
+{
+    static QFile standardError;
+    if (!standardError.isOpen()) standardError.open(stderr, QIODevice::WriteOnly);
+    out.setDevice(&standardError);
+}
+
+bool openReader(Ldx::Reader &reader, const QString &name, QString &error)
+{
+    return isStdio(name) ? reader.openStream(stdin, error) : reader.open(name, error);
+}
+
+bool openWriter(Ldx::Writer &writer, const QString &name, QString &error)
+{
+    if (isStdio(name)) {
+        messagesToStderr();
+        return writer.openStream(stdout, error);
+    }
+    return writer.open(name, error);
+}
+
 // ---------------------------------------------------------------------------------------------------------------
 // Rewriting a file: its tracks (but those taken out), its attachments and its history are put in a new file, to
 // which tracks are then added, and the blocks are copied.
@@ -521,7 +549,7 @@ struct Rewrite {
 bool openForRewrite(Rewrite &rewrite, const QString &fileName)
 {
     QString error;
-    if (!rewrite.reader.open(fileName, error)) {
+    if (!openReader(rewrite.reader, fileName, error)) {
         err << error << "\n";
         return false;
     }
@@ -550,6 +578,7 @@ void prepareWriter(Rewrite &rewrite, Ldx::Writer &writer, const QSet<quint32> &s
 
 bool sameFile(const QString &a, const QString &b)
 {
+    if (isStdio(a) || isStdio(b)) return false;
     return QFileInfo(a).absoluteFilePath() == QFileInfo(b).absoluteFilePath();
 }
 
@@ -611,7 +640,7 @@ int pack(const QStringList &arguments)
     writer.setHistory(QJsonArray { historyEntry("pack", QFileInfo(input).fileName()) });
 
     QString error;
-    if (!writer.open(output, error)) {
+    if (!openWriter(writer, output, error)) {
         err << error << "\n";
         return 1;
     }
@@ -674,7 +703,7 @@ int addStream(const QStringList &arguments)
     writer.setHistory(rewrite.history);
 
     QString error;
-    if (!writer.open(output, error)) {
+    if (!openWriter(writer, output, error)) {
         err << error << "\n";
         return 1;
     }
@@ -751,7 +780,7 @@ int removeStream(const QStringList &arguments)
     writer.setHistory(rewrite.history);
 
     QString error;
-    if (!writer.open(output, error)) {
+    if (!openWriter(writer, output, error)) {
         err << error << "\n";
         return 1;
     }
@@ -894,7 +923,7 @@ int setStack(const QStringList &arguments)
     writer.setHistory(rewrite.history);
 
     QString error;
-    if (!writer.open(output, error)) {
+    if (!openWriter(writer, output, error)) {
         err << error << "\n";
         return 1;
     }
@@ -938,7 +967,7 @@ int info(const QStringList &arguments)
 
     Ldx::Reader reader;
     QString error;
-    if (!reader.open(parser.positionalArguments().first(), error)) {
+    if (!openReader(reader, parser.positionalArguments().first(), error)) {
         err << error << "\n";
         return 1;
     }
@@ -956,9 +985,9 @@ int info(const QStringList &arguments)
 
     qint64 holds = 0;
     for (const qint64 size: bytes) holds += size;
-    const qint64 fileSize = QFileInfo(parser.positionalArguments().first()).size();
+    const qint64 fileSize = isStdio(parser.positionalArguments().first()) ? 0 : QFileInfo(parser.positionalArguments().first()).size();
     out << "File: " << fileSize << " bytes for " << holds << " bytes of data";
-    if (holds > 0) out << " (" << QString::number(100.0 * static_cast<double>(fileSize) / static_cast<double>(holds), 'f', 1) << " %)";
+    if (holds > 0 && fileSize > 0) out << " (" << QString::number(100.0 * static_cast<double>(fileSize) / static_cast<double>(holds), 'f', 1) << " %)";
     out << "\n";
     out << "Tracks (the next id is " << reader.nextTrackId() << "):\n";
     for (const Ldx::Track &track: reader.tracks()) {
@@ -1005,7 +1034,7 @@ int extractTrack(const QStringList &arguments)
 
     Ldx::Reader reader;
     QString error;
-    if (!reader.open(parser.positionalArguments().first(), error)) {
+    if (!openReader(reader, parser.positionalArguments().first(), error)) {
         err << error << "\n";
         return 1;
     }
@@ -1105,7 +1134,7 @@ int recompress(const QStringList &arguments)
     writer.setHistory(rewrite.history);
 
     QString error;
-    if (!writer.open(output, error)) {
+    if (!openWriter(writer, output, error)) {
         err << error << "\n";
         return 1;
     }
@@ -1132,6 +1161,10 @@ int verify(const QStringList &arguments)
         return 1;
     }
     const QString fileName = parser.positionalArguments().first();
+    if (isStdio(fileName)) {
+        err << "verify reads the file by place as well as in order, and a stream cannot be read twice: give it a file\n";
+        return 1;
+    }
 
     // In the order of the file: what each track holds, as the size and a hash of its blocks
     struct Seen {
@@ -1202,7 +1235,7 @@ int unpack(const QStringList &arguments)
 
     Ldx::Reader reader;
     QString error;
-    if (!reader.open(parser.positionalArguments().first(), error)) {
+    if (!openReader(reader, parser.positionalArguments().first(), error)) {
         err << error << "\n";
         return 1;
     }

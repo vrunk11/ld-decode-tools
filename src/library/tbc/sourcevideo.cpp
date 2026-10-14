@@ -25,6 +25,7 @@
 #include "sourcevideo.h"
 #include "stackedvideo.h"
 #include "ldxcapture.h"
+#include "ldxstream.h"
 
 #include <cstdio>
 #include <QFileInfo>
@@ -200,6 +201,14 @@ bool SourceVideo::open(QString filename, qint32 _fieldLength, qint32 _fieldLineL
     } else if (filename == "-" || (QFileInfo::exists(filename) && !QFileInfo(filename).isFile())) {
         // Standard input, or a named pipe: read ahead on a thread of its own. We
         // don't know how long the input will be.
+        // An LDX stream on the standard input: its video, which is what its own thread gives the pipe of the process, and
+        // what it says the video is
+        LdxStream *ldxStream = filename == "-" ? LdxStream::instance() : nullptr;
+        if (ldxStream) {
+            streamOptions.cvbs = ldxStream->isCvbs();
+            streamOptions.system = ldxStream->system();
+            streamOptions.encoding = Cvbs::SampleEncoding::U10_4FSC;      // (the samples of a cvbs track are 10-bit values)
+        }
         if (streamOptions.cvbs && Cvbs::geometry(streamOptions.system).fieldLength() != fieldLength) {
             qWarning() << "The CVBS stream is" << Cvbs::presetName(streamOptions.system)
                        << "but the video parameters describe fields of" << fieldLength << "samples";
@@ -207,14 +216,20 @@ bool SourceVideo::open(QString filename, qint32 _fieldLength, qint32 _fieldLineL
         }
 
         FILE *streamFile = stdin;
-        if (filename != "-") {
+        if (ldxStream) {
+            streamFile = ldxStream->videoPipe();
+            if (!streamFile) {
+                qWarning() << "Could not make the pipe of the video of the LDX stream";
+                return false;
+            }
+        } else if (filename != "-") {
             streamFile = fopen(QFile::encodeName(filename).constData(), "rb");
             if (!streamFile) {
                 qWarning() << "Could not open" << filename << "as source video input file";
                 return false;
             }
         }
-        stream = std::make_unique<StreamReader>(streamFile, filename != "-", fieldLength, streamOptions);
+        stream = std::make_unique<StreamReader>(streamFile, filename != "-", fieldLength, streamOptions);   // (an LDX stream owns its own pipe)
         stream->start();
         availableFields = -1;
         tbcDebugStream() << "SourceVideo::open(): Reading a stream with a buffer of" << streamOptions.bufferFrames << "frames";

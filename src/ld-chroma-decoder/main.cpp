@@ -36,6 +36,7 @@
 
 #include "decoderpool.h"
 #include "lddecodemetadata.h"
+#include "ldxstream.h"
 #include "cvbs.h"
 #include "tbc/logging.h"
 #include "tbc/metadataoptions.h"
@@ -142,7 +143,7 @@ int main(int argc, char *argv[])
 
     // Option to say what a pipe carries
     QCommandLineOption inputFormatOption(QStringList() << "input-format",
-                                         QCoreApplication::translate("main", "Piped input: tbc (fields, the default) or cvbs (frames, as decode-orc writes them)"),
+                                         QCoreApplication::translate("main", "Piped input: ldx (an LDX stream, which says what it holds: the default when nothing else is said), tbc (fields) or cvbs (frames, as decode-orc writes them)"),
                                          QCoreApplication::translate("main", "format"));
     parser.addOption(inputFormatOption);
 
@@ -354,14 +355,26 @@ int main(int argc, char *argv[])
     // stream sources have), and then runs until the input ends.
     const bool isPipe = inputFileName == "-"
                         || (QFileInfo::exists(inputFileName) && !QFileInfo(inputFileName).isFile());
-    const bool hasNoMetadata = isPipe && !metadataOptions.isInputFileSet();
+    // An LDX stream on the standard input says by itself what it holds (the video system, the metadata): it is what a pipe
+    // is when no other format is asked for, no metadata is given and no video system is said
+    const bool formatGiven = parser.isSet(inputFormatOption);
+    const bool ldxInput = inputFileName == "-" && ((formatGiven && parser.value(inputFormatOption).toLower() == "ldx")
+                                                 || (!formatGiven && !metadataOptions.isInputFileSet() && !parser.isSet(systemOption)));
+    if (ldxInput) {
+        QString streamError;
+        if (!LdxStream::openStdin(streamError)) {
+            qCritical().noquote() << streamError;
+            return -1;
+        }
+    }
+    const bool hasNoMetadata = isPipe && !metadataOptions.isInputFileSet() && !ldxInput;
 
     StreamReader::Options streamOptions;
     bool encodingGiven = false;
     if (parser.isSet(inputFormatOption)) {
         const QString format = parser.value(inputFormatOption).toLower();
-        if (format != "tbc" && format != "cvbs") {
-            qCritical().noquote() << "Unknown input format" << format << "- use tbc or cvbs";
+        if (format != "tbc" && format != "cvbs" && format != "ldx") {
+            qCritical().noquote() << "Unknown input format" << format << "- use ldx, tbc or cvbs";
             return -1;
         }
         streamOptions.cvbs = format == "cvbs";
@@ -534,7 +547,19 @@ int main(int argc, char *argv[])
 
     // Work out the metadata filename
     LdDecodeMetaData metaData;
-    if (hasNoMetadata) {
+    if (ldxInput) {
+        // The metadata the stream began with, or, if it sent none, the defaults of the video it holds
+        LdxStream *ldxStream = LdxStream::instance();
+        QString metadataError;
+        if (ldxStream->readMetadata(metaData, metadataError)) {
+            qInfo().noquote() << "The LDX stream holds" << (ldxStream->isCvbs() ? "CVBS" : "TBC") << "video, named" << ldxStream->videoName() << "- its metadata are used";
+        } else {
+            metaData.initialiseDefault(ldxStream->system(), -1, -1, ldxStream->isCvbs());
+            qInfo().noquote() << "The LDX stream sent no metadata: assuming" << Cvbs::presetName(ldxStream->system())
+                              << "video at the standard levels that runs until the input ends";
+        }
+        streamOptions.cvbs = ldxStream->isCvbs();
+    } else if (hasNoMetadata) {
         // Piped input with no metadata: the video system must be said, the rest has defaults
         if (!parser.isSet(systemOption)) {
             qCritical("Piped input without metadata needs the video system (--system pal, ntsc or pal-m), "
