@@ -9,6 +9,7 @@
  ******************************************************************************/
 
 #include "targetvideo.h"
+#include "stackproject.h"
 
 #include <QDebug>
 #include <cstdio>
@@ -89,12 +90,30 @@ bool TargetVideo::close()
     return true;
 }
 
+// The file that gives the container of an input: a stacking session is read as the stack of its sources, and
+// has that of the first that is on
+static QString containerFile(QString fileName)
+{
+    for (qint32 depth = 0; depth < 8 && fileName.endsWith(".stack", Qt::CaseInsensitive); depth++) {
+        StackProject session;
+        QString error;
+        if (!session.load(fileName, error)) return fileName;
+        QString next;
+        for (const StackSource &source: session.sources) {
+            if (source.enabled) { next = source.file; break; }
+        }
+        if (next.isEmpty()) return fileName;
+        fileName = next;
+    }
+    return fileName;
+}
+
 bool checkSameVideoContainer(const QString &inputFileName, const QString &outputFileName)
 {
     // stdout carries whatever the input is
     if (outputFileName == "-") return true;
 
-    const bool inputIsCvbs = Cvbs::isDataFileName(inputFileName);
+    const bool inputIsCvbs = Cvbs::isDataFileName(containerFile(inputFileName));
     const bool outputIsCvbs = Cvbs::isDataFileName(outputFileName);
     if (inputIsCvbs == outputIsCvbs) return true;
 

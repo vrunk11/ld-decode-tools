@@ -142,7 +142,7 @@ int main(int argc, char *argv[])
 
     // Positional argument to specify input video file
     parser.addPositionalArgument("inputs", QCoreApplication::translate(
-                                     "main", "Specify input TBC files (- as first source for piped input), or one .stack session file"));
+                                     "main", "Specify input TBC files (- as first source for piped input; a .stack session file is read as the stack of its sources), or one .stack session file to stack as it says"));
 
     // Positional argument to specify output video file
     parser.addPositionalArgument("output", QCoreApplication::translate(
@@ -233,16 +233,14 @@ int main(int argc, char *argv[])
     QString outputFilename = "-";
     QStringList positionalArguments = parser.positionalArguments();
 
-    // A .stack session file (made by ld-stacker-gui) gives the sources that are on, the offset of each,
-    // the stacking options and the output. What is given on the command line has the last word.
+    // A .stack session file (made by ld-stacker-gui) alone, or with the output, gives the sources that are on,
+    // the offset of each, the stacking options and the output. What is given on the command line has the last
+    // word. (With 2 inputs or more and the output, a .stack file is a source like another: it is read as the
+    // stack of its own sources, which are stacked with the others.)
     bool fromSession = false;
     QVector<qint32> offsets;
-    if (!positionalArguments.isEmpty() && positionalArguments.at(0).endsWith(".stack", Qt::CaseInsensitive)) {
-        if (positionalArguments.count() > 2) {
-            qCritical("With a .stack session file, give at most the output TBC file after it");
-            return -1;
-        }
-
+    if (!positionalArguments.isEmpty() && positionalArguments.at(0).endsWith(".stack", Qt::CaseInsensitive)
+        && positionalArguments.count() <= 2) {
         StackProject session;
         QString sessionError;
         if (!session.load(positionalArguments.at(0), sessionError)) {

@@ -483,7 +483,7 @@ void MainWindow::addSourcesDialog()
     QSettings settings;
     const QString directory = settings.value("sourceDirectory").toString();
     const QStringList files = QFileDialog::getOpenFileNames(this, tr("Add sources"), directory,
-                                                            tr("TBC files (*.tbc);;All files (*)"));
+                                                            tr("TBC files and stacks (*.tbc *.stack);;All files (*)"));
     if (files.isEmpty()) return;
     settings.setValue("sourceDirectory", QFileInfo(files.first()).absolutePath());
     addSources(files);
