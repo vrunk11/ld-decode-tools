@@ -27,17 +27,16 @@ class SnrWindow : public QDialog
 public:
     explicit SnrWindow(QWidget *parent = nullptr);
 
-    // values: a value per frame of the timeline (NaN where the source has none); stack: what has been
-    // measured of the stack so far
-    void setContent(const QString &title, const QVector<float> &values, const QColor &color,
-                    const QMap<qint32, float> &stack, const QColor &stackColor, qint32 marker);
+    // The SNR of a source, a value per frame of the timeline (NaN where it has none), with the stack's behind
+    void setContent(const QString &title, const QVector<float> &white, const QVector<float> &black,
+                    const QVector<float> &stackWhite, const QVector<float> &stackBlack, qint32 marker);
     void setMarker(qint32 frame);
 
 signals:
     void frameRequested(qint32 frame);
 
 private:
-    SnrPlot *plot = nullptr;
+    SnrGraph *graph = nullptr;
 };
 
 // The final stack in a window of its own, so that it stays in view while the main window shows a source

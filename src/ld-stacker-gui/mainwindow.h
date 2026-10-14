@@ -54,6 +54,7 @@ private slots:
     void addSourcesDialog();
     void on_sourceLoaded(const SourceInfo &info);
     void on_frameReady(const FrameResult &result);
+    void on_stackSnrReady(quint64 generation, const QVector<StackSnrPoint> &points, bool finished);
 
 private:
     struct SourceState {
@@ -76,6 +77,8 @@ private:
     void updateTimeline();
     void updatePlot();
     void viewChanged();
+    void startStackSnr();
+    QVector<float> sourceCurve(qint32 index, bool white) const;
     void showStackPicture(const FrameResult &result);
     void syncDialogs();
     void updateSnrWindow();
@@ -118,14 +121,17 @@ private:
     EnhanceDialog *enhanceDialog = nullptr;
     ChromaConfigDialog *chromaDialog = nullptr;
     QAction *stackOutputAction = nullptr;
-    QMap<qint32, float> stackSnr;
+    QVector<float> stackWhite;    // the SNR of the stack per frame, NaN until measured
+    QVector<float> stackBlack;
+    qint32 stackSnrDone = 0;      // how many frames of it have been measured
+    quint64 snrJob = 0;
 
     QListWidget *sourceList = nullptr;
     QTabBar *tabBar = nullptr;
     QPushButton *stackButton = nullptr;
     QScrollArea *scrollArea = nullptr;
     QLabel *imageLabel = nullptr;
-    SnrPlot *snrPlot = nullptr;
+    SnrGraph *snrPlot = nullptr;
     QToolButton *firstButton = nullptr;
     QToolButton *previousButton = nullptr;
     QToolButton *nextButton = nullptr;

@@ -23,24 +23,23 @@ SnrWindow::SnrWindow(QWidget *parent)
 
     QVBoxLayout *layout = new QVBoxLayout(this);
     layout->setContentsMargins(6, 6, 6, 6);
-    plot = new SnrPlot;
-    plot->setMinimumHeight(160);
-    layout->addWidget(plot, 1);
-    connect(plot, &SnrPlot::frameRequested, this, &SnrWindow::frameRequested);
+    graph = new SnrGraph(true);
+    graph->setMinimumHeight(180);
+    layout->addWidget(graph, 1);
+    connect(graph, &SnrGraph::frameRequested, this, &SnrWindow::frameRequested);
 }
 
-void SnrWindow::setContent(const QString &title, const QVector<float> &values, const QColor &color,
-                           const QMap<qint32, float> &stack, const QColor &stackColor, qint32 marker)
+void SnrWindow::setContent(const QString &title, const QVector<float> &white, const QVector<float> &black,
+                           const QVector<float> &stackWhite, const QVector<float> &stackBlack, qint32 marker)
 {
     setWindowTitle(title);
-    plot->setSeries(values, color, tr("White SNR (metadata); the stack, as measured so far, behind"));
-    plot->setReference(stack, stackColor);
-    plot->setMarker(marker);
+    graph->setData(QString(), white, black, stackWhite, stackBlack);
+    graph->setMarker(marker);
 }
 
 void SnrWindow::setMarker(qint32 frame)
 {
-    plot->setMarker(frame);
+    graph->setMarker(frame);
 }
 
 StackOutputWindow::StackOutputWindow(QWidget *parent)

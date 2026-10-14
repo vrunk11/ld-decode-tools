@@ -10,73 +10,28 @@
 
 #include "snrplot.h"
 
+#include <QHBoxLayout>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
+#include <QVBoxLayout>
 #include <cmath>
 
 SnrPlot::SnrPlot(QWidget *parent)
     : QWidget(parent)
 {
-    setMinimumHeight(50);
+    setMinimumHeight(40);
     setCursor(Qt::CrossCursor);
     setAutoFillBackground(true);
     setBackgroundRole(QPalette::Base);
 }
 
-void SnrPlot::setSeries(const QVector<float> &values, const QColor &color, const QString &label)
+void SnrPlot::setCurves(const QVector<SnrCurve> &newCurves, const QString &label)
 {
-    points.clear();
-    for (qint32 i = 0; i < values.size(); i++) {
-        if (std::isfinite(values[i])) points.append(QPointF(i + 1, values[i]));
-    }
-    totalFrames = values.size();
-    lineColor = color;
+    curves = newCurves;
     text = label;
-    sparse = false;
-
-    low = 0;
-    high = 1;
-    if (!points.isEmpty()) {
-        low = high = points.first().y();
-        for (const QPointF &point: points) {
-            low = qMin(low, point.y());
-            high = qMax(high, point.y());
-        }
-    }
-    update();
-}
-
-void SnrPlot::setSparseSeries(const QMap<qint32, float> &values, qint32 total, const QColor &color, const QString &label)
-{
-    points.clear();
-    for (auto it = values.constBegin(); it != values.constEnd(); ++it) {
-        if (std::isfinite(it.value())) points.append(QPointF(it.key(), it.value()));
-    }
-    totalFrames = total;
-    lineColor = color;
-    text = label;
-    sparse = true;
-
-    low = 0;
-    high = 1;
-    if (!points.isEmpty()) {
-        low = high = points.first().y();
-        for (const QPointF &point: points) {
-            low = qMin(low, point.y());
-            high = qMax(high, point.y());
-        }
-    }
-    update();
-}
-
-void SnrPlot::setReference(const QMap<qint32, float> &values, const QColor &color)
-{
-    referencePoints.clear();
-    for (auto it = values.constBegin(); it != values.constEnd(); ++it) {
-        if (std::isfinite(it.value())) referencePoints.append(QPointF(it.key(), it.value()));
-    }
-    referenceColor = color;
+    totalFrames = 0;
+    for (const SnrCurve &curve: curves) totalFrames = qMax(totalFrames, static_cast<qint32>(curve.values.size()));
     update();
 }
 
@@ -99,67 +54,58 @@ void SnrPlot::paintEvent(QPaintEvent *)
     painter.setRenderHint(QPainter::Antialiasing, true);
 
     const QRectF area = rect().adjusted(0, 4, 0, -4);
-    const QColor gridColor = palette().color(QPalette::Mid);
 
     // A line every quarter
-    painter.setPen(QPen(gridColor, 1, Qt::DotLine));
+    painter.setPen(QPen(palette().color(QPalette::Mid), 1, Qt::DotLine));
     for (qint32 i = 1; i < 4; i++) {
         const qreal y = area.top() + area.height() * i / 4.0;
         painter.drawLine(QPointF(0, y), QPointF(width(), y));
     }
 
-    if (totalFrames > 0 && (!points.isEmpty() || !referencePoints.isEmpty())) {
-        double lowest = low, highest = high;
-        if (points.isEmpty()) { lowest = referencePoints.first().y(); highest = lowest; }
-        for (const QPointF &point: referencePoints) {
-            lowest = qMin(lowest, point.y());
-            highest = qMax(highest, point.y());
+    // The range of what is shown
+    bool any = false;
+    double low = 0, high = 0;
+    for (const SnrCurve &curve: curves) {
+        if (!curve.visible) continue;
+        for (float value: curve.values) {
+            if (!std::isfinite(value)) continue;
+            if (!any) { low = high = value; any = true; }
+            low = qMin<double>(low, value);
+            high = qMax<double>(high, value);
         }
-        double span = highest - lowest;
-        double lo = lowest;
+    }
+
+    if (totalFrames > 0 && any) {
+        double span = high - low;
+        double lo = low;
         if (span < 1.0) { lo -= (1.0 - span) / 2; span = 1.0; }
-        // A little room above and below
-        lo -= span * 0.05;
+        lo -= span * 0.05;   // a little room above and below
         span *= 1.1;
 
-        const auto toPoint = [&](const QPointF &point) {
-            const qreal x = totalFrames > 1 ? (point.x() - 1) * (width() - 1) / (totalFrames - 1) : 0;
-            const qreal y = area.bottom() - (point.y() - lo) / span * area.height();
+        const auto toPoint = [&](qint32 index, float value) {
+            const qreal x = totalFrames > 1 ? static_cast<qreal>(index) * (width() - 1) / (totalFrames - 1) : 0;
+            const qreal y = area.bottom() - (value - lo) / span * area.height();
             return QPointF(x, y);
         };
 
-        // The reference, behind
-        painter.setPen(QPen(referenceColor, 1));
-        QPointF previousReference;
-        qint32 previousReferenceFrame = -1;
-        for (const QPointF &point: referencePoints) {
-            const QPointF at = toPoint(point);
-            if (previousReferenceFrame >= 0 && point.x() - previousReferenceFrame <= 1) painter.drawLine(previousReference, at);
-            painter.drawEllipse(at, 1.2, 1.2);
-            previousReference = at;
-            previousReferenceFrame = static_cast<qint32>(point.x());
-        }
+        // The thin ones first, so that they are behind
+        for (const bool thin: { true, false }) {
+            for (const SnrCurve &curve: curves) {
+                if (!curve.visible || curve.thin != thin) continue;
+                QColor color = curve.color;
+                if (thin) color.setAlpha(150);
+                painter.setPen(QPen(color, thin ? 1.0 : 1.5));
 
-        painter.setPen(QPen(lineColor, 1.5));
-        if (sparse) {
-            // Measured as the frames were viewed: dots, joined where they are next to each other
-            QPointF previous;
-            qint32 previousFrame = -1;
-            for (const QPointF &point: points) {
-                const QPointF at = toPoint(point);
-                if (previousFrame >= 0 && point.x() - previousFrame <= 1) painter.drawLine(previous, at);
-                painter.drawEllipse(at, 1.5, 1.5);
-                previous = at;
-                previousFrame = static_cast<qint32>(point.x());
+                // A line, broken where a frame has no value
+                QPainterPath path;
+                bool drawing = false;
+                for (qint32 i = 0; i < curve.values.size(); i++) {
+                    if (!std::isfinite(curve.values[i])) { drawing = false; continue; }
+                    const QPointF at = toPoint(i, curve.values[i]);
+                    if (!drawing) { path.moveTo(at); drawing = true; } else { path.lineTo(at); }
+                }
+                painter.drawPath(path);
             }
-        } else {
-            QPainterPath path;
-            bool first = true;
-            for (const QPointF &point: points) {
-                const QPointF at = toPoint(point);
-                if (first) { path.moveTo(at); first = false; } else { path.lineTo(at); }
-            }
-            painter.drawPath(path);
         }
     }
 
@@ -183,4 +129,69 @@ void SnrPlot::mousePressEvent(QMouseEvent *event)
 void SnrPlot::mouseMoveEvent(QMouseEvent *event)
 {
     if (event->buttons() & Qt::LeftButton) emit frameRequested(frameAt(static_cast<qint32>(event->position().x())));
+}
+
+// ---------------------------------------------------------------------------------------------
+
+SnrGraph::SnrGraph(bool withStack, QWidget *parent)
+    : QWidget(parent)
+{
+    QVBoxLayout *layout = new QVBoxLayout(this);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(0);
+
+    QHBoxLayout *row = new QHBoxLayout;
+    row->setContentsMargins(6, 2, 6, 2);
+    row->setSpacing(12);
+    whiteCheck = new QCheckBox(tr("White SNR"));
+    whiteCheck->setChecked(true);
+    whiteCheck->setStyleSheet(QString("QCheckBox { color: %1; }").arg(whiteColor().name()));
+    blackCheck = new QCheckBox(tr("Black PSNR"));
+    blackCheck->setChecked(true);
+    blackCheck->setStyleSheet(QString("QCheckBox { color: %1; }").arg(blackColor().name()));
+    row->addWidget(whiteCheck);
+    row->addWidget(blackCheck);
+    if (withStack) {
+        stackCheck = new QCheckBox(tr("Stack behind"));
+        stackCheck->setChecked(true);
+        row->addWidget(stackCheck);
+    }
+    row->addStretch(1);
+    layout->addLayout(row);
+
+    plot = new SnrPlot;
+    layout->addWidget(plot, 1);
+
+    connect(plot, &SnrPlot::frameRequested, this, &SnrGraph::frameRequested);
+    connect(whiteCheck, &QCheckBox::toggled, this, [this]() { redraw(); });
+    connect(blackCheck, &QCheckBox::toggled, this, [this]() { redraw(); });
+    if (stackCheck) connect(stackCheck, &QCheckBox::toggled, this, [this]() { redraw(); });
+}
+
+void SnrGraph::setData(const QString &newLabel, const QVector<float> &newWhite, const QVector<float> &newBlack,
+                       const QVector<float> &newStackWhite, const QVector<float> &newStackBlack)
+{
+    label = newLabel;
+    white = newWhite;
+    black = newBlack;
+    stackWhite = newStackWhite;
+    stackBlack = newStackBlack;
+    redraw();
+}
+
+void SnrGraph::setMarker(qint32 frame)
+{
+    plot->setMarker(frame);
+}
+
+void SnrGraph::redraw()
+{
+    QVector<SnrCurve> curves;
+    if (stackCheck && stackCheck->isChecked()) {
+        curves.append({ stackWhite, whiteColor(), true, whiteCheck->isChecked() });
+        curves.append({ stackBlack, blackColor(), true, blackCheck->isChecked() });
+    }
+    curves.append({ white, whiteColor(), false, whiteCheck->isChecked() });
+    curves.append({ black, blackColor(), false, blackCheck->isChecked() });
+    plot->setCurves(curves, label);
 }

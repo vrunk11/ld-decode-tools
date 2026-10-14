@@ -60,6 +60,13 @@ struct FrameRequest {
     StackSettings settings;
 };
 
+// The SNR of the stack at a frame, measured from the test signal lines of the stacked fields (NaN: none)
+struct StackSnrPoint {
+    qint32 frame = 0;
+    float white = 0;
+    float black = 0;
+};
+
 struct FrameResult {
     quint64 serial = 0;
     qint32 channel = 0;
@@ -76,6 +83,7 @@ struct FrameResult {
 
 Q_DECLARE_METATYPE(PalColour::Configuration)
 Q_DECLARE_METATYPE(Comb::Configuration)
+Q_DECLARE_METATYPE(StackSnrPoint)
 Q_DECLARE_METATYPE(SourceInfo)
 Q_DECLARE_METATYPE(FrameRequest)
 Q_DECLARE_METATYPE(FrameResult)
@@ -92,6 +100,8 @@ public:
     // The serial of the newest request, set by the sender before it posts it, so that requests
     // that have been overtaken are skipped
     std::atomic<quint64> latest[2] = { 0, 0 };
+    // The generation of the stack SNR job that is wanted: a newer one makes the older stop
+    std::atomic<quint64> snrGeneration{0};
 
 public slots:
     void addSource(const QString &id, const QString &file, bool reverseFields);
@@ -99,10 +109,14 @@ public slots:
     void setReverseFields(bool reverseFields);
     void setChromaConfiguration(const PalColour::Configuration &pal, const Comb::Configuration &ntsc);
     void render(const FrameRequest &request);
+    // Measure the SNR of the stack over the whole timeline, a chunk of frames at a time so that pictures asked
+    // for in between are not kept waiting
+    void computeStackSnr(const FrameRequest &request, qint32 startFrame, quint64 generation);
 
 signals:
     void sourceLoaded(const SourceInfo &info);
     void frameReady(const FrameResult &result);
+    void stackSnrReady(quint64 generation, const QVector<StackSnrPoint> &points, bool finished);
 
 private:
     struct Loaded {
@@ -127,7 +141,8 @@ private:
         qint32 mode = 0;
     };
     // Stack a frame of the timeline from the sources that have it; false if none does
-    bool stackFrame(const FrameRequest &request, qint32 frame, qint32 inStack, StackedFrame &out);
+    // lines > 0: only the first lines of the fields (the test signal lines), which is all the SNR needs
+    bool stackFrame(const FrameRequest &request, qint32 frame, qint32 inStack, StackedFrame &out, qint32 lines = -1);
     QImage chromaPicture(Loaded &source, qint32 ownFrame, const QVector<StackedFrame> *around, qint32 lookBehind);
     void lookRange(VideoSystem system, qint32 &lookBehind, qint32 &lookAhead) const;
     void configureDecoders(LdDecodeMetaData::VideoParameters videoParameters);

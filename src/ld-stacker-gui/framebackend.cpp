@@ -53,6 +53,8 @@ FrameBackend::FrameBackend(QObject *parent)
     qRegisterMetaType<SourceInfo>("SourceInfo");
     qRegisterMetaType<FrameRequest>("FrameRequest");
     qRegisterMetaType<FrameResult>("FrameResult");
+    qRegisterMetaType<StackSnrPoint>("StackSnrPoint");
+    qRegisterMetaType<QVector<StackSnrPoint>>("QVector<StackSnrPoint>");
     qRegisterMetaType<PalColour::Configuration>("PalColour::Configuration");
     qRegisterMetaType<Comb::Configuration>("Comb::Configuration");
 
@@ -82,7 +84,7 @@ void FrameBackend::addSource(const QString &id, const QString &file, bool revers
     }
 
     const LdDecodeMetaData::VideoParameters &videoParameters = loaded->metadata.getVideoParameters();
-    if (!loaded->video.open(file, videoParameters.fieldWidth * videoParameters.fieldHeight)) {
+    if (!loaded->video.open(file, videoParameters.fieldWidth * videoParameters.fieldHeight, videoParameters.fieldWidth)) {
         info.error = tr("Could not open %1").arg(QFileInfo(file).fileName());
         emit sourceLoaded(info);
         return;
@@ -335,7 +337,7 @@ void FrameBackend::render(const FrameRequest &request)
 }
 
 // Stack a frame of the timeline from the sources that are on and have it
-bool FrameBackend::stackFrame(const FrameRequest &request, qint32 frame, qint32 inStack, StackedFrame &out)
+bool FrameBackend::stackFrame(const FrameRequest &request, qint32 frame, qint32 inStack, StackedFrame &out, qint32 lines)
 {
     const qint32 total = request.entries.size();
     QVector<qint32> frames(total, -1);
@@ -350,12 +352,19 @@ bool FrameBackend::stackFrame(const FrameRequest &request, qint32 frame, qint32 
     if (available.isEmpty()) return false;
 
     // The sources must be alike: those that are not the size of the first are left out
-    const LdDecodeMetaData::VideoParameters videoParameters = sources.value(request.entries[available[0]].id)->metadata.getVideoParameters();
+    LdDecodeMetaData::VideoParameters videoParameters = sources.value(request.entries[available[0]].id)->metadata.getVideoParameters();
     QVector<qint32> usable;
     for (qint32 i: available) {
         const LdDecodeMetaData::VideoParameters &other = sources.value(request.entries[i].id)->metadata.getVideoParameters();
         if (other.fieldWidth == videoParameters.fieldWidth && other.fieldHeight == videoParameters.fieldHeight) usable.append(i);
     }
+
+    // Only the first lines, when that is all that is wanted (the stacking sees the fields as that short)
+    const qint32 readLines = lines > 0 ? qMin(lines, videoParameters.fieldHeight) : -1;
+    if (readLines > 0) videoParameters.fieldHeight = readLines;
+    const auto readField = [readLines](Loaded &source, qint32 field) {
+        return readLines > 0 ? source.video.getVideoField(field, 1, readLines) : source.video.getVideoField(field);
+    };
 
     QVector<SourceVideo::Data> firstData(total), secondData(total);
     QVector<LdDecodeMetaData::Field> firstMetadata(total), secondMetadata(total);
@@ -365,11 +374,11 @@ bool FrameBackend::stackFrame(const FrameRequest &request, qint32 frame, qint32 
         const qint32 second = source.metadata.getSecondFieldNumber(frames[i]);
         // In the order of the file, to save seeking
         if (first < second) {
-            firstData[i] = source.video.getVideoField(first);
-            secondData[i] = source.video.getVideoField(second);
+            firstData[i] = readField(source, first);
+            secondData[i] = readField(source, second);
         } else {
-            secondData[i] = source.video.getVideoField(second);
-            firstData[i] = source.video.getVideoField(first);
+            secondData[i] = readField(source, second);
+            firstData[i] = readField(source, first);
         }
         firstMetadata[i] = source.metadata.getField(first);
         secondMetadata[i] = source.metadata.getField(second);
@@ -398,4 +407,53 @@ bool FrameBackend::stackFrame(const FrameRequest &request, qint32 frame, qint32 
     out.videoParameters = videoParameters;
     out.mode = mode;
     return true;
+}
+
+// The SNR of the stack over the whole timeline: for each frame the first lines of the fields of the sources are
+// stacked, which is all the test signals need, so it costs a fraction of stacking the frames
+void FrameBackend::computeStackSnr(const FrameRequest &request, qint32 startFrame, quint64 generation)
+{
+    if (generation != snrGeneration.load()) return;
+
+    // The timeline is as long as the first source that is on
+    qint32 total = 0, inStack = 0;
+    for (const FrameRequest::Entry &entry: request.entries) {
+        const auto found = sources.constFind(entry.id);
+        if (found == sources.constEnd() || !(*found)->ok || !entry.enabled) continue;
+        if (inStack++ == 0) total = (*found)->metadata.getNumberOfFrames();
+    }
+    if (total < 1) {
+        emit stackSnrReady(generation, QVector<StackSnrPoint>(), true);
+        return;
+    }
+
+    constexpr qint32 chunk = 40;
+    constexpr qint32 vitsLines = 24;    // the test signals are on the first 22 lines; a couple more for the neighbours
+    QVector<StackSnrPoint> points;
+    qint32 frame = startFrame;
+    for (; frame < startFrame + chunk && frame <= total; frame++) {
+        if (generation != snrGeneration.load()) return;
+
+        StackSnrPoint point;
+        point.frame = frame;
+        point.white = std::nanf("");
+        point.black = std::nanf("");
+        StackedFrame stacked;
+        if (stackFrame(request, frame, inStack, stacked, vitsLines)) {
+            double whiteTotal = 0, blackTotal = 0;
+            qint32 whitePoints = 0, blackPoints = 0;
+            measureField(stacked.first, stacked.videoParameters, whiteTotal, whitePoints, blackTotal, blackPoints);
+            measureField(stacked.second, stacked.videoParameters, whiteTotal, whitePoints, blackTotal, blackPoints);
+            if (whitePoints) point.white = static_cast<float>(whiteTotal / whitePoints);
+            if (blackPoints) point.black = static_cast<float>(blackTotal / blackPoints);
+        }
+        points.append(point);
+    }
+
+    const bool finished = frame > total;
+    emit stackSnrReady(generation, points, finished);
+    if (!finished) {
+        QMetaObject::invokeMethod(this, "computeStackSnr", Qt::QueuedConnection, Q_ARG(FrameRequest, request),
+                                  Q_ARG(qint32, frame), Q_ARG(quint64, generation));
+    }
 }

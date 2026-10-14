@@ -12,6 +12,8 @@
 
 #include "processdialog.h"
 
+#include <QElapsedTimer>
+
 #include <QAction>
 #include <QCheckBox>
 #include <QCloseEvent>
@@ -71,6 +73,7 @@ MainWindow::MainWindow(const QStringList &arguments, QWidget *parent)
     connect(&backendThread, &QThread::finished, backend, &QObject::deleteLater);
     connect(backend, &FrameBackend::sourceLoaded, this, &MainWindow::on_sourceLoaded);
     connect(backend, &FrameBackend::frameReady, this, &MainWindow::on_frameReady);
+    connect(backend, &FrameBackend::stackSnrReady, this, &MainWindow::on_stackSnrReady);
     backendThread.start();
 
     buildUi();
@@ -229,8 +232,8 @@ void MainWindow::buildUi()
     scrollArea->viewport()->setCursor(Qt::OpenHandCursor);
     mainLayout->addWidget(scrollArea, 1);
 
-    snrPlot = new SnrPlot;
-    snrPlot->setFixedHeight(76);
+    snrPlot = new SnrGraph(false);
+    snrPlot->setFixedHeight(100);
     mainLayout->addWidget(snrPlot);
 
     // Navigation
@@ -358,7 +361,7 @@ void MainWindow::buildUi()
     connect(previousButton, &QToolButton::clicked, this, [this]() { setFrame(frame - 1); });
     connect(nextButton, &QToolButton::clicked, this, [this]() { setFrame(frame + 1); });
     connect(lastButton, &QToolButton::clicked, this, [this]() { setFrame(totalFrames); });
-    connect(snrPlot, &SnrPlot::frameRequested, this, &MainWindow::setFrame);
+    connect(snrPlot, &SnrGraph::frameRequested, this, &MainWindow::setFrame);
     connect(modeCombo, &QComboBox::currentIndexChanged, this, [this](qint32 index) {
         project.stacking.mode = index - 1;
         sourcesChanged();
@@ -494,7 +497,9 @@ void MainWindow::loadSession(const QString &fileName)
     }
     states.clear();
     colorCounter = 0;
-    stackSnr.clear();
+    stackWhite.clear();
+    stackBlack.clear();
+    stackSnrDone = 0;
     currentImage = QImage();
 
     project = loaded;
@@ -746,8 +751,8 @@ void MainWindow::updateTabTexts()
     if (tabBar->count() != project.sources.size()) return;
 
     const QSignalBlocker blocker(tabBar);
-    const auto stackValue = stackSnr.constFind(frame);
-    stackButton->setText(stackValue != stackSnr.constEnd() ? tr("Stack  %1 dB").arg(*stackValue, 0, 'f', 1) : tr("Stack"));
+    const bool stackKnown = frame >= 1 && frame <= stackWhite.size() && std::isfinite(stackWhite[frame - 1]);
+    stackButton->setText(stackKnown ? tr("Stack  %1 dB").arg(stackWhite[frame - 1], 0, 'f', 1) : tr("Stack"));
 
     // The source with the best SNR here
     qint32 best = -1;
@@ -804,8 +809,8 @@ void MainWindow::updateTimeline()
 // What is stacked changed (a source on or off, an offset, the mode): the stack is worked out again
 void MainWindow::sourcesChanged()
 {
-    stackSnr.clear();
     updateTimeline();
+    startStackSnr();
     updateTabTexts();
     updatePlot();
     updateStatus();
@@ -895,7 +900,10 @@ void MainWindow::on_frameReady(const FrameResult &result)
 
     if (result.view == "stack") {
         lastStackResult = result;
-        if (std::isfinite(result.stackWhiteSnr)) stackSnr.insert(result.frame, static_cast<float>(result.stackWhiteSnr));
+        if (result.frame >= 1 && result.frame <= stackWhite.size()) {
+            if (std::isfinite(result.stackWhiteSnr)) stackWhite[result.frame - 1] = static_cast<float>(result.stackWhiteSnr);
+            if (std::isfinite(result.stackBlackSnr)) stackBlack[result.frame - 1] = static_cast<float>(result.stackBlackSnr);
+        }
         if (stackWindow->isVisible()) showStackPicture(result);
         updateTabTexts();
         updatePlot();
@@ -922,9 +930,9 @@ void MainWindow::syncDialogs()
 void MainWindow::openSnrWindow(const QString &id)
 {
     snrWindowSource = id;
-    updateSnrWindow();
     snrWindow->show();
     snrWindow->raise();
+    updateSnrWindow();   // (it only follows what is stacked once it is visible)
 }
 
 // The SNR window follows what is stacked and the frame viewed
@@ -937,15 +945,8 @@ void MainWindow::updateSnrWindow()
         return;
     }
     const StackSource &source = project.sources[index];
-    const SourceState state = states.value(source.id);
-    QVector<float> values(totalFrames, std::nanf(""));
-    for (qint32 at = 1; at <= totalFrames; at++) {
-        bool known;
-        const float value = sourceSnr(state, at, effectiveOffset(index), known);
-        if (known) values[at - 1] = value;
-    }
-    snrWindow->setContent(tr("SNR - source %1 (%2)").arg(index + 1).arg(sourceTitle(source)), values, colorFor(source.id),
-                          stackSnr, STACK_COLOR, frame);
+    snrWindow->setContent(tr("SNR - source %1 (%2)").arg(index + 1).arg(sourceTitle(source)), sourceCurve(index, true),
+                          sourceCurve(index, false), stackWhite, stackBlack, frame);
 }
 
 // What the picture shows changed: the stack or a source
@@ -963,21 +964,69 @@ void MainWindow::updatePlot()
 
     const QString view = currentView();
     if (view == "stack") {
-        snrPlot->setSparseSeries(stackSnr, totalFrames, STACK_COLOR, tr("Stack: white SNR, measured as the frames are viewed"));
+        QString label = tr("Stack, measured from the stacked test signals");
+        if (totalFrames > 0 && stackSnrDone < totalFrames) label += tr(" - %1%").arg(stackSnrDone * 100 / totalFrames);
+        snrPlot->setData(label, stackWhite, stackBlack);
         return;
     }
 
     const qint32 index = project.indexOfSource(view);
     if (index < 0) return;
+    snrPlot->setData(tr("Source %1, from its metadata").arg(index + 1), sourceCurve(index, true), sourceCurve(index, false));
+}
+
+// The SNR of a source along the timeline, shifted by its offset
+QVector<float> MainWindow::sourceCurve(qint32 index, bool white) const
+{
+    QVector<float> values(totalFrames, std::nanf(""));
     const StackSource &source = project.sources[index];
     const SourceState state = states.value(source.id);
-    QVector<float> values(totalFrames, std::nanf(""));
+    if (!state.loaded) return values;
+    const QVector<float> &own = white ? state.info.whiteSnr : state.info.blackSnr;
+    const qint32 offset = effectiveOffset(index);
     for (qint32 at = 1; at <= totalFrames; at++) {
-        bool known;
-        const float value = sourceSnr(state, at, effectiveOffset(index), known);
-        if (known) values[at - 1] = value;
+        const qint32 ownFrame = at - offset;
+        if (ownFrame >= 1 && ownFrame <= own.size()) values[at - 1] = own[ownFrame - 1];
     }
-    snrPlot->setSeries(values, colorFor(source.id), tr("Source %1: white SNR (metadata)").arg(index + 1));
+    return values;
+}
+
+// Start measuring the SNR of the stack over the whole timeline, in the background (and stop any earlier one)
+void MainWindow::startStackSnr()
+{
+    stackWhite = QVector<float>(totalFrames, std::nanf(""));
+    stackBlack = QVector<float>(totalFrames, std::nanf(""));
+    stackSnrDone = 0;
+
+    const quint64 job = ++snrJob;
+    backend->snrGeneration.store(job);
+    if (totalFrames < 1 || referenceIndex() < 0) return;
+
+    FrameRequest request;
+    request.settings = project.stacking;
+    for (qint32 index = 0; index < project.sources.size(); index++) {
+        FrameRequest::Entry entry;
+        entry.id = project.sources[index].id;
+        entry.enabled = project.sources[index].enabled;
+        entry.offset = effectiveOffset(index);
+        request.entries.append(entry);
+    }
+    QMetaObject::invokeMethod(backend, "computeStackSnr", Qt::QueuedConnection, Q_ARG(FrameRequest, request),
+                              Q_ARG(qint32, 1), Q_ARG(quint64, job));
+}
+
+void MainWindow::on_stackSnrReady(quint64 generation, const QVector<StackSnrPoint> &points, bool finished)
+{
+    if (generation != snrJob) return;   // of an earlier job
+    for (const StackSnrPoint &point: points) {
+        if (point.frame < 1 || point.frame > stackWhite.size()) continue;
+        stackWhite[point.frame - 1] = point.white;
+        stackBlack[point.frame - 1] = point.black;
+        stackSnrDone = qMax(stackSnrDone, point.frame);
+    }
+    if (finished) stackSnrDone = totalFrames;
+    updateTabTexts();
+    updatePlot();
 }
 
 void MainWindow::updateStatus()
