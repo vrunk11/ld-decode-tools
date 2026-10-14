@@ -794,10 +794,26 @@ bool LdDecodeMetaData::read(QString fileName)
 // Write all metadata, choosing the format from the file name or the input
 bool LdDecodeMetaData::write(QString fileName) const
 {
-    // The metadata of a capture is kept in its LDX file
+    // The metadata of a capture is kept in its LDX file: the new ones are added to it, and are the current ones from then on
     if (LdxCapture::isLdxName(fileName)) {
-        qWarning() << "The metadata of an LDX file cannot be written";
-        return false;
+        QTemporaryFile temporary;
+        if (!temporary.open()) {
+            qCritical() << "Could not hold the metadata to keep them in" << fileName;
+            return false;
+        }
+        temporary.close();
+        if (!writeJson(temporary.fileName())) return false;
+        QFile json(temporary.fileName());
+        if (!json.open(QIODevice::ReadOnly)) {
+            qCritical() << "Could not read back the metadata to keep them in" << fileName;
+            return false;
+        }
+        QString error;
+        if (!LdxCapture::writeMetadata(fileName, json.readAll(), error)) {
+            qCritical().noquote() << error;
+            return false;
+        }
+        return true;
     }
 
     // The metadata of a stacking session is that of its sources: there is none to write

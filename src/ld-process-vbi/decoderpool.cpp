@@ -88,7 +88,11 @@ bool DecoderPool::process()
 
     // Write the metadata file
     qInfo() << "Writing metadata file...";
-    ldDecodeMetaData.write(outputMetadataFilename);
+    if (!ldDecodeMetaData.write(outputMetadataFilename)) {
+        qCritical().noquote() << "The metadata could not be written to" << outputMetadataFilename;
+        sourceVideo.close();
+        return false;
+    }
     qInfo() << "VBI processing complete";
 
     // Close the source video

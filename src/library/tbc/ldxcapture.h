@@ -56,7 +56,21 @@ public:
     // The ld-decode metadata of the capture, as JSON
     bool readMetadata(QByteArray &json, QString &error);
 
+    // Keep new metadata for a capture in its LDX file: a block added at the end of the file, which is the current one from
+    // then on (what was there stays, and the history says what was done)
+    static bool writeMetadata(const QString &name, const QByteArray &json, QString &error);
+
+    // The analogue audio of the capture: the PCM track that is about it (16-bit stereo), by samples (a sample is a pair)
+    bool openAudio(const QString &name, QString &error);
+    qint64 audioSamples() const;
+    double audioSampleRate() const;
+    // Left and right in turn, or less if the audio ends
+    QVector<qint16> getAudio(qint64 startSample, qint64 numberOfSamples);
+
 private:
+    // The metadata track that is about this capture (0 if none)
+    quint32 metadataTrackNumber() const;
+
     struct Private;
     std::unique_ptr<Private> d;
 };

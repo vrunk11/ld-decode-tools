@@ -24,6 +24,8 @@
 
 #include "sourceaudio.h"
 
+#include "ldxcapture.h"
+
 #include <QDataStream>
 #include "tbc/logging.h"
 
@@ -40,6 +42,19 @@ SourceAudio::~SourceAudio()
 // Open an audio source file
 bool SourceAudio::open(QFileInfo inputFileInfo)
 {
+    // The audio of a capture kept in an LDX file is a track of it
+    if (LdxCapture::isLdxName(inputFileInfo.filePath())) {
+        auto capture = std::make_unique<LdxCapture>();
+        QString error;
+        if (!capture->openAudio(inputFileInfo.filePath(), error)) {
+            qCritical().noquote() << error;
+            return false;
+        }
+        audioFileByteLength = capture->audioSamples() * 4;
+        ldx = std::move(capture);
+        return true;
+    }
+
     // Get the input audio fileinfo from the input TBC fileinfo:
     QFileInfo inputAudioFileInfo(inputFileInfo.absolutePath() + "/" + inputFileInfo.completeBaseName() + ".pcm");
 
@@ -66,6 +81,7 @@ bool SourceAudio::open(QFileInfo inputFileInfo)
 // Close an audio source file
 void SourceAudio::close()
 {
+    ldx.reset();
     // Close the audio source data file
     inputAudioFile.close();
     audioFileByteLength = 0;
@@ -102,6 +118,8 @@ SourceAudio::Data SourceAudio::getAudioData(qint32 startSample, qint32 numberOfS
         qFatal("getAudioData requested, but startSample + numberOfSamples was out of bounds!");
         return sampleData;
     }
+
+    if (ldx) return ldx->getAudio(startSample, numberOfSamples);
 
     // Seek to the correct file position (if not already there)
     if (!inputAudioFile.seek(startByte)) {

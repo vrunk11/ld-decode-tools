@@ -37,3 +37,5 @@ Arguments:
   output                               Specify output TBC file (omit or - for
                                        piped output)
 ```
+
+The input can be an LDX file (`capture.ldx`, or `capture.ldx#3`): the video and the metadata are read from it, and the corrected video goes to a TBC file.

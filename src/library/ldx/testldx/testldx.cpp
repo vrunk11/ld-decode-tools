@@ -289,12 +289,16 @@ static void testAppend(const QString &path)
     // Added to again, the file is still whole
     Ldx::Writer again;
     CHECK(again.openAppend(path, error));
+    QJsonObject third;
+    third["tool"] = "third";
+    again.addHistory(third);
     CHECK(again.writeBlock(2, 9 * 16683000LL, pattern(10, 5)));
     CHECK(again.finish(error));
     Ldx::Reader last;
     CHECK(last.open(path, error));
     CHECK(last.buildIndex(error));
     CHECK(last.blockCount(2) == 3);
+    CHECK(last.history().size() == 3 && last.history().at(2).toObject()["tool"].toString() == "third");
     CHECK(last.readBlock(2, 2, found) && found.data == pattern(10, 5));
     CHECK(last.readBlock(1, 0, found) && found.data == pattern(100000, 0));
 }
