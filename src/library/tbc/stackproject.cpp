@@ -111,7 +111,7 @@ bool StackProject::load(const QString &fileName, QString &error)
 
     const QJsonObject view = root.value("view").toObject();
     loaded.chroma = view.value("chroma").toBool(false);
-    loaded.zoom = view.value("zoom").toDouble(2.0);
+    loaded.zoom = view.value("zoom").toDouble(1.0);
     loaded.selected = view.value("selected").toString("stack");
 
     *this = loaded;

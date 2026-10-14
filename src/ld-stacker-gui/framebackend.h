@@ -74,6 +74,8 @@ struct FrameResult {
     double stackBlackSnr = 0;
 };
 
+Q_DECLARE_METATYPE(PalColour::Configuration)
+Q_DECLARE_METATYPE(Comb::Configuration)
 Q_DECLARE_METATYPE(SourceInfo)
 Q_DECLARE_METATYPE(FrameRequest)
 Q_DECLARE_METATYPE(FrameResult)
@@ -95,6 +97,7 @@ public slots:
     void addSource(const QString &id, const QString &file, bool reverseFields);
     void removeSource(const QString &id);
     void setReverseFields(bool reverseFields);
+    void setChromaConfiguration(const PalColour::Configuration &pal, const Comb::Configuration &ntsc);
     void render(const FrameRequest &request);
 
 signals:
@@ -114,7 +117,19 @@ private:
     static QImage weave(const SourceVideo::Data &first, const SourceVideo::Data &second, qint32 width, qint32 fieldHeight);
     // The picture of a frame decoded to colour. For the stack, the two fields stacked are given and
     // replace those of the source the frame is read from.
-    QImage chromaPicture(Loaded &source, qint32 ownFrame, const SourceVideo::Data *stackedFirst, const SourceVideo::Data *stackedSecond);
+    struct StackedFrame {
+        bool ok = false;
+        QVector<qint32> usable;       // the entries that gave a frame
+        qint32 ownFrame = -1;         // the frame, of the first of them, that this is the stack of
+        QString sourceId;             // that first one
+        SourceVideo::Data first, second;
+        LdDecodeMetaData::VideoParameters videoParameters;
+        qint32 mode = 0;
+    };
+    // Stack a frame of the timeline from the sources that have it; false if none does
+    bool stackFrame(const FrameRequest &request, qint32 frame, qint32 inStack, StackedFrame &out);
+    QImage chromaPicture(Loaded &source, qint32 ownFrame, const QVector<StackedFrame> *around, qint32 lookBehind);
+    void lookRange(VideoSystem system, qint32 &lookBehind, qint32 &lookAhead) const;
     void configureDecoders(LdDecodeMetaData::VideoParameters videoParameters);
 
     QMap<QString, std::shared_ptr<Loaded>> sources;

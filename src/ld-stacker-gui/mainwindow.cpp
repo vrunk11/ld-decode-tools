@@ -15,6 +15,10 @@
 #include <QAction>
 #include <QCheckBox>
 #include <QCloseEvent>
+#include <QDragEnterEvent>
+#include <QDropEvent>
+#include <QMimeData>
+#include <QGridLayout>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QHBoxLayout>
@@ -79,11 +83,40 @@ MainWindow::MainWindow(const QStringList &arguments, QWidget *parent)
     stackWindow->setWindowFlag(Qt::Window, true);
     connect(stackWindow, &StackOutputWindow::closed, this, [this]() { stackOutputAction->setChecked(false); });
 
+    optionsDialog = new StackingOptionsDialog(this);
+    enhanceDialog = new EnhanceDialog(this);
+    chromaDialog = new ChromaConfigDialog(this);
+    for (QDialog *dialog: { static_cast<QDialog *>(optionsDialog), static_cast<QDialog *>(enhanceDialog), static_cast<QDialog *>(chromaDialog) }) {
+        dialog->setWindowFlag(Qt::Window, true);
+    }
+    connect(optionsDialog, &StackingOptionsDialog::changed, this, [this]() {
+        const bool reversed = project.stacking.reverseFields;
+        const qint32 mode = project.stacking.mode;
+        project.stacking = optionsDialog->settings();
+        project.stacking.mode = mode;
+        if (project.stacking.reverseFields != reversed) {
+            QMetaObject::invokeMethod(backend, "setReverseFields", Qt::QueuedConnection, Q_ARG(bool, project.stacking.reverseFields));
+        }
+        sourcesChanged();
+    });
+    connect(enhanceDialog, &EnhanceDialog::changed, this, [this]() {
+        applyZoom();
+        if (stackWindow->isVisible() && lastStackResult.view == "stack") showStackPicture(lastStackResult);
+    });
+    connect(chromaDialog, &ChromaConfigDialog::changed, this, [this]() {
+        QMetaObject::invokeMethod(backend, "setChromaConfiguration", Qt::QueuedConnection,
+                                  Q_ARG(PalColour::Configuration, chromaDialog->palConfiguration()),
+                                  Q_ARG(Comb::Configuration, chromaDialog->ntscConfiguration()));
+        if (project.chroma) requestFrame();
+    });
+    syncDialogs();
+    setAcceptDrops(true);
+
     QSettings settings;
     restoreGeometry(settings.value("geometry").toByteArray());
     if (!settings.contains("geometry")) resize(1200, 800);
 
-    zoom = 2.0;
+    zoom = 1.0;
     setZoom(zoom);
 
     // A session file, or the sources to start with
@@ -129,6 +162,8 @@ void MainWindow::buildUi()
     sourceList->setSelectionMode(QAbstractItemView::SingleSelection);
     sourceList->setContextMenuPolicy(Qt::CustomContextMenu);
     sourceList->setSpacing(2);
+    sourceList->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    side->setMinimumWidth(300);
     sideLayout->addWidget(sourceList, 1);
     QPushButton *addButton = new QPushButton(tr("Add source..."));
     sideLayout->addWidget(addButton);
@@ -240,18 +275,27 @@ void MainWindow::buildUi()
     chromaButton->setToolTip(tr("Decode the pictures to colour (with a 2D decoder)"));
     optionsLayout->addWidget(modeCombo);
     optionsLayout->addWidget(chromaButton);
+    chromaSettingsButton = new QPushButton(tr("Chroma settings..."));
+    chromaSettingsButton->setToolTip(tr("The configuration of the chroma decoder"));
+    optionsLayout->addWidget(chromaSettingsButton);
+    enhanceButton = new QPushButton(tr("Enhance..."));
+    enhanceButton->setToolTip(tr("Brightness, contrast and gamma of the pictures shown, to bring out the defects"));
+    optionsLayout->addWidget(enhanceButton);
     optionsLayout->addStretch(1);
     QToolButton *zoomOut = makeButton("-", tr("Zoom out"), true);
     QToolButton *zoomIn = makeButton("+", tr("Zoom in"), true);
-    zoomLabel = new QLabel;
-    zoomLabel->setMinimumWidth(44);
-    zoomLabel->setAlignment(Qt::AlignCenter);
+    zoomSpin = new QSpinBox;
+    zoomSpin->setRange(25, 600);
+    zoomSpin->setSingleStep(25);
+    zoomSpin->setSuffix("%");
+    zoomSpin->setKeyboardTracking(false);
+    zoomSpin->setToolTip(tr("Zoom: type a value, or use the + and - buttons"));
     zoomMethodCombo = new QComboBox;
     zoomMethodCombo->addItem(tr("Line doubling"));
     zoomMethodCombo->addItem(tr("Smooth"));
     zoomMethodCombo->setToolTip(tr("How the picture is enlarged: line doubling keeps the pixels as they are"));
     optionsLayout->addWidget(zoomOut);
-    optionsLayout->addWidget(zoomLabel);
+    optionsLayout->addWidget(zoomSpin);
     optionsLayout->addWidget(zoomIn);
     optionsLayout->addWidget(zoomMethodCombo);
     mainLayout->addWidget(options);
@@ -261,7 +305,7 @@ void MainWindow::buildUi()
     splitter->addWidget(main);
     splitter->setStretchFactor(0, 0);
     splitter->setStretchFactor(1, 1);
-    splitter->setSizes({ 260, 900 });
+    splitter->setSizes({ 340, 880 });
     splitter->setChildrenCollapsible(false);
     setCentralWidget(splitter);
 
@@ -301,12 +345,15 @@ void MainWindow::buildUi()
         project.stacking.mode = index - 1;
         sourcesChanged();
     });
+    connect(chromaSettingsButton, &QPushButton::clicked, this, [this]() { chromaDialog->show(); chromaDialog->raise(); });
+    connect(enhanceButton, &QPushButton::clicked, this, [this]() { enhanceDialog->show(); enhanceDialog->raise(); });
     connect(chromaButton, &QPushButton::toggled, this, [this](bool on) {
         project.chroma = on;
         requestFrame();
     });
-    connect(zoomIn, &QToolButton::clicked, this, [this]() { setZoom(zoom * 1.25); });
-    connect(zoomOut, &QToolButton::clicked, this, [this]() { setZoom(zoom / 1.25); });
+    connect(zoomIn, &QToolButton::clicked, this, [this]() { stepZoom(1); });
+    connect(zoomOut, &QToolButton::clicked, this, [this]() { stepZoom(-1); });
+    connect(zoomSpin, &QSpinBox::valueChanged, this, [this](qint32 percent) { setZoom(percent / 100.0); });
     connect(zoomMethodCombo, &QComboBox::currentIndexChanged, this, [this]() { applyZoom(); });
 
     new QShortcut(Qt::Key_Left, this, [this]() { setFrame(frame - 1); });
@@ -330,6 +377,11 @@ void MainWindow::buildMenus()
     file->addAction(tr("&Process..."), this, &MainWindow::processSession);
     file->addSeparator();
     file->addAction(tr("E&xit"), QKeySequence::Quit, this, &QWidget::close);
+
+    QMenu *edit = menuBar()->addMenu(tr("&Edit"));
+    edit->addAction(tr("&Stacking options..."), this, [this]() { optionsDialog->show(); optionsDialog->raise(); });
+    edit->addAction(tr("&Chroma decoder..."), this, [this]() { chromaDialog->show(); chromaDialog->raise(); });
+    edit->addAction(tr("&Enhance..."), this, [this]() { enhanceDialog->show(); enhanceDialog->raise(); });
 
     QMenu *view = menuBar()->addMenu(tr("&View"));
     stackOutputAction = view->addAction(tr("Stack output"));
@@ -433,6 +485,7 @@ void MainWindow::loadSession(const QString &fileName)
         modeCombo->setCurrentIndex(qBound(0, project.stacking.mode + 1, modeCombo->count() - 1));
     }
     setZoom(project.zoom);
+    syncDialogs();
     {
         const QSignalBlocker blocker(chromaButton);
         chromaButton->setChecked(project.chroma);
@@ -495,6 +548,23 @@ void MainWindow::on_sourceLoaded(const SourceInfo &info)
 {
     if (project.indexOfSource(info.id) < 0) return;   // removed meanwhile
 
+    // The sources are of one video system: a source of the other one is not kept
+    if (info.ok) {
+        for (const StackSource &other: project.sources) {
+            if (other.id == info.id) continue;
+            const SourceState otherState = states.value(other.id);
+            if (otherState.loaded && otherState.info.system != info.system) {
+                const QString name = QFileInfo(info.file).fileName();
+                const QString system = info.system == NTSC ? "NTSC" : (info.system == PAL ? "PAL" : "PAL-M");
+                const QString existing = otherState.info.system == NTSC ? "NTSC" : (otherState.info.system == PAL ? "PAL" : "PAL-M");
+                removeSource(info.id);
+                QMessageBox::warning(this, tr("Add source"), tr("%1 is %2, but the sources already here are %3: PAL and NTSC cannot be stacked together.").arg(name, system, existing));
+                return;
+            }
+        }
+        chromaDialog->setSystem(info.system, true);
+    }
+
     SourceState &state = states[info.id];
     state.info = info;
     state.loaded = info.ok;
@@ -519,18 +589,21 @@ void MainWindow::rebuildSourceList()
         const QString id = source.id;
 
         QWidget *row = new QWidget;
-        QHBoxLayout *layout = new QHBoxLayout(row);
-        layout->setContentsMargins(4, 3, 4, 3);
-        layout->setSpacing(6);
+        QVBoxLayout *layout = new QVBoxLayout(row);
+        layout->setContentsMargins(6, 4, 6, 4);
+        layout->setSpacing(4);
 
-        QCheckBox *enabled = new QCheckBox;
+        // First line: in the stack or not, colour, name
+        QHBoxLayout *top = new QHBoxLayout;
+        top->setSpacing(6);
+        QCheckBox *enabled = new QCheckBox(tr("On"));
         enabled->setChecked(source.enabled);
-        enabled->setToolTip(tr("In the stack"));
-        layout->addWidget(enabled);
+        enabled->setToolTip(tr("In the stack: off leaves the source out without removing it"));
+        top->addWidget(enabled);
 
         QLabel *dot = new QLabel;
         dot->setPixmap(dotIcon(colorFor(id)).pixmap(12, 12));
-        layout->addWidget(dot);
+        top->addWidget(dot);
 
         QString detail;
         if (state.failed) detail = tr("could not be loaded");
@@ -540,25 +613,34 @@ void MainWindow::rebuildSourceList()
         name->setToolTip(source.file);
         if (state.failed) name->setForegroundRole(QPalette::PlaceholderText);
         name->setEnabled(source.enabled);
-        layout->addWidget(name, 1);
-
-        QSpinBox *offset = new QSpinBox;
-        offset->setRange(-1000000, 1000000);
-        offset->setValue(source.offset);
-        offset->setPrefix(source.offset > 0 ? "+" : "");
-        offset->setToolTip(tr("Offset in frames: the source is shifted by this many frames to align it with the others"));
-        offset->setFixedWidth(70);
-        if (index == referenceIndex()) {
-            offset->setEnabled(false);
-            offset->setToolTip(tr("The first source that is on is the reference: the others are lined up with it, and it has no offset"));
-        }
-        layout->addWidget(offset);
+        name->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+        top->addWidget(name, 1);
 
         QToolButton *snrButton = new QToolButton;
         snrButton->setText(tr("SNR"));
         snrButton->setToolTip(tr("The SNR of this source over the disc, in a window"));
-        layout->addWidget(snrButton);
+        top->addWidget(snrButton);
         connect(snrButton, &QToolButton::clicked, this, [this, id]() { openSnrWindow(id); });
+        layout->addLayout(top);
+
+        // Second line: offset and SNR
+        QHBoxLayout *bottom = new QHBoxLayout;
+        bottom->setSpacing(6);
+        bottom->addSpacing(20);
+        bottom->addWidget(new QLabel(tr("Offset:")));
+        QSpinBox *offset = new QSpinBox;
+        offset->setRange(-1000000, 1000000);
+        offset->setValue(source.offset);
+        offset->setSuffix(tr(" fr"));
+        offset->setToolTip(tr("Offset in frames: the source is shifted by this many frames to align it with the others"));
+        offset->setMinimumWidth(90);
+        if (index == referenceIndex()) {
+            offset->setEnabled(false);
+            offset->setToolTip(tr("The first source that is on is the reference: the others are lined up with it, and it has no offset"));
+        }
+        bottom->addWidget(offset);
+        bottom->addStretch(1);
+        layout->addLayout(bottom);
 
         connect(enabled, &QCheckBox::toggled, this, [this, id, name](bool on) {
             const qint32 at = project.indexOfSource(id);
@@ -572,7 +654,6 @@ void MainWindow::rebuildSourceList()
             const qint32 at = project.indexOfSource(id);
             if (at < 0) return;
             project.sources[at].offset = value;
-            offset->setPrefix(value > 0 ? "+" : "");
             sourcesChanged();
         });
 
@@ -787,18 +868,27 @@ void MainWindow::on_frameReady(const FrameResult &result)
     if (result.view == "stack") {
         lastStackResult = result;
         if (std::isfinite(result.stackWhiteSnr)) stackSnr.insert(result.frame, static_cast<float>(result.stackWhiteSnr));
-        if (stackWindow->isVisible()) {
-            if (result.image.isNull()) {
-                stackWindow->setMessage(result.message);
-            } else {
-                const QString snr = std::isfinite(result.stackWhiteSnr) ? tr("  -  %1 dB").arg(result.stackWhiteSnr, 0, 'f', 1) : QString();
-                stackWindow->setPicture(result.image, tr("Stack, frame %1%2").arg(result.frame).arg(snr));
-            }
-        }
+        if (stackWindow->isVisible()) showStackPicture(result);
         updateTabTexts();
         updatePlot();
     }
     updateStatus();
+}
+
+void MainWindow::showStackPicture(const FrameResult &result)
+{
+    if (result.image.isNull()) {
+        stackWindow->setMessage(result.message);
+        return;
+    }
+    const QString snr = std::isfinite(result.stackWhiteSnr) ? tr("  -  %1 dB").arg(result.stackWhiteSnr, 0, 'f', 1) : QString();
+    stackWindow->setPicture(enhanceDialog->apply(result.image), tr("Stack, frame %1%2").arg(result.frame).arg(snr));
+}
+
+// The dialogs show what the session holds
+void MainWindow::syncDialogs()
+{
+    optionsDialog->setSettings(project.stacking);
 }
 
 void MainWindow::openSnrWindow(const QString &id)
@@ -895,8 +985,27 @@ void MainWindow::updateStatus()
 void MainWindow::setZoom(double newZoom)
 {
     zoom = qBound(0.25, newZoom, 6.0);
-    zoomLabel->setText(QString("%1%").arg(qRound(zoom * 100)));
+    {
+        const QSignalBlocker blocker(zoomSpin);
+        zoomSpin->setValue(qRound(zoom * 100));
+    }
     applyZoom();
+}
+
+// One step up or down the usual zooms, which are the ones that go through 100%
+void MainWindow::stepZoom(qint32 direction)
+{
+    static const double steps[] = { 0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 4.0, 5.0, 6.0 };
+    constexpr qint32 count = sizeof(steps) / sizeof(steps[0]);
+    if (direction > 0) {
+        for (qint32 i = 0; i < count; i++) {
+            if (steps[i] > zoom + 0.001) { setZoom(steps[i]); return; }
+        }
+    } else {
+        for (qint32 i = count - 1; i >= 0; i--) {
+            if (steps[i] < zoom - 0.001) { setZoom(steps[i]); return; }
+        }
+    }
 }
 
 void MainWindow::applyZoom()
@@ -904,7 +1013,7 @@ void MainWindow::applyZoom()
     if (currentImage.isNull()) return;
     const QSize size(qRound(currentImage.width() * zoom), qRound(currentImage.height() * zoom));
     const Qt::TransformationMode mode = zoomMethodCombo->currentIndex() == 0 ? Qt::FastTransformation : Qt::SmoothTransformation;
-    imageLabel->setPixmap(QPixmap::fromImage(currentImage).scaled(size, Qt::IgnoreAspectRatio, mode));
+    imageLabel->setPixmap(QPixmap::fromImage(enhanceDialog->apply(currentImage)).scaled(size, Qt::IgnoreAspectRatio, mode));
     imageLabel->setMinimumSize(size);
 }
 
@@ -938,7 +1047,7 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
         case QEvent::Wheel: {
             QWheelEvent *wheel = static_cast<QWheelEvent *>(event);
             if (wheel->modifiers() & Qt::ControlModifier) {
-                setZoom(zoom * (wheel->angleDelta().y() > 0 ? 1.25 : 0.8));
+                stepZoom(wheel->angleDelta().y() > 0 ? 1 : -1);
                 return true;
             }
             break;
@@ -948,4 +1057,23 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
         }
     }
     return QMainWindow::eventFilter(watched, event);
+}
+
+// Files dropped on the window: a session, or sources to add
+void MainWindow::dragEnterEvent(QDragEnterEvent *event)
+{
+    if (event->mimeData()->hasUrls()) event->acceptProposedAction();
+}
+
+void MainWindow::dropEvent(QDropEvent *event)
+{
+    QStringList files;
+    QString session;
+    for (const QUrl &url: event->mimeData()->urls()) {
+        const QString path = url.toLocalFile();
+        if (path.isEmpty()) continue;
+        if (path.endsWith(".stack", Qt::CaseInsensitive)) session = path; else files.append(path);
+    }
+    if (!session.isEmpty()) loadSession(session);
+    if (!files.isEmpty()) addSources(files);
 }

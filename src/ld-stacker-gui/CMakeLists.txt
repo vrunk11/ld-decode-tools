@@ -4,6 +4,7 @@ set(ld-stacker-gui_SOURCES
     framebackend.cpp
     snrplot.cpp
     toolwindows.cpp
+    optionsdialogs.cpp
     processdialog.cpp
 )
 

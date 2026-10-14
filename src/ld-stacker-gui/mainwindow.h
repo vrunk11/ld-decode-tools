@@ -27,6 +27,7 @@
 #include <QToolButton>
 
 #include "framebackend.h"
+#include "optionsdialogs.h"
 #include "snrplot.h"
 #include "toolwindows.h"
 #include "stackproject.h"
@@ -42,6 +43,8 @@ public:
 
 protected:
     void closeEvent(QCloseEvent *event) override;
+    void dragEnterEvent(QDragEnterEvent *event) override;
+    void dropEvent(QDropEvent *event) override;
     bool eventFilter(QObject *watched, QEvent *event) override;
 
 private slots:
@@ -72,6 +75,8 @@ private:
     void updateTabTexts();
     void updateTimeline();
     void updatePlot();
+    void showStackPicture(const FrameResult &result);
+    void syncDialogs();
     void updateSnrWindow();
     void openSnrWindow(const QString &id);
     void sendRequest(const QString &view, qint32 channel);
@@ -82,6 +87,7 @@ private:
     void requestFrame();
     void applyZoom();
     void setZoom(double zoom);
+    void stepZoom(qint32 direction);
     QString currentView() const;
     QColor colorFor(const QString &id);
     QString sourceTitle(const StackSource &source) const;
@@ -100,13 +106,16 @@ private:
 
     qint32 frame = 1;
     qint32 totalFrames = 0;
-    double zoom = 2.0;
+    double zoom = 1.0;
     QImage currentImage;
     FrameResult lastResult;       // the last picture of the main view
     FrameResult lastStackResult;  // the last stack, wherever it was asked for
     SnrWindow *snrWindow = nullptr;
     QString snrWindowSource;
     StackOutputWindow *stackWindow = nullptr;
+    StackingOptionsDialog *optionsDialog = nullptr;
+    EnhanceDialog *enhanceDialog = nullptr;
+    ChromaConfigDialog *chromaDialog = nullptr;
     QAction *stackOutputAction = nullptr;
     QMap<qint32, float> stackSnr;
 
@@ -124,8 +133,10 @@ private:
     QLabel *totalLabel = nullptr;
     QComboBox *modeCombo = nullptr;
     QComboBox *zoomMethodCombo = nullptr;
-    QLabel *zoomLabel = nullptr;
+    QSpinBox *zoomSpin = nullptr;
     QPushButton *chromaButton = nullptr;
+    QPushButton *chromaSettingsButton = nullptr;
+    QPushButton *enhanceButton = nullptr;
     QLabel *statusSources = nullptr;
     QLabel *statusMode = nullptr;
     QLabel *statusShowing = nullptr;

@@ -53,6 +53,8 @@ FrameBackend::FrameBackend(QObject *parent)
     qRegisterMetaType<SourceInfo>("SourceInfo");
     qRegisterMetaType<FrameRequest>("FrameRequest");
     qRegisterMetaType<FrameResult>("FrameResult");
+    qRegisterMetaType<PalColour::Configuration>("PalColour::Configuration");
+    qRegisterMetaType<Comb::Configuration>("Comb::Configuration");
 
     // As ld-analyse sets them: 2D decoders, which need only the frame itself, and 16-bit colour
     palConfiguration = palColour.getConfiguration();
@@ -149,6 +151,21 @@ QImage FrameBackend::weave(const SourceVideo::Data &first, const SourceVideo::Da
     return image;
 }
 
+void FrameBackend::setChromaConfiguration(const PalColour::Configuration &pal, const Comb::Configuration &ntsc)
+{
+    palConfiguration = pal;
+    ntscConfiguration = ntsc;
+    decoderKey.clear();   // the decoders are set up again for the next picture
+}
+
+// How many frames before and after the one decoded the decoder looks at (0 for the 2D ones)
+void FrameBackend::lookRange(VideoSystem system, qint32 &lookBehind, qint32 &lookAhead) const
+{
+    const bool isPal = system == PAL || system == PAL_M;
+    lookBehind = isPal ? palConfiguration.getLookBehind() : ntscConfiguration.getLookBehind();
+    lookAhead = isPal ? palConfiguration.getLookAhead() : ntscConfiguration.getLookAhead();
+}
+
 void FrameBackend::configureDecoders(LdDecodeMetaData::VideoParameters videoParameters)
 {
     // Set up again only when the video is not what the decoders were set up for
@@ -166,26 +183,34 @@ void FrameBackend::configureDecoders(LdDecodeMetaData::VideoParameters videoPara
 
 // The picture of a frame as ld-analyse shows it with the chroma decoder on: the active picture in
 // colour, in a frame that is black around it
-QImage FrameBackend::chromaPicture(Loaded &source, qint32 ownFrame, const SourceVideo::Data *stackedFirst, const SourceVideo::Data *stackedSecond)
+QImage FrameBackend::chromaPicture(Loaded &source, qint32 ownFrame, const QVector<StackedFrame> *around, qint32 lookBehind)
 {
     const LdDecodeMetaData::VideoParameters videoParameters = source.metadata.getVideoParameters();
     configureDecoders(videoParameters);
     const bool isPal = videoParameters.system == PAL || videoParameters.system == PAL_M;
 
-    const qint32 lookBehind = isPal ? palConfiguration.getLookBehind() : ntscConfiguration.getLookBehind();
-    const qint32 lookAhead = isPal ? palConfiguration.getLookAhead() : ntscConfiguration.getLookAhead();
+    qint32 lookBehindFrames, lookAheadFrames;
+    lookRange(videoParameters.system, lookBehindFrames, lookAheadFrames);
 
     QVector<SourceField> fields;
     qint32 startIndex, endIndex;
-    SourceField::loadFields(source.video, source.metadata, ownFrame, 1, lookBehind, lookAhead, fields, startIndex, endIndex);
+    SourceField::loadFields(source.video, source.metadata, ownFrame, 1, lookBehindFrames, lookAheadFrames, fields, startIndex, endIndex);
 
-    if (stackedFirst && stackedSecond && endIndex - startIndex == 2) {
-        fields[startIndex].data = *stackedFirst;
-        fields[startIndex + 1].data = *stackedSecond;
-        if (isPal && videoParameters.isSubcarrierLocked) {
-            // As the fields are read for the decoder: 4fSC PAL has the second field two samples out
-            fields[startIndex + 1].data.remove(0, 2);
-            for (qint32 i = 0; i < 2; i++) fields[startIndex + 1].data.append(videoParameters.black16bIre);
+    // For the stack, the fields of the source are replaced by the stacked ones, for the frame and for those
+    // around it that the decoder looks at
+    if (around) {
+        for (qint32 j = 0; j < around->size(); j++) {
+            const StackedFrame &stacked = (*around)[j];
+            if (!stacked.ok) continue;
+            const qint32 at = startIndex - 2 * lookBehind + 2 * j;
+            if (at < 0 || at + 1 >= fields.size()) continue;
+            fields[at].data = stacked.first;
+            fields[at + 1].data = stacked.second;
+            if (isPal && videoParameters.isSubcarrierLocked) {
+                // As the fields are read for the decoder: 4fSC PAL has the second field two samples out
+                fields[at + 1].data.remove(0, 2);
+                for (qint32 i = 0; i < 2; i++) fields[at + 1].data.append(videoParameters.black16bIre);
+            }
         }
     }
 
@@ -232,8 +257,6 @@ void FrameBackend::render(const FrameRequest &request)
     // The sources that are on, and which of them have a frame here
     const qint32 total = request.entries.size();
     QVector<qint32> frames(total, -1);
-    QVector<qint32> available;
-    qint32 reference = -1;
     for (qint32 i = 0; i < total; i++) {
         const FrameRequest::Entry &entry = request.entries[i];
         const auto found = sources.constFind(entry.id);
@@ -264,7 +287,7 @@ void FrameBackend::render(const FrameRequest &request)
                     secondData = source.video.getVideoField(second);
                     firstData = source.video.getVideoField(first);
                 }
-                result.image = request.chroma ? chromaPicture(source, frames[i], nullptr, nullptr)
+                result.image = request.chroma ? chromaPicture(source, frames[i], nullptr, 0)
                                               : weave(firstData, secondData, videoParameters.fieldWidth, videoParameters.fieldHeight);
             }
         }
@@ -273,22 +296,61 @@ void FrameBackend::render(const FrameRequest &request)
     }
 
     // The stack
-    for (qint32 i = 0; i < total; i++) {
-        if (request.entries[i].enabled && frames[i] >= 0) {
-            if (isPadded(*sources.value(request.entries[i].id), frames[i])) continue;
-            if (reference < 0) reference = i;
-            available.append(i);
-        }
-    }
-
-    if (available.isEmpty()) {
+    StackedFrame main;
+    if (!stackFrame(request, request.frame, result.inStack, main)) {
         result.message = result.inStack ? tr("No source has a frame here") : tr("No source is on");
         emit frameReady(result);
         return;
     }
+    result.modeUsed = main.mode;
+    result.contributing = main.usable.size();
+
+    if (request.chroma) {
+        // A 3D decoder looks at the frames either side, so those are stacked too
+        Loaded &referenceSource = *sources.value(main.sourceId);
+        qint32 lookBehind, lookAhead;
+        lookRange(main.videoParameters.system, lookBehind, lookAhead);
+        QVector<StackedFrame> around(lookBehind + 1 + lookAhead);
+        for (qint32 j = 0; j < around.size(); j++) {
+            if (j == lookBehind) {
+                around[j] = main;
+            } else {
+                stackFrame(request, request.frame - lookBehind + j, result.inStack, around[j]);
+            }
+        }
+        result.image = chromaPicture(referenceSource, main.ownFrame, &around, lookBehind);
+    } else {
+        result.image = weave(main.first, main.second, main.videoParameters.fieldWidth, main.videoParameters.fieldHeight);
+    }
+
+    // The SNR of the stack is not in any metadata: it is measured from the stacked fields
+    double whiteTotal = 0, blackTotal = 0;
+    qint32 whitePoints = 0, blackPoints = 0;
+    measureField(main.first, main.videoParameters, whiteTotal, whitePoints, blackTotal, blackPoints);
+    measureField(main.second, main.videoParameters, whiteTotal, whitePoints, blackTotal, blackPoints);
+    if (whitePoints) result.stackWhiteSnr = whiteTotal / whitePoints;
+    if (blackPoints) result.stackBlackSnr = blackTotal / blackPoints;
+
+    emit frameReady(result);
+}
+
+// Stack a frame of the timeline from the sources that are on and have it
+bool FrameBackend::stackFrame(const FrameRequest &request, qint32 frame, qint32 inStack, StackedFrame &out)
+{
+    const qint32 total = request.entries.size();
+    QVector<qint32> frames(total, -1);
+    QVector<qint32> available;
+    for (qint32 i = 0; i < total; i++) {
+        const FrameRequest::Entry &entry = request.entries[i];
+        const auto found = sources.constFind(entry.id);
+        if (found == sources.constEnd() || !(*found)->ok || !entry.enabled) continue;
+        frames[i] = sourceFrame(**found, frame, entry.offset);
+        if (frames[i] >= 0 && !isPadded(**found, frames[i])) available.append(i);
+    }
+    if (available.isEmpty()) return false;
 
     // The sources must be alike: those that are not the size of the first are left out
-    const LdDecodeMetaData::VideoParameters videoParameters = sources.value(request.entries[reference].id)->metadata.getVideoParameters();
+    const LdDecodeMetaData::VideoParameters videoParameters = sources.value(request.entries[available[0]].id)->metadata.getVideoParameters();
     QVector<qint32> usable;
     for (qint32 i: available) {
         const LdDecodeMetaData::VideoParameters &other = sources.value(request.entries[i].id)->metadata.getVideoParameters();
@@ -315,36 +377,25 @@ void FrameBackend::render(const FrameRequest &request)
 
     // The mode: as ld-disc-stacker, auto goes by how many sources there are
     qint32 mode = request.settings.mode;
-    if (mode == -1) mode = StackerCore::autoMode(result.inStack);
-    result.modeUsed = mode;
-    result.contributing = usable.size();
+    if (mode == -1) mode = StackerCore::autoMode(inStack);
 
     StackerCore core;
-    SourceVideo::Data outputFirst(firstData[usable[0]].size());
-    SourceVideo::Data outputSecond(secondData[usable[0]].size());
-    DropOuts outputFirstDropOuts, outputSecondDropOuts;
+    out.first = SourceVideo::Data(firstData[usable[0]].size());
+    out.second = SourceVideo::Data(secondData[usable[0]].size());
+    DropOuts firstDropOuts, secondDropOuts;
     const bool noDiffDod = !request.settings.diffDod;
-    core.stackField(request.frame, firstData, videoParameters, firstMetadata, usable, noDiffDod,
-                    request.settings.passthrough, outputFirst, outputFirstDropOuts, mode,
+    core.stackField(frame, firstData, videoParameters, firstMetadata, usable, noDiffDod,
+                    request.settings.passthrough, out.first, firstDropOuts, mode,
                     request.settings.smartThreshold * 256, false);
-    core.stackField(request.frame, secondData, videoParameters, secondMetadata, usable, noDiffDod,
-                    request.settings.passthrough, outputSecond, outputSecondDropOuts, mode,
+    core.stackField(frame, secondData, videoParameters, secondMetadata, usable, noDiffDod,
+                    request.settings.passthrough, out.second, secondDropOuts, mode,
                     request.settings.smartThreshold * 256, false);
 
-    if (request.chroma) {
-        Loaded &referenceSource = *sources.value(request.entries[usable[0]].id);
-        result.image = chromaPicture(referenceSource, frames[usable[0]], &outputFirst, &outputSecond);
-    } else {
-        result.image = weave(outputFirst, outputSecond, videoParameters.fieldWidth, videoParameters.fieldHeight);
-    }
-
-    // The SNR of the stack is not in any metadata: it is measured from the stacked fields
-    double whiteTotal = 0, blackTotal = 0;
-    qint32 whitePoints = 0, blackPoints = 0;
-    measureField(outputFirst, videoParameters, whiteTotal, whitePoints, blackTotal, blackPoints);
-    measureField(outputSecond, videoParameters, whiteTotal, whitePoints, blackTotal, blackPoints);
-    if (whitePoints) result.stackWhiteSnr = whiteTotal / whitePoints;
-    if (blackPoints) result.stackBlackSnr = blackTotal / blackPoints;
-
-    emit frameReady(result);
+    out.ok = true;
+    out.usable = usable;
+    out.ownFrame = frames[usable[0]];
+    out.sourceId = request.entries[usable[0]].id;
+    out.videoParameters = videoParameters;
+    out.mode = mode;
+    return true;
 }
