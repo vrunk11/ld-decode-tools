@@ -80,11 +80,14 @@ jobs:
           arch: 'linux_gcc_64'
           cache: true
 
-      # libavfilter for the video filters of ld-analyse: the manifest's "ffmpeg"
-      # feature, a minimal shared build with no third-party codecs, so the
-      # AppImage gains a few libraries rather than the distribution's whole
-      # ffmpeg dependency tree. A failure here leaves the package without the
-      # filters (with a warning below) instead of failing it.
+      # libebml and libmatroska (the LDX container and ld-container) from the
+      # manifest, which must work; then libavfilter for the video filters of
+      # ld-analyse and libavcodec for FLAC and FFV1 in LDX files: the manifest's
+      # "ffmpeg" feature, a minimal shared build with no third-party codecs, so
+      # the package gains a few libraries rather than the distribution's whole
+      # ffmpeg dependency tree. A failure of ffmpeg leaves the package without
+      # the filters and without compression in LDX files (with a warning)
+      # instead of failing it.
       - name: Cache ffmpeg from vcpkg
         id: ffmpeg-cache
         uses: actions/cache@v6
@@ -92,9 +95,8 @@ jobs:
           path: vcpkg_installed
           key: vcpkg-ffmpeg-${{ runner.os }}-x64-linux-dynamic-${{ hashFiles('vcpkg.json') }}
 
-      - name: Build ffmpeg with vcpkg
+      - name: Build libebml, libmatroska and ffmpeg with vcpkg
         if: steps.ffmpeg-cache.outputs.cache-hit != 'true'
-        continue-on-error: true
         shell: bash
         run: |
           set -euo pipefail
@@ -105,8 +107,13 @@ jobs:
           ./vcpkg/vcpkg install \
             --triplet x64-linux-dynamic \
             --x-manifest-root=. \
+            --x-install-root="$PWD/vcpkg_installed"
+          ./vcpkg/vcpkg install \
+            --triplet x64-linux-dynamic \
+            --x-manifest-root=. \
             --x-install-root="$PWD/vcpkg_installed" \
-            --x-feature=ffmpeg
+            --x-feature=ffmpeg \
+            || echo "::warning::ffmpeg was not built: no video filters in ld-analyse, no FLAC or FFV1 in LDX files"
 
       - name: Configure and build
         shell: bash
@@ -118,6 +125,7 @@ jobs:
           cmake -S . -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_INSTALL_PREFIX=/usr \
+            "-DCMAKE_PREFIX_PATH=$PWD/vcpkg_installed/x64-linux-dynamic" \
             -DBUILD_TESTING=OFF \
             -DEZPWD_DIR="$PWD/external/ezpwd-reed-solomon/c++" \
             -DAPP_BRANCH=github-actions \
@@ -126,6 +134,7 @@ jobs:
             echo "::warning::libavfilter was not found: this ld-analyse has no video filters"
           fi
           cmake --build build --parallel
+          test -x build/bin/ld-container || { echo "::error::ld-container was not built (libebml or libmatroska not found)"; exit 1; }
 
       - name: Install into AppDir
         shell: bash

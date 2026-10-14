@@ -8,7 +8,7 @@ This project uses a Nix dev shell to provide a consistent build environment.
 nix develop
 ```
 
-This exposes all build dependencies (CMake, Ninja, Qt6, FFmpeg, FFTW, SQLite, OpenGL, etc.).
+This exposes all build dependencies (CMake, Ninja, Qt6, FFmpeg, FFTW, SQLite, OpenGL, libebml, libmatroska, etc.).
 
 ## Configure and build
 
