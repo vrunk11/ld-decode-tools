@@ -40,9 +40,14 @@ target_link_libraries(lddecode-library PRIVATE Qt::Core Qt::Sql)
 if(LDDECODE_LDX_AVAILABLE)
     add_library(lddecode-ldx STATIC
         ldx/ldx.cpp
+        ldx/ldxcodec.cpp
     )
     target_include_directories(lddecode-ldx PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/ldx)
     target_link_libraries(lddecode-ldx PUBLIC Qt::Core EBML::ebml Matroska::matroska)
+    if(LDDECODE_LDX_FFMPEG)
+        target_link_libraries(lddecode-ldx PUBLIC PkgConfig::LDX_FFMPEG)
+        target_compile_definitions(lddecode-ldx PUBLIC LDX_WITH_FFMPEG)
+    endif()
     # and the tools read captures kept in LDX files through the TBC library
     target_link_libraries(lddecode-library PUBLIC lddecode-ldx)
     target_compile_definitions(lddecode-library PUBLIC LDDECODE_WITH_LDX)

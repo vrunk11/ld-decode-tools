@@ -15,6 +15,7 @@
 #include <iostream>
 
 #include "ldx.h"
+#include "ldxcodec.h"
 
 // assert() is compiled out of release builds, so check explicitly
 #define CHECK(condition) \
@@ -303,6 +304,66 @@ static void testAppend(const QString &path)
     CHECK(last.readBlock(1, 0, found) && found.data == pattern(100000, 0));
 }
 
+// A wave with noise on it, as a field of samples: unsigned around the middle of the range, as TBC samples are
+static QByteArray wave(int samples, int seed)
+{
+    QByteArray data(samples * 2, 0);
+    quint16 *values = reinterpret_cast<quint16 *>(data.data());
+    quint32 state = 12345u + static_cast<quint32>(seed);
+    for (int i = 0; i < samples; i++) {
+        state = state * 1664525u + 1013904223u;
+        const int noise = static_cast<int>((state >> 24) & 0x1f) - 16;
+        const int signal = 32768 + static_cast<int>(20000.0 * ((i / 910) % 2 ? 1.0 : -1.0) * (((i % 910) < 700) ? 1.0 : 0.2));
+        values[i] = static_cast<quint16>(signal + noise);
+    }
+    return data;
+}
+
+static void testFlac(const QString &directory)
+{
+    if (!Ldx::flacAvailable()) {
+        std::cerr << "Skipping the FLAC tests: this build has no ffmpeg\n";
+        return;
+    }
+    std::cerr << "Testing FLAC\n";
+
+    QString error;
+    const QByteArray codecPrivate = Ldx::flacCodecPrivate(error);
+    CHECK(codecPrivate.size() == 4 + 4 + 34 && codecPrivate.left(4) == "fLaC");
+
+    // Blocks of any length up to the most, unsigned and signed, come back as they were
+    Ldx::FlacDecoder decoder;
+    CHECK(decoder.open(codecPrivate, error));
+    for (const bool unsignedSamples: { true, false }) {
+        for (const int samples: { 1, 17, 1470, 32768, 32769, 239330, 262144 }) {
+            const QByteArray original = wave(samples, samples);
+            std::vector<QByteArray> frames;
+            CHECK(Ldx::flacEncode(original, unsignedSamples, frames, error));
+            CHECK(!frames.empty() && static_cast<int>(frames.size()) <= Ldx::FlacMaxFrames);
+            QByteArray decoded;
+            if (!decoder.decode(frames, unsignedSamples, decoded, error)) std::cerr << "  decode failed for " << samples << " samples: " << error.toStdString() << " (" << frames.size() << " frames, first " << frames[0].size() << " bytes)\n";
+            CHECK(decoder.decode(frames, unsignedSamples, decoded, error));
+            CHECK(decoded == original);
+        }
+    }
+
+    // A field of this kind is smaller as FLAC (unsigned samples are made signed, so the wave does not jump)
+    std::vector<QByteArray> framesUnsigned, framesRaw;
+    const QByteArray field = wave(239330, 1);
+    CHECK(Ldx::flacEncode(field, true, framesUnsigned, error));
+    CHECK(Ldx::flacEncode(field, false, framesRaw, error));
+    qint64 compressed = 0, uncompressed = 0;
+    for (const QByteArray &frame: framesUnsigned) compressed += frame.size();
+    for (const QByteArray &frame: framesRaw) uncompressed += frame.size();
+    CHECK(compressed < field.size() * 8 / 10);
+    CHECK(compressed < uncompressed);
+
+    // Too long a block is refused
+    std::vector<QByteArray> none;
+    CHECK(!Ldx::flacEncode(QByteArray((262144 + 1) * 2, 0), false, none, error));
+    Q_UNUSED(directory);
+}
+
 static void testNotAnLdxFile(const QString &path)
 {
     std::cerr << "Testing a file that is not an LDX file\n";
@@ -327,6 +388,7 @@ int main(int argc, char *argv[])
     testRoundTrip(directory.filePath("test.ldx"));
     testIdsAndAttachments(directory.filePath("ids.ldx"));
     testAppend(directory.filePath("append.ldx"));
+    testFlac(directory.path());
     testNotAnLdxFile(directory.filePath("garbage.ldx"));
 
     std::cerr << "All tests passed\n";
