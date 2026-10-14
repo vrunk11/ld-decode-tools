@@ -78,3 +78,7 @@ ld-disc-stacker --no-map first-two.stack third.tbc output.tbc
 A session can have a session among its sources in the same way. The inner stack has no dropouts left for the outer one to see, and its metadata is that of its first source. The sources of a session are all TBC or all CVBS, as for any stack: a mix is refused, and a session stacked to a file gives a file of the format of its sources (CVBS sources stack to a .cvbs file, as in the usual way).
 
 A session can also be read without stacking it to a file: ld-analyse opens a `.stack` file and shows the stack as the frames are asked for, and ld-chroma-decoder decodes one, with the same picture as the file this tool writes.
+
+## LDX files
+
+An LDX file (see [the container format](../Specifications/container-format.md)) can be opened where a TBC file is: `capture.ldx` is the capture it holds (or the stack of the session it keeps), and `capture.ldx#3` is the track 3 of a file that holds several captures. The fields and the metadata are read from the file, and nothing is written to it.

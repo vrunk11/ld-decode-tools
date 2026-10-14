@@ -135,7 +135,7 @@ void ProcessDialog::start()
 {
     // The sources that are on
     QStringList inputs;
-    for (const StackSource &source: project.sources) if (source.enabled) inputs.append(source.file);
+    for (const StackSource &source: project.sources) if (source.enabled) inputs.append(source.reference());
     if (inputs.size() < 2) {
         QMessageBox::warning(this, tr("Process"), tr("At least 2 sources must be on to stack them."));
         return;

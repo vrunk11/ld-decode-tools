@@ -9,6 +9,7 @@
  ******************************************************************************/
 
 #include "mainwindow.h"
+#include "ldxcapture.h"
 
 #include "processdialog.h"
 
@@ -143,7 +144,7 @@ MainWindow::MainWindow(const QStringList &arguments, QWidget *parent)
     QStringList files;
     QString session;
     for (const QString &argument: arguments) {
-        if (argument.endsWith(".stack", Qt::CaseInsensitive)) session = argument; else files.append(argument);
+        if (StackProject::isSession(argument)) session = argument; else files.append(argument);
     }
     if (!session.isEmpty()) loadSession(session);
     if (!files.isEmpty()) addSources(files);
@@ -509,7 +510,8 @@ QColor MainWindow::colorFor(const QString &id)
 
 QString MainWindow::sourceTitle(const StackSource &source) const
 {
-    return source.label.isEmpty() ? QFileInfo(source.file).fileName() : source.label;
+    if (!source.label.isEmpty()) return source.label;
+    return QFileInfo(source.file).fileName() + (source.track > 0 ? QString(" #%1").arg(source.track) : QString());
 }
 
 void MainWindow::addSourcesDialog()
@@ -517,7 +519,7 @@ void MainWindow::addSourcesDialog()
     QSettings settings;
     const QString directory = settings.value("sourceDirectory").toString();
     const QStringList files = QFileDialog::getOpenFileNames(this, tr("Add sources"), directory,
-                                                            tr("TBC, CVBS and stack files (*.tbc *.cvbs *.stack);;TBC (*.tbc);;CVBS (*.cvbs);;Stacking sessions (*.stack);;All files (*)"));
+                                                            tr("TBC, CVBS, LDX and stack files (*.tbc *.cvbs *.ldx *.stack);;TBC (*.tbc);;CVBS (*.cvbs);;LDX (*.ldx);;Stacking sessions (*.stack);;All files (*)"));
     if (files.isEmpty()) return;
     settings.setValue("sourceDirectory", QFileInfo(files.first()).absolutePath());
     addSources(files);
@@ -527,12 +529,33 @@ void MainWindow::addSources(const QStringList &files)
 {
     // The first source imported shows at its original size; those after it change nothing
     if (project.sources.isEmpty()) fitFirstSource = true;
-    for (const QString &file: files) {
-        StackSource source;
-        source.file = QFileInfo(file).absoluteFilePath();
-        source.id = project.newSourceId();
-        project.sources.append(source);
-        startSource(source);
+    for (const QString &name: files) {
+        // What a name gives: a capture, or, for an LDX file that holds several and is not named by a track, each of them
+        QVector<qint32> tracks = { 0 };
+        QStringList names = { QString() };
+        QString path;
+        qint32 track = 0;
+        LdxCapture::split(name, path, track);
+        if (LdxCapture::isLdxName(name) && track == 0 && !LdxCapture::hasSession(path)) {
+            QString error;
+            tracks.clear();
+            names.clear();
+            if (!LdxCapture::listCaptures(path, tracks, names, error) || tracks.isEmpty()) {
+                QMessageBox::warning(this, tr("Add source"), error.isEmpty() ? tr("%1 holds no TBC capture").arg(QFileInfo(path).fileName()) : error);
+                continue;
+            }
+        } else if (track > 0) {
+            tracks = { track };
+        }
+        for (qint32 i = 0; i < tracks.size(); i++) {
+            StackSource source;
+            source.file = QFileInfo(path).absoluteFilePath();
+            source.track = tracks[i];
+            if (tracks[i] > 0 && i < names.size()) source.label = names[i];
+            source.id = project.newSourceId();
+            project.sources.append(source);
+            startSource(source);
+        }
     }
     rebuildSourceList();
     rebuildTabs();
@@ -544,7 +567,7 @@ void MainWindow::startSource(const StackSource &source)
     states[source.id].loaded = false;
     states[source.id].failed = false;
     QMetaObject::invokeMethod(backend, "addSource", Qt::QueuedConnection, Q_ARG(QString, source.id),
-                              Q_ARG(QString, source.file), Q_ARG(bool, project.stacking.reverseFields));
+                              Q_ARG(QString, source.reference()), Q_ARG(bool, project.stacking.reverseFields));
 }
 
 void MainWindow::removeSource(const QString &id)
@@ -587,7 +610,8 @@ void MainWindow::loadSession(const QString &fileName)
     snrWindows.clear();
 
     project = loaded;
-    sessionFile = fileName;
+    // (the session an LDX file keeps is saved to a .stack file of its own, never over the LDX file)
+    sessionFile = LdxCapture::isLdxName(fileName) ? QString() : fileName;
     for (const StackSource &source: project.sources) startSource(source);
 
     {
@@ -617,7 +641,7 @@ void MainWindow::openSession()
 {
     QSettings settings;
     const QString fileName = QFileDialog::getOpenFileName(this, tr("Open session"), settings.value("sessionDirectory").toString(),
-                                                          tr("Stack sessions (*.stack);;All files (*)"));
+                                                          tr("Stack sessions (*.stack *.ldx);;All files (*)"));
     if (fileName.isEmpty()) return;
     settings.setValue("sessionDirectory", QFileInfo(fileName).absolutePath());
     loadSession(fileName);
@@ -655,7 +679,8 @@ void MainWindow::exportSession()
         QMessageBox::warning(this, tr("Export session"), error);
         return;
     }
-    sessionFile = fileName;
+    // (the session an LDX file keeps is saved to a .stack file of its own, never over the LDX file)
+    sessionFile = LdxCapture::isLdxName(fileName) ? QString() : fileName;
     setWindowTitle(tr("ld-stacker-gui - %1").arg(QFileInfo(fileName).fileName()));
     statusBar()->showMessage(tr("Session saved to %1").arg(fileName), 5000);
 }
@@ -767,7 +792,7 @@ void MainWindow::rebuildSourceList()
         else if (!state.loaded) detail = tr("loading...");
         else detail = tr("%1 frames - %2").arg(state.info.frames).arg(state.info.system == PAL ? "PAL" : (state.info.system == NTSC ? "NTSC" : "PAL-M"));
         QLabel *name = new QLabel(QString("%1<br><small>%2</small>").arg(sourceTitle(source).toHtmlEscaped(), detail.toHtmlEscaped()));
-        name->setToolTip(source.file);
+        name->setToolTip(source.reference());
         if (state.failed) name->setForegroundRole(QPalette::PlaceholderText);
         name->setEnabled(source.enabled);
         name->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
@@ -833,7 +858,7 @@ void MainWindow::rebuildTabs()
     for (qint32 index = 0; index < project.sources.size(); index++) {
         const StackSource &source = project.sources[index];
         tabBar->addTab(dotIcon(colorFor(source.id)), QString::number(index + 1));
-        tabBar->setTabToolTip(index, source.file);
+        tabBar->setTabToolTip(index, source.reference());
     }
 
     // The tab chosen, or the first source if it is gone
@@ -1364,7 +1389,7 @@ void MainWindow::dropEvent(QDropEvent *event)
     for (const QUrl &url: event->mimeData()->urls()) {
         const QString path = url.toLocalFile();
         if (path.isEmpty()) continue;
-        if (path.endsWith(".stack", Qt::CaseInsensitive)) session = path; else files.append(path);
+        if (StackProject::isSession(path)) session = path; else files.append(path);
     }
     if (!session.isEmpty()) loadSession(session);
     if (!files.isEmpty()) addSources(files);
