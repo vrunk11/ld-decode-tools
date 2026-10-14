@@ -264,19 +264,6 @@ bool readCapture(const CaptureOptions &options, const QString &input, Capture &c
     capture.system = video.system;
     capture.fieldBytes = static_cast<qint64>(video.fieldWidth) * video.fieldHeight * 2;
 
-    QTemporaryDir temporary;
-    const QString jsonPath = temporary.filePath("metadata.json");
-    if (!metadata.write(jsonPath)) {
-        err << "Could not write the metadata out as JSON\n";
-        return false;
-    }
-    QFile jsonFile(jsonPath);
-    if (!jsonFile.open(QIODevice::ReadOnly)) {
-        err << "Could not read back the metadata\n";
-        return false;
-    }
-    capture.metadataJson = jsonFile.readAll();
-
     capture.tbc.reset(new QFile(input));
     if (!capture.tbc->open(QIODevice::ReadOnly)) {
         err << "Could not open " << input << "\n";
@@ -289,6 +276,37 @@ bool readCapture(const CaptureOptions &options, const QString &input, Capture &c
         err << "There is nothing to pack in " << input << "\n";
         return false;
     }
+
+    // The metadata of the part that is packed: its fields, numbered again from 1
+    const qint64 total = metadata.getNumberOfFields();
+    if (capture.start + capture.fields > total) {
+        err << "The metadata of " << input << " describe " << total << " fields, and the video has more\n";
+        return false;
+    }
+    LdDecodeMetaData part;
+    const LdDecodeMetaData *written = &metadata;
+    if (capture.start != 0 || capture.fields != total) {
+        part.setVideoParameters(video);
+        part.setPcmAudioParameters(metadata.getPcmAudioParameters());
+        part.setIsFirstFieldFirst(metadata.getIsFirstFieldFirst());
+        for (qint64 number = 1; number <= capture.fields; number++) {
+            part.appendField(metadata.getField(static_cast<qint32>(capture.start + number)));
+        }
+        written = &part;
+    }
+
+    QTemporaryDir temporary;
+    const QString jsonPath = temporary.filePath("metadata.json");
+    if (!written->write(jsonPath)) {
+        err << "Could not write the metadata out as JSON\n";
+        return false;
+    }
+    QFile jsonFile(jsonPath);
+    if (!jsonFile.open(QIODevice::ReadOnly)) {
+        err << "Could not read back the metadata\n";
+        return false;
+    }
+    capture.metadataJson = jsonFile.readAll();
 
     const QString name = !options.name.isEmpty() ? options.name : QFileInfo(input).fileName();
     capture.video.kind = Ldx::Kind::Tbc;

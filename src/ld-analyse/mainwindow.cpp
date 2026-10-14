@@ -1517,9 +1517,9 @@ void MainWindow::on_actionOpen_TBC_file_triggered()
     tbcDebugStream() << "MainWindow::on_actionOpen_TBC_file_triggered(): Called";
 
     QString inputFileName = QFileDialog::getOpenFileName(this,
-                tr("Open TBC, CVBS or stack file"),
+                tr("Open TBC, CVBS, LDX or stack file"),
                 configuration.getSourceDirectory()+tr("/ldsample.tbc"),
-                tr("TBC, CVBS and stack files (*.tbc *.tbcy *.tbcc *.cvbs *.cvbsy *.cvbsc *.stack);;TBC output (*.tbc *.tbcy *.tbcc);;CVBS (*.cvbs *.cvbsy *.cvbsc);;Stacking session (*.stack);;All Files (*)"));
+                tr("TBC, CVBS, LDX and stack files (*.tbc *.tbcy *.tbcc *.cvbs *.cvbsy *.cvbsc *.ldx *.stack);;LDX (*.ldx);;TBC output (*.tbc *.tbcy *.tbcc);;CVBS (*.cvbs *.cvbsy *.cvbsc);;Stacking session (*.stack);;All Files (*)"));
 
     // Was a filename specified?
     if (!inputFileName.isEmpty() && !inputFileName.isNull()) {

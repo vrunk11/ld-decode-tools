@@ -204,7 +204,7 @@ QString StackSource::reference() const
 }
 
 // A name gives a session when it is a .stack file, or an LDX file (not one of its tracks) that keeps one
-static bool isSession(const QString &name)
+bool StackProject::isSession(const QString &name)
 {
     if (name.endsWith(".stack", Qt::CaseInsensitive)) return true;
     QString path;

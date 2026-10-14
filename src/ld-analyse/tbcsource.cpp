@@ -13,6 +13,7 @@
 
 #include "tbcsource.h"
 #include "stackproject.h"
+#include "ldxcapture.h"
 #include "cvbs.h"
 #include "tbcfiles.h"
 #include "tbc/logging.h"
@@ -89,7 +90,7 @@ bool TbcSource::getIsSourceLoaded()
 // Method returns true if the source is a stacking session
 bool TbcSource::getIsStack()
 {
-    return sourceReady && currentMetadataFilename.endsWith(".stack", Qt::CaseInsensitive);
+    return sourceReady && StackProject::isSession(currentMetadataFilename);
 }
 
 // What a stacking session is made of
@@ -129,7 +130,8 @@ QString TbcSource::getMetadataFormatName()
     if (!sourceReady) return QString();
 
     // A stacking session: the stack has the metadata of its first source
-    if (currentMetadataFilename.endsWith(".stack", Qt::CaseInsensitive)) return QStringLiteral("of the first source of the stack");
+    if (StackProject::isSession(currentMetadataFilename)) return QStringLiteral("of the first source of the stack");
+    if (LdxCapture::isLdxName(currentMetadataFilename)) return QStringLiteral("of the capture, in its LDX file");
 
     const QString format = ldDecodeMetaData.getFormat() == LdDecodeMetaData::MetadataFormat::Json ? QStringLiteral("JSON")
                                                                                                    : QStringLiteral("SQLite");
@@ -1503,8 +1505,12 @@ void TbcSource::finishBackgroundLoad()
 
 bool TbcSource::startBackgroundSave(QString metadataFilename)
 {
-    if (metadataFilename.endsWith(".stack", Qt::CaseInsensitive)) {
+    if (StackProject::isSession(metadataFilename)) {
         lastIOError = "A stacking session has no metadata of its own to save: it is read from its sources";
+        return false;
+    }
+    if (LdxCapture::isLdxName(metadataFilename)) {
+        lastIOError = "The metadata of a capture kept in an LDX file are in the file, and are not saved from here";
         return false;
     }
 
