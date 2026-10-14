@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The icon on the grid of 16 x 16 pixels, for the small sizes: three discs seen from above, each over the
+     one behind it, with outlines of one pixel and the hole of each in view. -->
+<svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">
+  <g stroke="#555753" stroke-width="1">
+    <circle cx="4.5" cy="4.5" r="4" fill="#A1A59B"/>
+    <circle cx="8" cy="8" r="4" fill="#CFD2CB"/>
+    <circle cx="11.5" cy="11.5" r="4" fill="#B7E08A"/>
+  </g>
+  <g fill="#2E3436">
+    <circle cx="4.5" cy="4.5" r="0.9"/>
+    <circle cx="8" cy="8" r="0.9"/>
+    <circle cx="11.5" cy="11.5" r="0.9"/>
+  </g>
+</svg>

@@ -10,6 +10,7 @@
 
 #include <QApplication>
 #include <QCommandLineParser>
+#include <QIcon>
 
 #include "mainwindow.h"
 #include "tbc/logging.h"
@@ -23,6 +24,11 @@ int main(int argc, char *argv[])
     QCoreApplication::setApplicationVersion(QString("ld-decode-tools - Branch: %1 / Commit: %2").arg(APP_BRANCH, APP_COMMIT));
     QCoreApplication::setOrganizationDomain("domesday86.com");
     QCoreApplication::setOrganizationName("domesday86.com");
+
+    // The icon: three discs, drawn on the grid of the pixels for the small sizes
+    QIcon icon;
+    for (const int size: { 16, 24, 32, 48, 64, 128, 256 }) icon.addFile(QString(":/icons/app-%1.png").arg(size), QSize(size, size));
+    application.setWindowIcon(icon);
 
     QCommandLineParser parser;
     parser.setApplicationDescription(

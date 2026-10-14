@@ -10,6 +10,11 @@ set(ld-stacker-gui_SOURCES
 
 qt_add_resources(ld-stacker-gui_SOURCES ld-stacker-gui-resources.qrc)
 
+# On Windows the icon of the program itself (the one of the window comes from the resources)
+if(WIN32)
+    list(APPEND ld-stacker-gui_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/appicon.rc)
+endif()
+
 add_executable(ld-stacker-gui ${ld-stacker-gui_SOURCES})
 
 target_include_directories(ld-stacker-gui PRIVATE ${FFTW_INCLUDE_DIR})

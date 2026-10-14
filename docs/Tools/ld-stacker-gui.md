@@ -33,3 +33,7 @@ The session can be opened in ld-analyse, which shows the stack as the frames are
 ### Not yet
 
 Matching sources by VBI frame number (mapping) in the GUI.
+
+## Icon
+
+The application icon is three overlapping discs seen from above. Sources are `Graphics/ld-stacker-gui.svg` (48 pixels and up) and `Graphics/ld-stacker-gui-small.svg`, drawn on the 16-pixel grid so that it stays readable at 16x16 (used for 16, 24 and 32). The PNGs and `appicon.ico` (the icon of the Windows executable) are rendered from them.
