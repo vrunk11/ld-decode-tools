@@ -215,8 +215,8 @@ SnrGraph::SnrGraph(bool withStack, QWidget *parent)
     row->addWidget(whiteCheck);
     row->addWidget(blackCheck);
     if (withStack) {
-        stackCheck = new QCheckBox(tr("Stack behind"));
-        stackCheck->setChecked(true);
+        stackCheck = new QCheckBox(tr("Compare with the stack (grey)"));
+        stackCheck->setChecked(false);   // the window is of the source: the stack is only there if asked for
         row->addWidget(stackCheck);
     }
     row->addStretch(1);
@@ -255,8 +255,9 @@ void SnrGraph::redraw()
 {
     QVector<SnrCurve> curves;
     if (stackCheck && stackCheck->isChecked()) {
-        curves.append({ stackWhite, whiteColor(), true, whiteCheck->isChecked(), tr("Stack white") });
-        curves.append({ stackBlack, blackColor(), true, blackCheck->isChecked(), tr("Stack black") });
+        // In greys, so that the stack is not taken for the source
+        curves.append({ stackWhite, QColor("#C8C8C0"), true, whiteCheck->isChecked(), tr("Stack white") });
+        curves.append({ stackBlack, QColor("#8A8A84"), true, blackCheck->isChecked(), tr("Stack black") });
     }
     curves.append({ white, whiteColor(), false, whiteCheck->isChecked(), tr("White SNR") });
     curves.append({ black, blackColor(), false, blackCheck->isChecked(), tr("Black PSNR") });
