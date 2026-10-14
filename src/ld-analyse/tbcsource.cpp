@@ -14,6 +14,7 @@
 #include "tbcsource.h"
 #include "stackproject.h"
 #include "ldxcapture.h"
+#include "ldxstream.h"
 #include "cvbs.h"
 #include "tbcfiles.h"
 #include "tbc/logging.h"
@@ -183,6 +184,7 @@ bool TbcSource::openForRendering(const RenderSettings &settings, const TbcSource
         streamInput = settings.streamInput;
         ldDecodeMetaData.initialiseDefault(streamInput.system, streamInput.blackLevel, streamInput.whiteLevel,
                                            streamInput.isSubcarrierLocked);
+    if (LdxStream::instance()) LdxStream::instance()->provideFields(ldDecodeMetaData);
         ldDecodeMetaData.setVideoParameters(settings.videoParameters);
         if (!sourceVideo.shareStreamWith(liveParent->sourceVideo)) return false;
         isLive = true;
@@ -1614,6 +1616,7 @@ bool TbcSource::startBackgroundStream()
     // are made up as the stream turns out to be long enough
     ldDecodeMetaData.initialiseDefault(streamInput.system, streamInput.blackLevel, streamInput.whiteLevel,
                                        streamInput.isSubcarrierLocked);
+    if (LdxStream::instance()) LdxStream::instance()->provideFields(ldDecodeMetaData);
     const LdDecodeMetaData::VideoParameters videoParameters = ldDecodeMetaData.getVideoParameters();
     snrParameters = videoParameters;
 

@@ -46,6 +46,11 @@ public:
     // The metadata as the tools hold them. False if the stream sent none.
     bool readMetadata(LdDecodeMetaData &metadata, QString &error) const;
 
+    // Metadata that comes with the video, field by field (a producer that does not have it all at the start, as when
+    // it is itself fed by a pipe, sends the metadata of each field just before its video): the fields that metadata
+    // makes (initialiseDefault and ensureFields) take theirs from the stream. Call it once the metadata is set up.
+    void provideFields(LdDecodeMetaData &metadata);
+
     // The video as the raw stream the tools read (fields of 16-bit TBC, or frames of CVBS as 10-bit values in words), as
     // a FILE. The thread that fills it starts with the first call. The stream owns it.
     FILE *videoPipe();

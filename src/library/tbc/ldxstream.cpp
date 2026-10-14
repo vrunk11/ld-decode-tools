@@ -17,6 +17,8 @@
 #include <QThread>
 
 #include <deque>
+#include <mutex>
+#include <QHash>
 
 #ifdef LDDECODE_WITH_LDX
 #include "ldx.h"
@@ -76,6 +78,8 @@ struct LdxStream::Private : public QThread
     quint32 metadataTrack = 0;
     QByteArray metadata;
     std::deque<Ldx::Block> pending;            // video that came before the metadata
+    std::mutex fieldLock;
+    QHash<qint32, QByteArray> fieldJson;         // metadata of the fields that came (kept: several readers ask)
     FILE *read = nullptr;
     int writeFd = -1;
     bool started = false;
@@ -104,9 +108,20 @@ struct LdxStream::Private : public QThread
         pending.clear();
         Ldx::Block block;
         while (reader.nextBlock(block)) {
-            if (block.track == video.number && !writeAll(writeFd, block.data)) break;
+            if (block.track == metadataTrack) keepField(block.data);
+            else if (block.track == video.number && !writeAll(writeFd, block.data)) break;
         }
         finishPipe();
+    }
+
+    // A block of the metadata track after the first: the metadata of one field, which comes before its video
+    void keepField(const QByteArray &data)
+    {
+        if (data.contains("videoParameters")) return;      // (a whole set of metadata is not a field)
+        LdDecodeMetaData::Field field;
+        if (!LdDecodeMetaData::fieldFromJson(data, field)) return;
+        std::lock_guard<std::mutex> lock(fieldLock);
+        fieldJson.insert(field.seqNo, data);
     }
 
     // The end of the video: what reads the pipe sees it end
@@ -210,6 +225,21 @@ bool LdxStream::readMetadata(LdDecodeMetaData &metadata, QString &error) const
     return true;
 }
 
+void LdxStream::provideFields(LdDecodeMetaData &metadata)
+{
+    Private *p = d.get();
+    metadata.setFieldProvider([p](qint32 seqNo, LdDecodeMetaData::Field &field) {
+        QByteArray json;
+        {
+            std::lock_guard<std::mutex> lock(p->fieldLock);
+            const auto it = p->fieldJson.constFind(seqNo);
+            if (it == p->fieldJson.constEnd()) return false;
+            json = it.value();
+        }
+        return LdDecodeMetaData::fieldFromJson(json, field);
+    });
+}
+
 FILE *LdxStream::videoPipe()
 {
     if (!d->started) {
@@ -235,5 +265,6 @@ QString LdxStream::videoName() const { return QString(); }
 QByteArray LdxStream::metadataJson() const { return QByteArray(); }
 bool LdxStream::readMetadata(LdDecodeMetaData &, QString &error) const { error = QObject::tr("No LDX support"); return false; }
 FILE *LdxStream::videoPipe() { return nullptr; }
+void LdxStream::provideFields(LdDecodeMetaData &) {}
 
 #endif

@@ -692,6 +692,39 @@ static void testNotAnLdxFile(const QString &path)
     CHECK(!error.isEmpty());
 }
 
+// Several blocks of a track at the same time (the metadata of single fields go with the video of their time): the index
+// has all of them, in the order they were written
+static void testSameTime(const QString &path)
+{
+    std::cerr << "Testing blocks of one track at the same time\n";
+
+    Ldx::Writer writer;
+    Ldx::Track metadata;
+    metadata.kind = Ldx::Kind::Metadata;
+    writer.addTrack(metadata);
+    Ldx::Track video;
+    video.kind = Ldx::Kind::Pcm;
+    writer.addTrack(video);
+    QString error;
+    CHECK(writer.open(path, error));
+    for (int step = 0; step < 6; step++) {
+        const qint64 time = (step / 3) * 20000000;      // three blocks at each time
+        CHECK(writer.writeBlock(1, time, pattern(50 + step, step)));
+        if (step % 3 == 0) CHECK(writer.writeBlock(2, time, pattern(100, step)));
+    }
+    CHECK(writer.finish(error));
+
+    Ldx::Reader reader;
+    CHECK(reader.open(path, error));
+    CHECK(reader.buildIndex(error));
+    CHECK(reader.blockCount(1) == 6);
+    for (int step = 0; step < 6; step++) {
+        Ldx::Block block;
+        CHECK(reader.readBlock(1, step, block));
+        CHECK(block.data == pattern(50 + step, step));
+    }
+}
+
 int main(int argc, char *argv[])
 {
     QCoreApplication application(argc, argv);
@@ -708,6 +741,7 @@ int main(int argc, char *argv[])
     testFfv1();
     testCvbsTracks(directory.path());
     testStream(directory.filePath("stream.ldx"));
+    testSameTime(directory.filePath("sametime.ldx"));
     testNotAnLdxFile(directory.filePath("garbage.ldx"));
 
     std::cerr << "All tests passed\n";

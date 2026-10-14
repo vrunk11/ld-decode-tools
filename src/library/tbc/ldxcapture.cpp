@@ -9,9 +9,13 @@
  ******************************************************************************/
 
 #include "ldxcapture.h"
+#include "lddecodemetadata.h"
 
 #include <QCoreApplication>
 #include <QDateTime>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QObject>
 #include <algorithm>
 #include <cstring>
@@ -318,6 +322,33 @@ quint32 LdxCapture::metadataTrackNumber() const
 }
 #endif
 
+void LdxMetadataMerger::add(const QByteArray &data)
+{
+    if (data.contains("videoParameters")) {
+        base = data;
+        return;
+    }
+    LdDecodeMetaData::Field field;
+    if (LdDecodeMetaData::fieldFromJson(data, field)) fieldJson[field.seqNo] = data;
+    else base = data;           // (something else: kept as the last block was, before)
+}
+
+QByteArray LdxMetadataMerger::current() const
+{
+    if (fieldJson.empty()) return base;
+    QJsonObject root = QJsonDocument::fromJson(base).object();
+    std::map<int, QJsonValue> byNumber;
+    for (const QJsonValue &value: root.value("fields").toArray()) byNumber[value.toObject().value("seqNo").toInt()] = value;
+    for (const auto &field: fieldJson) byNumber[field.first] = QJsonDocument::fromJson(field.second).object();
+    QJsonArray fields;
+    for (const auto &entry: byNumber) fields.append(entry.second);
+    root["fields"] = fields;
+    QJsonObject parameters = root.value("videoParameters").toObject();
+    parameters["numberOfSequentialFields"] = static_cast<int>(fields.size());
+    root["videoParameters"] = parameters;
+    return QJsonDocument(root).toJson(QJsonDocument::Compact);
+}
+
 bool LdxCapture::readMetadata(QByteArray &json, QString &error)
 {
 #ifdef LDDECODE_WITH_LDX
@@ -326,13 +357,23 @@ bool LdxCapture::readMetadata(QByteArray &json, QString &error)
         error = QObject::tr("Track %1 has no metadata").arg(d->trackId);
         return false;
     }
-    // The last block is the current one: what is added to the file supersedes what was there
-    Ldx::Block block;
-    if (d->reader.blockCount(metadataTrack) < 1 || !d->reader.readBlock(metadataTrack, d->reader.blockCount(metadataTrack) - 1, block)) {
+    // The last block is the current one: what is added to the file supersedes what was there. The metadata of a stream
+    // that came field by field are blocks of single fields, put in the parameters.
+    const qint64 count = d->reader.blockCount(metadataTrack);
+    LdxMetadataMerger merger;
+    for (qint64 index = 0; index < count; index++) {
+        Ldx::Block block;
+        if (!d->reader.readBlock(metadataTrack, index, block)) {
+            error = QObject::tr("The metadata of track %1 could not be read").arg(d->trackId);
+            return false;
+        }
+        merger.add(block.data);
+    }
+    json = merger.current();
+    if (json.isEmpty()) {
         error = QObject::tr("The metadata of track %1 could not be read").arg(d->trackId);
         return false;
     }
-    json = block.data;
     return true;
 #else
     Q_UNUSED(json);

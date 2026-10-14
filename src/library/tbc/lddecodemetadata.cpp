@@ -23,6 +23,7 @@
 
 #include <cassert>
 #include <fstream>
+#include <sstream>
 #include <stdexcept>
 #include <QFile>
 #include <QFileInfo>
@@ -597,6 +598,28 @@ void LdDecodeMetaData::VitsMetrics::write(SqliteWriter &writer, int captureId, i
     }
 }
 
+QByteArray LdDecodeMetaData::fieldToJson(const Field &field)
+{
+    std::ostringstream out;
+    JsonWriter writer(out);
+    field.write(writer);
+    const std::string text = out.str();
+    return QByteArray(text.data(), static_cast<qsizetype>(text.size()));
+}
+
+bool LdDecodeMetaData::fieldFromJson(const QByteArray &json, Field &field)
+{
+    try {
+        std::istringstream in(std::string(json.constData(), static_cast<size_t>(json.size())));
+        JsonReader reader(in);
+        field = Field();
+        field.read(reader);
+    } catch (JsonReader::Error &) {
+        return false;
+    }
+    return field.seqNo > 0;
+}
+
 // Read Ntsc from SQLite (data is read from main field record)
 void LdDecodeMetaData::Ntsc::read(SqliteReader &reader, int captureId, int fieldId, ClosedCaption &closedCaption)
 {
@@ -983,6 +1006,13 @@ void LdDecodeMetaData::ensureFields(qint32 numberOfFields)
     for (qint32 i = have; i < numberOfFields; i++) {
         fields[i].seqNo = i + 1;
         fields[i].isFirstField = ((i % 2) == 0) != generatedReversed;
+        if (fieldProvider) {
+            Field provided;
+            if (fieldProvider(i + 1, provided)) {
+                provided.seqNo = i + 1;
+                fields[i] = provided;
+            }
+        }
     }
     videoParameters.numberOfSequentialFields = numberOfFields;
 }
