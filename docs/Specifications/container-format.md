@@ -1,7 +1,10 @@
-# Container format for decode data (working name: LDX)
+# LDX: container format for decode data
 
-**Status: draft 0.1. Nothing here is implemented, and every point can change when the first prototype measures it.**
-The file extension is not decided (candidates: `.ldx`, `.adv`, `.ldv`, `.rfd`).
+**Version 1.0, ratified by the author of the fork. Nothing is implemented yet.**
+Extension: **`.ldx`**. Profile tag: `LDX_PROFILE` = `1`.
+
+The format is for the users of this fork. Compatibility with ld-decode or decode-orc is not a goal of version 1.0: ld-decode support will come from a custom build or fork. If a common container is wanted later, it is a new version of the profile (section 11).
+What is left open (section 12) does not change what a file contains: it is about the first implementation.
 
 ## 1. Why
 
@@ -53,13 +56,16 @@ The parameters of a track are those the tools already use: video system, sample 
 
 ## 4. Codecs
 
-| Depth | Codecs allowed |
-|---|---|
-| 16 bits (`tbc`, `rf`, `pcm`) | raw, FLAC |
-| 10 bits (`cvbs`) | raw, FFV1 (`gray10le`) |
-| 8 bits (`efm`, `ac3`) | raw |
-| text | raw (JSON, UTF-8) |
+| Depth | Codecs allowed | Matroska track |
+|---|---|---|
+| 16 bits (`tbc`, `rf`, `pcm`) | raw, FLAC | raw: audio track `A_PCM/INT/LIT`, 16 bits, one channel. FLAC: `A_FLAC` |
+| 10 bits (`cvbs`) | raw, FFV1 (`gray10le`) | raw: audio track `A_PCM/INT/LIT`, 16-bit words holding values 0 to 1023. FFV1: video track |
+| 8 bits (`efm`, `ac3`) | raw | binary track |
+| text | raw (JSON, UTF-8) | metadata track (type 33) |
 
+The samples of fields and of RF are therefore carried in **audio tracks** (a field is a block of 16-bit samples). This was tested: ffmpeg writes 16-bit PCM into Matroska and reads it back bit for bit, while it refuses raw grey video there (`gray16le` and `gray10le` are not supported natively, and its VFW mode turns them into another pixel format and loses the data). The kind of the track (`tbc`, `cvbs`, `rf`...) says what the samples are, not the type of the Matroska track, and the sample rate of an audio track is not the real one (next point).
+
+- **The real sample rate is in the parameters of the track.** FLAC declares a rate of at most 655,350 Hz (ffmpeg refuses more), and the sample rate of an audio track is not meant to be the 14 to 40 MHz of a capture. The Matroska or FLAC rate is a stand-in (as `ld-compress` writes 40 kHz for RF), and a reader takes the rate from the parameters.
 - **Raw is valid for every stream, and every reader must read it.** In a pipe tools write raw (nothing to spend CPU on).
 - **Compression is a choice of the writer.** A file written to be kept is compressed by the rule above. A tool that only converts (a recompression step, in the manner of `ld-compress`) can turn a raw file into a compressed one without touching the rest.
 - Decoding gives back **the same samples** that were given to the encoder. A reader returns decoded samples to the tool, so the tool does not know the codec.
@@ -108,20 +114,28 @@ A stacking session can be an attachment named `session.stack`. Its sources, inst
 - A field of the parameters that is unknown is ignored.
 - A change of the profile version that makes an older reader wrong is a change of its major number, and a reader refuses a major number it does not know.
 
-## 12. Open points
+## 12. Left to the first implementation
 
-1. The **file extension** and the exact **name** of the format.
-2. The **identifier of the raw codec** in Matroska for fields in 16 and 10 bits (`V_UNCOMPRESSED` or a FourCC), and what ffmpeg and VLC accept. To try on the prototype.
-3. **Declared sample rate of FLAC** for RF samples, which FLAC limits. The real rate must be carried in the track parameters. To check how `ld-compress` does it.
-4. **Late annotations** about old timestamps: how much data is acceptable before a rewrite.
-5. **Library**: libebml and libmatroska, or ffmpeg. The first does not need ffmpeg for raw data and metadata.
-6. **Pipe of TBC at 10 bits**: whether a TBC may be reduced to 10 bits (lossy), and how that is recorded in the history.
-7. **decode-orc**: whether they want a common container.
-8. **Frame as unit** rather than field for the metadata of a frame.
-9. A real **`.cvbs`** to measure FFV1 against FLAC.
+These do not change what a file contains. The prototype settles them, and the result is written here.
 
-## 13. Next steps
+1. **Library**: libebml and libmatroska, or ffmpeg. Raw data (as PCM) and FLAC pass through ffmpeg unchanged; custom metadata tracks and tags may need a lower-level library.
+2. **Late annotations** about old timestamps: how much data is acceptable before the file is written again. Measure.
+3. A real **`.cvbs`** to measure FFV1 against FLAC (the figures in section 4 come from a simulation at 10 bits).
+4. **A TBC reduced to 10 bits** (lossy): allowed or not, and how it is recorded in the history. Not allowed by this version: a `tbc` track is 16 bits.
+5. **Frame as unit** rather than field for the metadata of a frame (the time stamp of the first field of the frame is used meanwhile).
+6. What **VLC** and ffmpeg show for the tracks.
+
+## 13. Decisions of this version
+
+- Name and extension: LDX, `.ldx`.
+- A Matroska profile, with the tag `LDX_PROFILE` = 1 and the DocType `matroska`.
+- Codecs by depth: 16 bits raw or FLAC, 10 bits raw or FFV1, raw everywhere in a pipe.
+- Raw samples in PCM audio tracks, the real rate in the parameters.
+- Namespaced metadata, the last block wins, history in `LDX_HISTORY`, unknown blocks copied.
+- Compatibility with ld-decode and decode-orc is not a goal of 1.0.
+
+## 14. Next steps
 
 1. A prototype, `ld-container pack | unpack | info`, with a `tbc` or `cvbs` stream, a `pcm` stream and a `metadata` track.
-2. Measure: sizes, speed, what VLC and ffmpeg show, the time to add an annotation.
-3. Correct this document from the results, and fix version 1.
+2. Measure what section 12 lists, and write the results here.
+3. Use the format in the tools: the library reads `.ldx` as it reads `.tbc`, `.cvbs` and `.stack`.
