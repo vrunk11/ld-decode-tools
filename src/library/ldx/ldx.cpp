@@ -16,6 +16,13 @@
 #include <QRandomGenerator>
 
 #include <algorithm>
+#include <cstdio>
+#ifdef Q_OS_WIN
+#include <fcntl.h>
+#include <io.h>
+#else
+#include <unistd.h>
+#endif
 #include <deque>
 #include <stdexcept>
 #include <map>
@@ -109,6 +116,109 @@ void setSimpleTag(KaxTag &tag, KaxTagSimple *&simple, const char *name, const QB
     GetChild<KaxTagString>(*simple).SetValueUTF8(value.constData());
 }
 
+// A pipe: written to or read from in order, and never seeked
+class StreamOutput : public IOCallback
+{
+public:
+    explicit StreamOutput(FILE *file) : file(file) {}
+    uint32 read(void *, size_t) override { return 0; }
+    void setFilePointer(int64 offset, seek_mode mode) override
+    {
+        // Only to where it already is
+        const bool here = (mode == seek_current && offset == 0) || (mode == seek_beginning && static_cast<uint64>(offset) == written);
+        if (!here) throw std::runtime_error("a stream cannot be written again");
+    }
+    size_t write(const void *buffer, size_t size) override
+    {
+        const size_t done = fwrite(buffer, 1, size, file);
+        written += done;
+        return done;
+    }
+    uint64 getFilePointer() override { return written; }
+    void close() override { fflush(file); }
+
+private:
+    FILE *file;
+    uint64 written = 0;
+};
+
+// What a stream is read from: a window of what came in, so that the little that is read again (the id of an element
+// that was not the one looked for) can be, and what is passed over is read and let go. A read gives what has come, and
+// does not wait for the buffer to be full, so a producer that sends in blocks is followed as it goes.
+class StreamInput : public IOCallback
+{
+public:
+    explicit StreamInput(FILE *file) : file(file) {}
+    uint32 read(void *buffer, size_t size) override
+    {
+        char *out = static_cast<char *>(buffer);
+        size_t done = 0;
+        while (done < size) {
+            if (position >= windowEnd() && !fill()) break;
+            const size_t offset = static_cast<size_t>(position - windowStart);
+            const size_t count = std::min(size - done, static_cast<size_t>(window.size()) - offset);
+            std::memcpy(out + done, window.constData() + offset, count);
+            done += count;
+            position += count;
+        }
+        return static_cast<uint32>(done);
+    }
+    void setFilePointer(int64 offset, seek_mode mode) override
+    {
+        int64 target = 0;
+        if (mode == seek_beginning) target = offset;
+        else if (mode == seek_current) target = static_cast<int64>(position) + offset;
+        else throw std::runtime_error("a stream has no end to seek from");
+        if (target < static_cast<int64>(windowStart)) throw std::runtime_error("a stream cannot be read again from so far back");
+        // (forward is read through)
+        while (target > static_cast<int64>(windowEnd()) && fill()) {
+        }
+        position = static_cast<uint64>(qMin<int64>(target, static_cast<int64>(windowEnd())));
+    }
+    size_t write(const void *, size_t) override { return 0; }
+    uint64 getFilePointer() override { return position; }
+    void close() override {}
+
+private:
+    uint64 windowEnd() const { return windowStart + static_cast<uint64>(window.size()); }
+    bool fill()
+    {
+        // What was passed over long ago is let go
+        if (window.size() > MaxWindow && position - windowStart > KeepBehind) {
+            const qint64 drop = static_cast<qint64>(position - windowStart - KeepBehind);
+            window.remove(0, static_cast<int>(drop));
+            windowStart += static_cast<uint64>(drop);
+        }
+        char chunk[ChunkBytes];
+#ifdef Q_OS_WIN
+        const int got = _read(_fileno(file), chunk, ChunkBytes);
+#else
+        const int got = static_cast<int>(::read(fileno(file), chunk, ChunkBytes));
+#endif
+        if (got <= 0) return false;
+        window.append(chunk, got);
+        return true;
+    }
+
+    static constexpr int ChunkBytes = 1 << 16;
+    static constexpr int MaxWindow = 64 << 20;
+    static constexpr int KeepBehind = 16 << 20;
+    FILE *file;
+    QByteArray window;
+    uint64 windowStart = 0;
+    uint64 position = 0;
+};
+
+// A pipe is bytes, and not text
+void makeBinary(FILE *file)
+{
+#ifdef Q_OS_WIN
+    _setmode(_fileno(file), _O_BINARY);
+#else
+    Q_UNUSED(file);
+#endif
+}
+
 } // namespace
 
 QString kindName(Kind kind)
@@ -153,7 +263,8 @@ struct Writer::Private
     QVector<Track> tracks;
     QJsonArray history;
 
-    std::unique_ptr<StdIOCallback> output;
+    std::unique_ptr<IOCallback> output;
+    bool streaming = false;                    // written to a pipe: no size, no cues, nothing written again
     std::unique_ptr<KaxSegment> segment;
     KaxTracks *trackList = nullptr;
     std::map<quint32, KaxTrackEntry *> entries;            // by the id (number) of the track
@@ -348,10 +459,26 @@ void Writer::setHistory(const QJsonArray &entries)
 
 bool Writer::open(const QString &fileName, QString &error)
 {
+    return begin(fileName, error, nullptr);
+}
+
+bool Writer::openStream(FILE *file, QString &error)
+{
+    return begin(QString(), error, file);
+}
+
+bool Writer::begin(const QString &fileName, QString &error, FILE *stream)
+{
     try {
         if (!d->prepareCodecs(error)) return false;
 
-        d->output.reset(new StdIOCallback(fileName.toLocal8Bit().constData(), MODE_CREATE));
+        if (stream) {
+            makeBinary(stream);
+            d->output.reset(new StreamOutput(stream));
+            d->streaming = true;
+        } else {
+            d->output.reset(new StdIOCallback(fileName.toLocal8Bit().constData(), MODE_CREATE));
+        }
 
         EbmlHead head;
         GetChild<EDocType>(head).SetValue("matroska");
@@ -360,6 +487,7 @@ bool Writer::open(const QString &fileName, QString &error)
         head.Render(*d->output, true);
 
         d->segment.reset(new KaxSegment);
+        if (d->streaming) d->segment->SetSizeInfinite();        // a pipe has no end that is known
         d->segment->WriteHead(*d->output, 8);
 
         KaxInfo &info = GetChild<KaxInfo>(*d->segment);
@@ -372,10 +500,12 @@ bool Writer::open(const QString &fileName, QString &error)
         d->buildEntries();
         d->trackList->Render(*d->output, false);
 
-        // Space for tracks to be added to the file later
-        EbmlVoid padding;
-        padding.SetSize(TrackPaddingBytes);
-        padding.Render(*d->output);
+        // Space for tracks to be added to the file later (a pipe is not added to)
+        if (!d->streaming) {
+            EbmlVoid padding;
+            padding.SetSize(TrackPaddingBytes);
+            padding.Render(*d->output);
+        }
 
         // The profile and the history, before the data so that a reader (or a pipe) has them first
         KaxTags &tags = GetChild<KaxTags>(*d->segment);
@@ -547,6 +677,13 @@ bool Writer::finish(QString &error)
 {
     if (!d->output || d->finished) return true;
     try {
+        if (d->streaming) {
+            // Nothing more than the last cluster: a pipe has no cues, and its segment has no size to give
+            d->flushCluster();
+            d->output->close();
+            d->finished = true;
+            return true;
+        }
         d->flushCluster();
         // A file that was added to: its history, with what was added, as tags at the end (the last ones are the current ones)
         if (d->appending) {
@@ -593,7 +730,8 @@ bool Writer::finish(QString &error)
 
 struct Reader::Private
 {
-    std::unique_ptr<StdIOCallback> input;
+    std::unique_ptr<IOCallback> input;
+    bool streaming = false;                    // read from a pipe: in order, with no index
     std::unique_ptr<EbmlStream> stream;
     EbmlElement *segmentElement = nullptr;
     int upperLevel = 0;
@@ -1026,8 +1164,24 @@ Reader::~Reader() = default;
 
 bool Reader::open(const QString &fileName, QString &error)
 {
+    return begin(fileName, error, nullptr);
+}
+
+bool Reader::openStream(FILE *file, QString &error)
+{
+    return begin(QObject::tr("the stream"), error, file);
+}
+
+bool Reader::begin(const QString &fileName, QString &error, FILE *stream)
+{
     try {
-        d->input.reset(new StdIOCallback(fileName.toLocal8Bit().constData(), MODE_READ));
+        if (stream) {
+            makeBinary(stream);
+            d->input.reset(new StreamInput(stream));
+            d->streaming = true;
+        } else {
+            d->input.reset(new StdIOCallback(fileName.toLocal8Bit().constData(), MODE_READ));
+        }
         d->stream.reset(new EbmlStream(*d->input));
 
         // The EBML header
@@ -1128,6 +1282,10 @@ bool Reader::nextBlock(Block &block)
 bool Reader::buildIndex(QString &error)
 {
     if (d->indexed) return true;
+    if (d->streaming) {
+        error = QObject::tr("A stream has no index: its blocks are read in turn");
+        return false;
+    }
     try {
         if (!d->readCues(error)) return false;
     } catch (const std::exception &exception) {

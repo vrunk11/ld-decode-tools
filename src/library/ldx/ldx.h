@@ -16,6 +16,7 @@
 #include <QJsonObject>
 #include <QString>
 #include <QVector>
+#include <cstdio>
 #include <memory>
 
 // The LDX container (docs/Specifications/container-format.md): a Matroska file that follows a profile. Each
@@ -71,6 +72,10 @@ public:
 
     bool open(const QString &fileName, QString &error);
 
+    // Write to a stream that cannot be seeked (the standard output, for a pipe): the segment has no size, there are
+    // no cues, and nothing is written again. A reader that reads the stream as it comes (Reader::openStream) takes it.
+    bool openStream(FILE *file, QString &error);
+
     // Add to a file that is already written, instead of making one: its tracks are kept, the blocks written go at the
     // end, and the cues are written again. Nothing is moved. Add what is said in the history with addHistory.
     bool openAppend(const QString &fileName, QString &error);
@@ -84,6 +89,8 @@ public:
     QString lastError() const;
 
 private:
+    bool begin(const QString &fileName, QString &error, FILE *stream);
+
     struct Private;
     std::unique_ptr<Private> d;
 };
@@ -95,6 +102,9 @@ public:
     ~Reader();
 
     bool open(const QString &fileName, QString &error);
+    // A stream that cannot be seeked (the standard input): its blocks are read in turn with nextBlock, and there is
+    // no index, so no random access
+    bool openStream(FILE *file, QString &error);
 
     int profile() const;                    // the LDX_PROFILE of the file, 0 if it has none
     QVector<Track> tracks() const;
@@ -135,6 +145,8 @@ public:
     bool attachment(const QString &name, QByteArray &data) const;
 
 private:
+    bool begin(const QString &fileName, QString &error, FILE *stream);
+
     struct Private;
     std::unique_ptr<Private> d;
 };

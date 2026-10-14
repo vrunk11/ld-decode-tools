@@ -12,6 +12,7 @@
 #include <QFileInfo>
 #include <QJsonObject>
 #include <QTemporaryDir>
+#include <cstdio>
 #include <cstdlib>
 #include <iostream>
 
@@ -598,6 +599,85 @@ static void testCvbsTracks(const QString &directory)
     }
 }
 
+// A stream (a pipe, here a file that is only written and read in order): everything comes back, with no index
+static void testStream(const QString &path)
+{
+    std::cerr << "Testing a stream\n";
+
+    QVector<Ldx::Block> written;
+    {
+        Ldx::Writer writer;
+        Ldx::Track plain;
+        plain.kind = Ldx::Kind::Tbc;
+        plain.name = "raw";
+        writer.addTrack(plain);
+        Ldx::Track metadata;
+        metadata.kind = Ldx::Kind::Metadata;
+        metadata.depth = 0;
+        writer.addTrack(metadata);
+        if (Ldx::flacAvailable()) {
+            Ldx::Track flac;
+            flac.kind = Ldx::Kind::Tbc;
+            flac.codec = Ldx::Codec::Flac;
+            writer.addTrack(flac);
+            Ldx::Track audio;
+            audio.kind = Ldx::Kind::Pcm;
+            audio.codec = Ldx::Codec::Flac;
+            writer.addTrack(audio);
+        }
+        writer.addAttachment("session.stack", "application/json", "{}");
+        QJsonObject entry;
+        entry["tool"] = "stream";
+        writer.setHistory(QJsonArray { entry });
+
+        FILE *file = std::fopen(path.toLocal8Bit().constData(), "wb");
+        CHECK(file);
+        QString error;
+        CHECK(writer.openStream(file, error));
+        auto put = [&](quint32 track, qint64 timeNs, const QByteArray &data) {
+            Ldx::Block block;
+            block.track = track;
+            block.timeNs = timeNs;
+            block.data = data;
+            CHECK(writer.writeBlock(block.track, block.timeNs, block.data));
+            written.append(block);
+        };
+        put(2, 0, QByteArray("metadata"));
+        for (int i = 0; i < 6; i++) {
+            const qint64 time = i * 16683000LL;
+            put(1, time, wave(239330, i));
+            if (Ldx::flacAvailable()) {
+                put(3, time, wave(239330, i + 20));
+                put(4, time, wave(1470 * 2, i + 40));
+            }
+        }
+        CHECK(writer.finish(error));
+        std::fclose(file);
+    }
+
+    FILE *file = std::fopen(path.toLocal8Bit().constData(), "rb");
+    CHECK(file);
+    Ldx::Reader reader;
+    QString error;
+    CHECK(reader.openStream(file, error));
+    CHECK(reader.profile() == Ldx::ProfileVersion);
+    CHECK(reader.tracks().size() == (Ldx::flacAvailable() ? 4 : 2));
+    CHECK(reader.history().size() == 1);
+    QByteArray session;
+    CHECK(reader.attachment("session.stack", session) && session == "{}");
+    Ldx::Block block;
+    int index = 0;
+    while (reader.nextBlock(block)) {
+        CHECK(index < written.size());
+        CHECK(block.track == written[index].track && block.timeNs == written[index].timeNs && block.data == written[index].data);
+        index++;
+    }
+    CHECK(index == written.size());
+    // There is no way to the blocks but in turn
+    CHECK(!reader.buildIndex(error));
+    std::fclose(file);
+}
+
 static void testNotAnLdxFile(const QString &path)
 {
     std::cerr << "Testing a file that is not an LDX file\n";
@@ -627,6 +707,7 @@ int main(int argc, char *argv[])
     testUnsignedSamples(directory.path());
     testFfv1();
     testCvbsTracks(directory.path());
+    testStream(directory.filePath("stream.ldx"));
     testNotAnLdxFile(directory.filePath("garbage.ldx"));
 
     std::cerr << "All tests passed\n";
