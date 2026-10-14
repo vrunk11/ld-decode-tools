@@ -37,3 +37,7 @@ Matching sources by VBI frame number (mapping) in the GUI.
 ## Icon
 
 The application icon is a grey disc with the colours of its reflection, an arrow down and the discs that are stacked, in different greys and each a little off the one above. Sources are `Graphics/ld-stacker-gui.svg` (48 pixels and up) and `Graphics/ld-stacker-gui-small.svg`, drawn on the 16-pixel grid so that it stays readable at 16x16 (used for 16, 24 and 32). The PNGs and `appicon.ico` (the icon of the Windows executable) are rendered from them.
+
+## LDX files
+
+An LDX file (see [the container format](../Specifications/container-format.md)) can be added as a source: each TBC capture it holds becomes a source of its own (named after its track, shown as `file.ldx #3`), and an LDX file that keeps a stacking session is added as one source, the stack of that session. **File > Open session** also reads the session an LDX file keeps; saving it goes to a `.stack` file of its own and never over the LDX file. A source that is a track of an LDX file is saved in the session as the file and the id of the track.

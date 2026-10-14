@@ -517,3 +517,7 @@ The sources of the session can be TBC or CVBS captures (all of one kind); the st
 ## Reading the graphs
 
 Move the cursor over an analysis graph (SNR, dropouts) to read it: a dotted line follows it, and a box gives the frame number and the value of each curve at that frame, in dB for the SNR graphs.
+
+## LDX files
+
+An LDX file (see [the container format](../Specifications/container-format.md)) can be opened where a TBC file is: `capture.ldx` is the capture it holds (or the stack of the session it keeps), and `capture.ldx#3` is the track 3 of a file that holds several captures. The fields and the metadata are read from the file, and nothing is written to it.

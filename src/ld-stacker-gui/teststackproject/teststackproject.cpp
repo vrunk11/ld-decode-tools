@@ -15,7 +15,11 @@
 #include <cstdio>
 #include <cstdlib>
 
+#include "ldxcapture.h"
 #include "stackproject.h"
+#ifdef LDDECODE_WITH_LDX
+#include "ldx.h"
+#endif
 
 #define CHECK(condition) \
     do { if (!(condition)) { std::fprintf(stderr, "FAILED: %s (line %d)\n", #condition, __LINE__); std::exit(1); } } while (0)
@@ -131,6 +135,65 @@ int main(int argc, char *argv[])
     future.close();
     CHECK(!small.load(future.fileName(), error));
     CHECK(!small.load(base.absoluteFilePath("missing.stack"), error));
+
+    // The names of the captures kept in an LDX file
+    QString path;
+    qint32 track = -1;
+    LdxCapture::split("dir/capture.ldx#3", path, track);
+    CHECK(path == "dir/capture.ldx" && track == 3);
+    LdxCapture::split("dir/capture.ldx", path, track);
+    CHECK(path == "dir/capture.ldx" && track == 0);
+    LdxCapture::split("dir/capture#3.tbc", path, track);          // a # that is not of a track
+    CHECK(path == "dir/capture#3.tbc" && track == 0);
+    CHECK(LdxCapture::isLdxName("a.ldx") && LdxCapture::isLdxName("a.LDX#2") && !LdxCapture::isLdxName("a.tbc"));
+    CHECK(LdxCapture::trackName("a.ldx", 4) == "a.ldx#4" && LdxCapture::trackName("a.ldx", 0) == "a.ldx");
+    StackSource linked;
+    linked.file = "other.ldx";
+    linked.track = 2;
+    CHECK(linked.reference() == "other.ldx#2");
+    linked.track = 0;
+    CHECK(linked.reference() == "other.ldx");
+    linked.file = "c.tbc";
+    linked.track = 5;
+    CHECK(linked.reference() == "c.tbc");                         // (a track only means something in an LDX file)
+
+#ifdef LDDECODE_WITH_LDX
+    // A session kept in an LDX file: its sources that are tracks become the file and the track
+    {
+        Ldx::Writer writer;
+        Ldx::Track video;
+        video.kind = Ldx::Kind::Tbc;
+        writer.addTrack(video);
+        const QByteArray session = "{ \"version\": 1, \"sources\": [ { \"id\": \"a\", \"track\": 1 }, { \"id\": \"b\", \"file\": \"far.ldx\", \"track\": 7, \"offset\": 2 },"
+                                   " { \"id\": \"c\", \"file\": \"x.tbc\" } ] }";
+        writer.addAttachment("session.stack", "application/json", session);
+        const QString ldxFile = base.absoluteFilePath("kept.ldx");
+        CHECK(writer.open(ldxFile, error));
+        CHECK(writer.writeBlock(1, 0, QByteArray(10, 'x')));
+        CHECK(writer.finish(error));
+
+        CHECK(StackProject::isSession(ldxFile));
+        CHECK(!StackProject::isSession(ldxFile + "#1"));
+        CHECK(StackProject::isSession(fileName));
+        StackProject kept;
+        CHECK(kept.load(ldxFile, error));
+        CHECK(kept.sources.size() == 3);
+        CHECK(kept.sources[0].file == QDir::cleanPath(ldxFile) && kept.sources[0].track == 1);
+        CHECK(kept.sources[0].reference() == QDir::cleanPath(ldxFile) + "#1");
+        CHECK(kept.sources[1].file == base.absoluteFilePath("far.ldx") && kept.sources[1].track == 7 && kept.sources[1].offset == 2);
+        CHECK(kept.sources[2].file == base.absoluteFilePath("x.tbc") && kept.sources[2].track == 0);
+        // (an LDX file with no session is not one)
+        Ldx::Writer plain;
+        Ldx::Track only;
+        only.kind = Ldx::Kind::Tbc;
+        plain.addTrack(only);
+        const QString plainFile = base.absoluteFilePath("plain.ldx");
+        CHECK(plain.open(plainFile, error));
+        CHECK(plain.finish(error));
+        CHECK(!StackProject::isSession(plainFile));
+        CHECK(!kept.load(plainFile, error));
+    }
+#endif
 
     std::fprintf(stderr, "teststackproject: all tests passed\n");
     return 0;

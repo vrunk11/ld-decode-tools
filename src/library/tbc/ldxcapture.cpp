@@ -71,6 +71,30 @@ QString LdxCapture::trackName(const QString &path, qint32 track)
     return track > 0 ? QString("%1#%2").arg(path).arg(track) : path;
 }
 
+bool LdxCapture::listCaptures(const QString &path, QVector<qint32> &tracks, QStringList &names, QString &error)
+{
+#ifdef LDDECODE_WITH_LDX
+    Ldx::Reader reader;
+    if (!reader.open(path, error)) return false;
+    if (reader.profile() < 1) {
+        error = QObject::tr("%1 is not an LDX file").arg(path);
+        return false;
+    }
+    for (const Ldx::Track &track: reader.tracks()) {
+        if (track.kind != Ldx::Kind::Tbc) continue;
+        tracks.append(static_cast<qint32>(track.number));
+        names.append(track.name);
+    }
+    return true;
+#else
+    Q_UNUSED(path);
+    Q_UNUSED(tracks);
+    Q_UNUSED(names);
+    error = unsupported();
+    return false;
+#endif
+}
+
 bool LdxCapture::hasSession(const QString &path)
 {
 #ifdef LDDECODE_WITH_LDX

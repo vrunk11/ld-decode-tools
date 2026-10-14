@@ -14,6 +14,7 @@
 #include <QByteArray>
 #include <QJsonObject>
 #include <QString>
+#include <QStringList>
 #include <QVector>
 #include <memory>
 
@@ -37,6 +38,9 @@ public:
     static void split(const QString &name, QString &path, qint32 &track);
     // The name of a track of a file
     static QString trackName(const QString &path, qint32 track);
+
+    // The TBC tracks of an LDX file, with their names: the captures it holds
+    static bool listCaptures(const QString &path, QVector<qint32> &tracks, QStringList &names, QString &error);
 
     // Whether the file keeps a stacking session, and the session
     static bool hasSession(const QString &path);

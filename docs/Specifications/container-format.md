@@ -158,3 +158,16 @@ These do not change what a file contains. The prototype settles them, and the re
 1. A prototype, `ld-container pack | unpack | info`, with a `tbc` or `cvbs` stream, a `pcm` stream and a `metadata` track.
 2. Measure what section 12 lists, and write the results here.
 3. Use the format in the tools: the library reads `.ldx` as it reads `.tbc`, `.cvbs` and `.stack`.
+
+## 15. How the tools name and open a capture
+
+The tools take an LDX file where they take a `.tbc`, and say which capture with the id of its track:
+
+| Name | What the tool reads |
+|---|---|
+| `capture.ldx` | the stack of the session the file keeps (section 10), or, when it keeps none, its first `tbc` track |
+| `capture.ldx#3` | the track 3 (a `tbc` track, with the metadata track that is about it) |
+
+A source of a session that is a track of another file is the same name (`"file": "other.ldx", "track": 3` is `other.ldx#3`). The metadata of a capture are read from its metadata track, and the metadata of a session are those of its first source that is on, as for a `.stack` file. The tools do not write metadata into an LDX file: `ld-container` does.
+
+The first implementation reads `tbc` tracks that are raw. A `cvbs` track and the FLAC and FFV1 codecs are refused with a message that names them until they are written.
