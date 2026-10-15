@@ -4,7 +4,7 @@
 
 This document is the normative description of the format. A program that follows it can write files that the tools of this repository read, and read what they write. The words MUST, SHOULD and MAY are used as in RFC 2119. Every number in a file is as Matroska has it (big-endian EBML); the samples inside a block are little-endian. All JSON is UTF-8.
 
-The reference implementation is `src/library/ldx` (the container) and `src/library/tbc` (what the tools do with it), and `ld-container` is the tool that makes, shows and checks files. [Examples and test vectors](#21-examples-and-test-vectors) are in `docs/Specifications/examples`.
+The reference implementation is `src/library/ldx` (the container) and `src/library/tbc` (what the tools do with it), and `ld-container` is the tool that makes, shows and checks files. [Examples and test vectors](#22-examples-and-test-vectors) are in `docs/Specifications/examples`.
 
 ## 1. Purpose
 
@@ -68,6 +68,8 @@ Parameters are in the description of the track (section 4). A writer MUST give t
 | `pcm` | `sampleRate` (required) | real sample rate |
 | | `channels` | 2 |
 | | `bits` | 24 for the audio of a CVBS capture; absent or 16 otherwise |
+| | `source` | `"efm"` for the digital audio decoded from the EFM of the capture (44,100 Hz, 16-bit stereo); absent for the analogue audio. A reader that wants the analogue audio MUST NOT take a track whose source is `efm`. |
+| | `content` | `"dts"` when the decoded EFM audio holds DTS in PCM (informative) |
 | `metadata` | `namespace`, `format`, `track` | `"ldx.tbcmetadata"`, `"ld-decode-json"`, the video track it is about |
 
 ## 4. Tags
@@ -106,6 +108,8 @@ The samples of a frame of a CVBS file, as **10-bit values in 16-bit little-endia
 ### 5.3 `pcm`: audio
 
 A unit is a number of stereo samples, left then right for each sample: **16-bit signed little-endian** (4 bytes a sample) or, with `"bits": 24`, **24-bit signed little-endian** (6 bytes a sample, as in the WAV file `name_audio_0.wav` of decode-orc). Units follow each other without a gap: the first sample of a block is `time * sampleRate`, rounded. The 16-bit audio of a TBC capture is the `.pcm` file of ld-decode.
+
+A capture can thus have two `pcm` tracks about it: the analogue audio and the digital audio of its EFM (`ld-process-efm` and `efm-decoder-audio` write the latter into the file, section 19).
 
 ### 5.4 `efm`, `ac3`: bytes
 
@@ -274,14 +278,18 @@ A **writer** MUST: write `LDX_PROFILE`, `LDX_HISTORY`, `LDX_NEXT_TRACK_ID` and `
 
 A **reader** MUST: read raw tracks; read all the tags and keep the last value; read the current metadata as section 8.3; skip what it does not know; refuse a codec it lacks by name; and, for a file, find a block through the cues or, when there are none, through the index it makes (section 16).
 
-## 19. Names of the tools' files
+## 19. Putting the output of a tool in a file
+
+The tools that make audio or data from a capture can leave it in the LDX file as a track of its own: `ld-process-efm capture.efm capture.ldx` and `efm-decoder-audio capture.d24 capture.ldx` add the digital audio of the EFM as a `pcm` track with `"source": "efm"`, and `ld-container addtrack capture.ldx --kind ac3 --input capture.ac3` adds AC3 data (or EFM t-values, or annotations). The track goes with the video track named by `--about` (the first by default), the LDX file is written again with the track and an entry of the history, and `ld-container wav capture.ldx [--source efm]` gives a track back as a WAV file.
+
+## 20. Names of the tools' files
 
 `ld-container unpack` writes the separate files of a capture as `<name>.<id>.<suffix>`: `.tbc`, `.cvbs` (with its `.meta` and its companion JSON), `.pcm`, `.efm`, `.ac3`, `.chroma.tbc`, `_audio_0.wav` (for the 24-bit audio of a CVBS capture), `.tbc.json` (the current metadata), and the attachments by their names.
 
-## 20. Libraries
+## 21. Libraries
 
 The reference implementation uses **libebml and libmatroska** (LGPL-2.1-or-later) for the container and **libavcodec** (ffmpeg) only to encode and decode FLAC and FFV1. A program may use any other library (a Matroska muxer, ffmpeg itself) as long as the conventions above hold.
 
-## 21. Examples and test vectors
+## 22. Examples and test vectors
 
 `docs/Specifications/examples/` holds small files that cover the format and the expected content of each, with SHA-256 sums, so that an independent implementation can check that it reads what the reference writes and that its own files are read by the reference tools (`ld-container info`, `verify` and `unpack`). See its `README.md`.

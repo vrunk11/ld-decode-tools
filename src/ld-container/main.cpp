@@ -1175,6 +1175,123 @@ int info(const QStringList &arguments)
     return 0;
 }
 
+// ld-container addtrack file.ldx --kind pcm|efm|ac3|annotations --input data [--about id] [--name n] [--rate hz] [--source efm]
+int addTrack(const QStringList &arguments)
+{
+    QCommandLineParser parser;
+    parser.setApplicationDescription("Put a file in an LDX file as a track of its own: the audio decoded from EFM (pcm, 16-bit stereo, with --source efm),\n"
+                                     "AC3 data, EFM t-values or a text of annotations. The file is written again, in its place (or to the output).");
+    parser.addHelpOption();
+    parser.addPositionalArgument("file", "The LDX file");
+    parser.addOption(QCommandLineOption("kind", "pcm, efm, ac3 or annotations", "kind"));
+    parser.addOption(QCommandLineOption("input", "The file to put in", "file"));
+    parser.addOption(QCommandLineOption("about", "The id of the video track it goes with (default: the first)", "id", "0"));
+    parser.addOption(QCommandLineOption("name", "The name of the track (default: the name of the file)", "name"));
+    parser.addOption(QCommandLineOption("rate", "Sample rate of pcm audio (default 44100)", "hertz", "44100"));
+    parser.addOption(QCommandLineOption("source", "For pcm: where the audio comes from, efm for the digital audio decoded from EFM (default: the analogue audio)", "source"));
+    parser.addOption(QCommandLineOption({ "o", "output" }, "Write to another file instead of in place", "file"));
+    parser.process(arguments);
+    if (parser.positionalArguments().size() != 1 || !parser.isSet("kind") || !parser.isSet("input")) {
+        err << parser.helpText();
+        return 1;
+    }
+    QString target = parser.positionalArguments().first();
+    if (parser.isSet("output")) {
+        if (!QFile::copy(target, parser.value("output"))) {
+            err << "Could not write " << parser.value("output") << " (it exists already?)\n";
+            return 1;
+        }
+        target = parser.value("output");
+    }
+    QJsonObject parameters;
+    if (parser.value("kind") == "pcm") {
+        parameters["sampleRate"] = parser.value("rate").toDouble();
+        parameters["channels"] = 2;
+        if (parser.isSet("source")) parameters["source"] = parser.value("source");
+    }
+    const QString input = parser.value("input");
+    QString error;
+    if (!LdxCapture::addTrackFromFile(target, parser.value("kind"), input, parameters,
+                                      parser.isSet("name") ? parser.value("name") : QFileInfo(input).fileName(), parser.value("about").toInt(),
+                                      historyEntry("addtrack", QString("%1 as a %2 track").arg(QFileInfo(input).fileName(), parser.value("kind"))), error)) {
+        err << error << "\n";
+        return 1;
+    }
+    out << "Added " << QFileInfo(input).fileName() << " as a " << parser.value("kind") << " track to " << target << "\n";
+    return 0;
+}
+
+// ld-container wav file.ldx [-o out.wav] [--id n] [--source analogue|efm]
+int wav(const QStringList &arguments)
+{
+    QCommandLineParser parser;
+    parser.setApplicationDescription("Write the audio of an LDX file as a WAV file: the analogue audio of the capture (16-bit, or 24-bit for a CVBS capture),\n"
+                                     "or with --source efm the digital audio decoded from EFM.");
+    parser.addHelpOption();
+    parser.addPositionalArgument("file", "The LDX file");
+    parser.addOption(QCommandLineOption({ "o", "output" }, "The WAV file (default: the name of the LDX file, .wav)", "file"));
+    parser.addOption(QCommandLineOption("id", "The id of the pcm track (default: the first that fits)", "id", "0"));
+    parser.addOption(QCommandLineOption("source", "analogue (default) or efm", "source", "analogue"));
+    parser.process(arguments);
+    if (parser.positionalArguments().size() != 1) {
+        err << parser.helpText();
+        return 1;
+    }
+    const QString file = parser.positionalArguments().first();
+    Ldx::Reader reader;
+    QString error;
+    if (!openReader(reader, file, error)) {
+        err << error << "\n";
+        return 1;
+    }
+    const bool wantEfm = parser.value("source") == "efm";
+    Ldx::Track chosen;
+    bool found = false;
+    for (const Ldx::Track &track: reader.tracks()) {
+        if (track.kind != Ldx::Kind::Pcm) continue;
+        if (parser.value("id").toUInt() != 0) {
+            if (track.number != parser.value("id").toUInt()) continue;
+        } else if ((track.parameters.value("source").toString() == "efm") != wantEfm) {
+            continue;
+        }
+        chosen = track;
+        found = true;
+        break;
+    }
+    if (!found) {
+        err << file << " has no " << (wantEfm ? "audio decoded from EFM" : "analogue audio") << "\n";
+        return 1;
+    }
+    const int bits = chosen.depth == 24 ? 24 : 16;
+    const quint32 rate = static_cast<quint32>(chosen.parameters.value("sampleRate").toDouble(44100));
+    const QString output = parser.isSet("output") ? parser.value("output") : QFileInfo(file).dir().filePath(QFileInfo(file).completeBaseName() + ".wav");
+    QFile wavFile(output);
+    if (!wavFile.open(QIODevice::WriteOnly)) {
+        err << "Could not write " << output << "\n";
+        return 1;
+    }
+    // The header, with the sizes put in when the data are written
+    auto put32 = [](quint32 value) { QByteArray b(4, 0); for (int i = 0; i < 4; i++) b[i] = static_cast<char>((value >> (8 * i)) & 0xFF); return b; };
+    auto put16 = [](quint16 value) { QByteArray b(2, 0); for (int i = 0; i < 2; i++) b[i] = static_cast<char>((value >> (8 * i)) & 0xFF); return b; };
+    QByteArray header;
+    header += "RIFF" + put32(0) + "WAVEfmt " + put32(16) + put16(1) + put16(2) + put32(rate) + put32(rate * 2 * (bits / 8)) + put16(static_cast<quint16>(2 * (bits / 8))) + put16(static_cast<quint16>(bits)) + "data" + put32(0);
+    wavFile.write(header);
+    quint32 dataBytes = 0;
+    Ldx::Block block;
+    while (reader.nextBlock(block)) {
+        if (block.track != chosen.number) continue;
+        wavFile.write(block.data);
+        dataBytes += static_cast<quint32>(block.data.size());
+    }
+    wavFile.seek(4);
+    wavFile.write(put32(36 + dataBytes));
+    wavFile.seek(40);
+    wavFile.write(put32(dataBytes));
+    wavFile.close();
+    out << "Wrote " << dataBytes / (2 * (bits / 8)) << " samples of " << bits << "-bit audio at " << rate << " Hz to " << output << "\n";
+    return 0;
+}
+
 // ld-container history file.ldx [--json]
 int history(const QStringList &arguments)
 {
@@ -1593,6 +1710,8 @@ int main(int argc, char *argv[])
                "Usage: ld-container <command> [options]\n\n"
                "Commands:\n"
                "  history  show what was done to a file: the tools, when and with what arguments\n"
+               "  addtrack put a file (decoded EFM audio, AC3 data...) in an .ldx file as a track\n"
+               "  wav      write the audio of an .ldx file as a WAV file\n"
                "  pack     pack a .tbc, its metadata and its audio into an .ldx file\n"
                "  add      add a capture to an .ldx file, as a track of its own\n"
                "  remove   remove the track with an id (and what is about it) from an .ldx file\n"
@@ -1616,6 +1735,8 @@ int main(int argc, char *argv[])
     if (command == "unpack") return unpack(arguments);
     if (command == "info") return info(arguments);
     if (command == "history") return history(arguments);
+    if (command == "addtrack") return addTrack(arguments);
+    if (command == "wav") return wav(arguments);
     if (command == "verify") return verify(arguments);
     if (command == "recompress") return recompress(arguments);
     if (command == "extract") return extractTrack(arguments);
