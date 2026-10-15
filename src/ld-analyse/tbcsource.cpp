@@ -1616,7 +1616,22 @@ bool TbcSource::startBackgroundStream()
     // are made up as the stream turns out to be long enough
     ldDecodeMetaData.initialiseDefault(streamInput.system, streamInput.blackLevel, streamInput.whiteLevel,
                                        streamInput.isSubcarrierLocked);
-    if (LdxStream::instance()) LdxStream::instance()->provideFields(ldDecodeMetaData);
+    if (LdxStream::instance()) {
+        LdxStream::instance()->provideFields(ldDecodeMetaData);
+        // An LDX stream says what its video is: the parameters it sent (the size of a field, the active area, the levels) are
+        // those of the video, and not the standard ones of its system
+        LdDecodeMetaData sent;
+        QString sentError;
+        if (LdxStream::instance()->readMetadata(sent, sentError)) {
+            LdDecodeMetaData::VideoParameters parameters = sent.getVideoParameters();
+            parameters.numberOfSequentialFields = ldDecodeMetaData.getVideoParameters().numberOfSequentialFields;
+            ldDecodeMetaData.setVideoParameters(parameters);
+            qInfo().noquote() << "The LDX stream sent the parameters of its video:" << parameters.fieldWidth << "x" << parameters.fieldHeight
+                              << "samples a field";
+        } else {
+            qInfo().noquote() << "The LDX stream sent no metadata before its video: the standard parameters of its system are used";
+        }
+    }
     const LdDecodeMetaData::VideoParameters videoParameters = ldDecodeMetaData.getVideoParameters();
     snrParameters = videoParameters;
 

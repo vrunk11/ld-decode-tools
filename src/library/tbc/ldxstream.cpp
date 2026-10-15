@@ -17,6 +17,7 @@
 #include <QThread>
 
 #include <deque>
+#include <thread>
 #include <mutex>
 #include <QHash>
 
@@ -68,7 +69,65 @@ bool writeAll(int fd, const QByteArray &data)
     return true;
 }
 
+// What was read of the standard input to see what it is
+QByteArray sniffedPrefix;
+bool sniffed = false;
+bool sniffedLdx = false;
+FILE *rawPipeFile = nullptr;
+
+int readStdinBytes(void *buffer, unsigned int size)
+{
+#ifdef Q_OS_WIN
+    return _read(0, buffer, size);
+#else
+    return static_cast<int>(::read(0, buffer, size));
+#endif
+}
+
 } // namespace
+
+bool LdxStream::stdinIsLdx()
+{
+    if (sniffed) return sniffedLdx;
+    sniffed = true;
+#ifdef Q_OS_WIN
+    _setmode(0, _O_BINARY);
+#endif
+    char head[4];
+    int have = 0;
+    while (have < 4) {
+        const int got = readStdinBytes(head + have, static_cast<unsigned int>(4 - have));
+        if (got <= 0) break;
+        have += got;
+    }
+    sniffedPrefix = QByteArray(head, have);
+    static const QByteArray magic("\x1A\x45\xDF\xA3", 4);
+    sniffedLdx = sniffedPrefix == magic;
+    if (sniffedLdx) return true;
+
+    // Not an LDX stream: what was read is given back in front of the rest, by a pipe of the process
+    int readFd = -1, writeFd = -1;
+    if (!makePipe(readFd, writeFd)) return false;
+    rawPipeFile = fdopen(readFd, "rb");
+    const QByteArray prefix = sniffedPrefix;
+    std::thread([prefix, writeFd]() {
+        writeAll(writeFd, prefix);
+        QByteArray chunk(1 << 16, 0);
+        for (;;) {
+            const int got = readStdinBytes(chunk.data(), static_cast<unsigned int>(chunk.size()));
+            if (got <= 0) break;
+            if (!writeAll(writeFd, QByteArray(chunk.constData(), got))) break;
+        }
+#ifdef Q_OS_WIN
+        _close(writeFd);
+#else
+        ::close(writeFd);
+#endif
+    }).detach();
+    return false;
+}
+
+FILE *LdxStream::rawStdin() { return rawPipeFile; }
 
 struct LdxStream::Private : public QThread
 {
@@ -155,7 +214,7 @@ bool LdxStream::openStdin(QString &error)
     if (current) return true;
     std::unique_ptr<LdxStream> stream(new LdxStream);
     Private &d = *stream->d;
-    if (!d.reader.openStream(stdin, error)) {
+    if (!d.reader.openStream(stdin, error, sniffedLdx ? sniffedPrefix : QByteArray())) {
         error = QObject::tr("The standard input is not an LDX stream (%1). For raw video, say what it is: --input-format tbc or cvbs, with --system or the metadata.").arg(error);
         return false;
     }
@@ -259,6 +318,8 @@ struct LdxStream::Private {};
 LdxStream::LdxStream() : d(new Private) {}
 LdxStream::~LdxStream() = default;
 LdxStream *LdxStream::instance() { return nullptr; }
+bool LdxStream::stdinIsLdx() { return false; }
+FILE *LdxStream::rawStdin() { return nullptr; }
 bool LdxStream::openStdin(QString &error) { error = QObject::tr("This program was built without support for LDX files"); return false; }
 bool LdxStream::isCvbs() const { return false; }
 QJsonArray LdxStream::history() const { return QJsonArray(); }

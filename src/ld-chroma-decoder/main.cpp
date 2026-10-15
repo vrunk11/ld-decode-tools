@@ -358,8 +358,9 @@ int main(int argc, char *argv[])
     // An LDX stream on the standard input says by itself what it holds (the video system, the metadata): it is what a pipe
     // is when no other format is asked for, no metadata is given and no video system is said
     const bool formatGiven = parser.isSet(inputFormatOption);
-    const bool ldxInput = inputFileName == "-" && ((formatGiven && parser.value(inputFormatOption).toLower() == "ldx")
-                                                 || (!formatGiven && !metadataOptions.isInputFileSet() && !parser.isSet(systemOption)));
+    // (with no format said and no metadata given, the way the input begins tells an LDX stream from raw video)
+    const bool ldxInput = inputFileName == "-" && (formatGiven ? parser.value(inputFormatOption).toLower() == "ldx"
+                                                               : (!metadataOptions.isInputFileSet() && LdxStream::stdinIsLdx()));
     if (ldxInput) {
         QString streamError;
         if (!LdxStream::openStdin(streamError)) {

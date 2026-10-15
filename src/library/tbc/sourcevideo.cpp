@@ -215,7 +215,7 @@ bool SourceVideo::open(QString filename, qint32 _fieldLength, qint32 _fieldLineL
             return false;
         }
 
-        FILE *streamFile = stdin;
+        FILE *streamFile = (filename == "-" && LdxStream::rawStdin()) ? LdxStream::rawStdin() : stdin;      // (raw input that was looked at first comes by a pipe)
         if (ldxStream) {
             streamFile = ldxStream->videoPipe();
             if (!streamFile) {

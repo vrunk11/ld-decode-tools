@@ -524,4 +524,4 @@ An LDX file (see [the container format](../Specifications/container-format.md)) 
 
 ## LDX stream
 
-With `-` and no `--system`, the input is an LDX stream (`ld-container pack capture.tbc -o - | ld-analyse -`): the video system and TBC or CVBS come from it, and its video is shown as the video of any pipe is, as it arrives. `--input-format ldx` says so.
+With `-`, an input that begins as a Matroska file does is an LDX stream, whatever `--system` says (it is looked at, not assumed) (`ld-container pack capture.tbc -o - | ld-analyse -`): the video system and TBC or CVBS come from it, and its video is shown as the video of any pipe is, as it arrives. `--input-format ldx` says so.

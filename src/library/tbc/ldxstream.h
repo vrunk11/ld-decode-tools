@@ -35,6 +35,12 @@ public:
 
     // Take the standard input as an LDX stream. False, with the reason, if it is not one, or has no video.
     static bool openStdin(QString &error);
+    // Whether the standard input is an LDX stream, from how it begins (a Matroska file: 1A 45 DF A3), so that a tool need not be
+    // told. The first bytes are read to see, and kept. If it is not one, what rawStdin gives is the standard input from its first
+    // byte, and it must be read from there. Call it once, before anything else reads the standard input.
+    static bool stdinIsLdx();
+    static FILE *rawStdin();
+
     // The stream that was opened, if one was
     static LdxStream *instance();
 

@@ -315,4 +315,4 @@ An LDX file (see [the container format](../Specifications/container-format.md)) 
 
 ## LDX stream
 
-With `-` and no `--input-format`, `--system` or input metadata, the input is an LDX stream (`ld-container pack capture.tbc -o - | ld-chroma-decoder - out.rgb`): it says by itself what it holds, so the video system, TBC or CVBS and the metadata are taken from it. `--input-format ldx` says so. A stream that is not LDX is refused with a message that says how to read raw video.
+With `-` and no `--input-format` or input metadata, an input that begins as a Matroska file does is an LDX stream (`--system` does not stop that) (`ld-container pack capture.tbc -o - | ld-chroma-decoder - out.rgb`): it says by itself what it holds, so the video system, TBC or CVBS and the metadata are taken from it. `--input-format ldx` says so. A stream that is not LDX is refused with a message that says how to read raw video.
