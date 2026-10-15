@@ -29,6 +29,8 @@
 #include <QDebug>
 #include <QFile>
 #include <QTextStream>
+#include <QIODevice>
+#include "ldxbytetrack.h"
 
 class ReaderData
 {
@@ -44,6 +46,9 @@ public:
 
 private:
     QFile m_file;
+    LdxByteTrack m_ldx;                 // the EFM of an LDX file or stream, in place of the file
+    QIODevice *m_device = nullptr;      // what is read: the file, or the LDX track
+    QByteArray m_prefix;                // the first bytes of the standard input, read to see what it is
     QTextStream* m_stdinStream;
     bool m_usingStdin;
 };

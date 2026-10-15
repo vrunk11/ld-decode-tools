@@ -104,7 +104,8 @@ public:
     bool open(const QString &fileName, QString &error);
     // A stream that cannot be seeked (the standard input): its blocks are read in turn with nextBlock, and there is
     // no index, so no random access
-    bool openStream(FILE *file, QString &error);
+    // (alreadyRead: the first bytes of the stream, if the caller has taken them to see what it is)
+    bool openStream(FILE *file, QString &error, const QByteArray &alreadyRead = QByteArray());
 
     int profile() const;                    // the LDX_PROFILE of the file, 0 if it has none
     QVector<Track> tracks() const;

@@ -126,3 +126,7 @@ CLI options:
   * F2 to F1 Frame decoding debug
   * F1 Frame to audio samples debug
   * F1 Frame to data sector debug
+
+## LDX files
+
+The input can be an LDX file (`capture.ldx`, or `capture.ldx#4` for the `efm` track 4): the EFM t-values of the capture are read from it as they would be from the `.efm` file it was packed from.
