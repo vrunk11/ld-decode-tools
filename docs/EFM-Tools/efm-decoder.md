@@ -132,3 +132,7 @@ These requirements mean you need a minimum of 98 F2 Frames in order to produce a
 A 44.1 kHz, 16-bit, stereo sample requires **176,400 bytes per second**.
 
 Since the original IEC specification is audio based and the supported sample type is 16-bit, 44.1 KHz every second of audio requires 176,400 bytes.  The minimum time window allowed is a "section" which is 98x24 bytes = 2352 bytes.  176,400 / 2,352 bytes = 75 (i.e. a section represents a time period of 1/75th of a second).
+
+## From an LDX file
+
+The EFM of an LDX file is read where an `.efm` file is: `efm-decoder-f2 capture.ldx out.f2s`, and the tools after it (`efm-decoder-d24`, `efm-decoder-audio`, `efm-decoder-data`) take the LDX file too and run the stages before them themselves: `efm-decoder-audio --no-timecodes capture.ldx audio.wav` is the three commands above in one. `efm-decoder-audio` and `ld-process-efm` can also leave the audio in the LDX file (`efm-decoder-audio --no-timecodes capture.ldx capture.ldx`), as a `pcm` track with `"source": "efm"`.

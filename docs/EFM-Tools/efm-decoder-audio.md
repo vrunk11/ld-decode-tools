@@ -140,3 +140,7 @@ efm-decoder-audio stacked.d24 output.wav --audacity-labels
 ## LDX files
 
 The output can be an LDX file that exists (`efm-decoder-audio capture.d24 capture.ldx`): the decoded audio is added to it as a `pcm` track with `"source": "efm"`, without a WAV header, and the history records it. `ld-container wav capture.ldx --source efm` gives it back as a WAV file. The Audacity labels are not put in an LDX file.
+
+## LDX files
+
+The input can be an LDX file (`capture.ldx`, or `capture.ldx#4` for the `efm` track 4) in place of the Data24 sections of the stage before: the stages of the decoder before this one are run on its EFM, with the tools that are beside this program (`efm-decoder-f2`, then `efm-decoder-d24`), on files in a temporary directory, and this stage goes on from there. `--no-timecodes` is passed to the first stage, for EFM that has no timecodes (the usual one of a LaserDisc). For one stage at a time, or to keep the intermediate files, run the tools one after the other as before.
