@@ -25,6 +25,7 @@
 #include "discmapper.h"
 #include "tbc/logging.h"
 #include "cvbsaudio.h"
+#include "targetvideo.h"
 #include "ldxcapture.h"
 
 DiscMapper::DiscMapper()
@@ -653,6 +654,39 @@ bool DiscMapper::saveDiscMap(DiscMap &discMap)
     LdDecodeMetaData streamMetadata;
     QJsonArray streamHistory = LdxCapture::historyOf(inputFileInfo.filePath());
     streamHistory.append(LdxCapture::historyEntry("process", "disc mapping"));
+    const bool inputCvbs = TargetVideo::sourceIsCvbs(inputFileInfo.filePath());
+    if (ldxOutput) targetVideo.setLdxCvbs(inputCvbs);
+
+    // The audio of a CVBS capture is 24-bit stereo, a WAV file or a track of an LDX file: read as it is
+    const bool cvbsAudio = !noAudio && inputCvbs;
+    CvbsAudio::WavReader wavReader;
+    CvbsAudio::WavWriter wavWriter;
+    LdxCapture wideAudio;
+    const bool wideFromLdx = cvbsAudio && LdxCapture::isLdxName(inputFileInfo.filePath());
+    double wideRate = 0;
+    if (cvbsAudio) {
+        if (wideFromLdx) {
+            QString audioError;
+            if (!wideAudio.openAudio(inputFileInfo.filePath(), audioError, true)) {
+                qCritical().noquote() << audioError;
+                sourceVideo.close();
+                return false;
+            }
+            wideRate = wideAudio.audioSampleRate();
+        } else {
+            if (!wavReader.open(CvbsAudio::wavFileName(Cvbs::baseName(inputFileInfo.filePath()), 0))) {
+                sourceVideo.close();
+                return false;
+            }
+            wideRate = wavReader.info().sampleRate;
+        }
+    }
+    auto readWide = [&](qint64 start, qint64 count) {
+        return wideFromLdx ? wideAudio.getAudioBytes(start, count) : wavReader.read(start, count);
+    };
+    auto putWide = [&](const QByteArray &samples) {
+        return ldxOutput ? targetVideo.writeAudio(samples) : wavWriter.write(samples);
+    };
     if (ldxStream) {
         // The metadata of each field go with it, so they are made first
         if (!discMap.buildTargetMetadata(streamMetadata)) {
@@ -671,7 +705,7 @@ bool DiscMapper::saveDiscMap(DiscMap &discMap)
         const LdDecodeMetaData::VideoParameters &parameters = input.getVideoParameters();
         targetVideo.setLdxVideo(parameters.fieldWidth, parameters.fieldHeight, parameters.sampleRate, QString(),
                                 streamHistory);
-        if (!noAudio && !Cvbs::isDataFileName(inputFileInfo.filePath())) targetVideo.setLdxAudio(44100);
+        if (!noAudio) targetVideo.setLdxAudio(cvbsAudio ? wideRate : 44100, cvbsAudio ? 24 : 16);
     }
     if (!targetVideo.open(outputFileInfo.filePath(), discMap.getVideoSystem(), discMap.getSampleEncoding())) {
         sourceVideo.close();
@@ -682,24 +716,16 @@ bool DiscMapper::saveDiscMap(DiscMap &discMap)
     SourceAudio sourceAudio;
     QFile targetAudio;
 
-    // A CVBS capture's audio is a 24-bit WAV, read and written as it is
-    const bool cvbsAudio = !noAudio && Cvbs::isDataFileName(inputFileInfo.filePath());
-    CvbsAudio::WavReader wavReader;
-    CvbsAudio::WavWriter wavWriter;
-
-    if (cvbsAudio) {
-        const QString inputWavFileName = CvbsAudio::wavFileName(Cvbs::baseName(inputFileInfo.filePath()), 0);
+    if (cvbsAudio && ldxOutput) {
+        // (the audio goes into the track of the output)
+    } else if (cvbsAudio) {
         const QString outputWavFileName = CvbsAudio::wavFileName(Cvbs::baseName(outputFileInfo.filePath()), 0);
-        if (!wavReader.open(inputWavFileName)) {
-            sourceVideo.close();
-            return false;
-        }
         if (QFileInfo::exists(outputWavFileName)) {
             qInfo() << "Target audio file already exists:" << outputWavFileName << "- Cannot proceed!";
             sourceVideo.close();
             return false;
         }
-        if (!wavWriter.open(outputWavFileName, wavReader.info().sampleRate)) {
+        if (!wavWriter.open(outputWavFileName, static_cast<quint32>(wideRate))) {
             sourceVideo.close();
             return false;
         }
@@ -794,8 +820,8 @@ bool DiscMapper::saveDiscMap(DiscMap &discMap)
                 const qint32 firstLength = discMap.getFirstFieldAudioDataLength(frameNumber);
                 const qint32 secondLength = discMap.getSecondFieldAudioDataLength(frameNumber);
                 if (firstLength > 0 && secondLength > 0) {
-                    if (!wavWriter.write(wavReader.read(discMap.getFirstFieldAudioDataStart(frameNumber), firstLength))) writeFail = true;
-                    if (!wavWriter.write(wavReader.read(discMap.getSecondFieldAudioDataStart(frameNumber), secondLength))) writeFail = true;
+                    if (!putWide(readWide(discMap.getFirstFieldAudioDataStart(frameNumber), firstLength))) writeFail = true;
+                    if (!putWide(readWide(discMap.getSecondFieldAudioDataStart(frameNumber), secondLength))) writeFail = true;
                 } else {
                     qInfo() << "Warning: Input file seems to have zero audio data in frame number #" << frameNumber;
                     qInfo() << "The audio output might be corrupt.";
@@ -832,8 +858,8 @@ bool DiscMapper::saveDiscMap(DiscMap &discMap)
             if (cvbsAudio) {
                 // Silence of a field's length, twice
                 const QByteArray silence(discMap.getAudioFieldSampleLength() * 6, '\0');
-                if (!wavWriter.write(silence)) writeFail = true;
-                if (!wavWriter.write(silence)) writeFail = true;
+                if (!putWide(silence)) writeFail = true;
+                if (!putWide(silence)) writeFail = true;
             } else if (!noAudio) {
                 // Write the padded audio
                 if (!putAudio(missingFieldAudioData)) writeFail = true;
@@ -863,7 +889,7 @@ bool DiscMapper::saveDiscMap(DiscMap &discMap)
 
     // Close the source and target audio files
     if (cvbsAudio) {
-        if (!wavWriter.close()) {
+        if (!ldxOutput && !wavWriter.close()) {
             qInfo() << "Writing the target audio failed!";
             return false;
         }
@@ -890,7 +916,7 @@ bool DiscMapper::saveDiscMap(DiscMap &discMap)
         return false;
     }
     // The audio channel pair goes in the core metadata that was just written
-    if (cvbsAudio && !Cvbs::setAudioChannelPair(Cvbs::metaFileName(outputFileInfo.filePath()), 0, "Analogue audio")) {
+    if (cvbsAudio && !ldxOutput && !Cvbs::setAudioChannelPair(Cvbs::metaFileName(outputFileInfo.filePath()), 0, "Analogue audio")) {
         qInfo() << "Recording the target audio in the metadata failed!";
         return false;
     }

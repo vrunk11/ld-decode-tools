@@ -31,6 +31,7 @@
 #include "tbc/logging.h"
 #include "tbc/metadataoptions.h"
 #include "cvbsaudio.h"
+#include "ldxcapture.h"
 #include "discmapper.h"
 
 int main(int argc, char *argv[])
@@ -151,6 +152,16 @@ int main(int argc, char *argv[])
         noAudio = true;
     }
 
+    // The same for a CVBS capture in an LDX file that has no 24-bit audio track
+    if (!noAudio && LdxCapture::isLdxName(inputFilename) && LdxCapture::isCvbs(inputFilename)) {
+        LdxCapture probe;
+        QString probeError;
+        if (!probe.openAudio(inputFilename, probeError, true)) {
+            qInfo() << "The input is CVBS without audio (" << probeError << "), as with --no-audio";
+            noAudio = true;
+        }
+    }
+
     // Put the input and output file names into QFileInfo for portability
     QFileInfo inputFileInfo(inputFilename);
     QFileInfo outputFileInfo(outputFilename);
@@ -174,11 +185,6 @@ int main(int argc, char *argv[])
     if (!mapOnly) {
         if (outputFileInfo.exists()) {
             qCritical("The specified output file already exists - please delete the existing file or use another output file name");
-            return -1;
-        }
-        // The output "-" is an LDX stream, which holds TBC video here
-        if (outputFilename == "-" && Cvbs::isDataFileName(inputFileInfo.filePath())) {
-            qCritical("CVBS video cannot be sent as an LDX stream yet: name an output file");
             return -1;
         }
         // The output stays in the input's container (TBC or CVBS)

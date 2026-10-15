@@ -40,9 +40,15 @@ public:
     // with no fields, see LdDecodeMetaData::parametersJson) and then each field comes with its own metadata, as a block
     // of JSON just before its video (writeField with the JSON). Before open().
     void setLdxStream(const QByteArray &parametersJson);
+    // The video is CVBS: the track of an LDX output is a cvbs track, whose blocks are frames (two fields each, joined as
+    // in a .cvbs file; the samples are kept as 10-bit values, see the specification). Before open().
+    void setLdxCvbs(bool isCvbs) { ldxCvbs = isCvbs; }
+    // Whether the video a tool reads (a file, a track of an LDX file or the LDX stream "-") is CVBS
+    static bool sourceIsCvbs(const QString &inputName);
     bool isLdxStream() const { return ldxStreamOutput; }
     bool writeField(const QVector<quint16> &fieldData, const QByteArray &metadataJson);
-    void setLdxAudio(double sampleRate);
+    // bits: 16 for the analogue audio of a TBC capture, 24 for that of a CVBS capture
+    void setLdxAudio(double sampleRate, qint32 bits = 16);
     // 16-bit stereo audio of the fields written so far, for an LDX output (anything else: false, the tool writes its own file)
     bool writeAudio(const QByteArray &samples);
     bool isLdx() const;
@@ -73,12 +79,14 @@ private:
     std::shared_ptr<LdxOutput> ldx;
     QJsonArray ldxHistory;
     bool ldxStreamOutput = false;
+    bool ldxCvbs = false;
     QByteArray ldxParameters;
     quint32 ldxMetadataTrack = 0;
     qint32 ldxFieldWidth = 0, ldxFieldHeight = 0;
     double ldxSampleRate = 0;
     QString ldxName;
     double ldxAudioRate = 0;
+    qint32 ldxAudioBits = 16;
     VideoSystem ldxSystem = PAL;
 };
 

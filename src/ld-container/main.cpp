@@ -35,6 +35,7 @@
 #include "ldx.h"
 #include "ldxcapture.h"
 #include "cvbs.h"
+#include "cvbsaudio.h"
 #include "lddecodemetadata.h"
 #include "tbc/logging.h"
 
@@ -218,6 +219,43 @@ private:
     bool loaded = false;
 };
 
+// The 24-bit stereo audio of a CVBS capture (a WAV file), in chunks of whole samples (6 bytes each), up to a time
+class Wav24Source : public BlockSource
+{
+public:
+    Wav24Source(std::shared_ptr<CvbsAudio::WavReader> reader, quint32 track, double rate, qint64 limitNs)
+        : reader(std::move(reader)), track(track), rate(rate), limitNs(limitNs), total(this->reader->info().numberOfSamples) {}
+    qint64 samples() const { return sample; }
+
+    bool peek(Ldx::Block &block) override
+    {
+        const qint64 time = static_cast<qint64>(sample * 1.0e9 / rate);
+        if (time > limitNs || sample >= total) return false;
+        if (!loaded) {
+            data = reader->read(sample, qMin<qint64>(ChunkSamples, total - sample));
+            if (data.isEmpty()) return false;
+            loaded = true;
+        }
+        block.track = track;
+        block.timeNs = time;
+        block.data = data;
+        return true;
+    }
+    void pop() override { sample += data.size() / FrameBytes; loaded = false; }
+
+private:
+    static constexpr int ChunkSamples = 1470;
+    static constexpr int FrameBytes = 6;
+    std::shared_ptr<CvbsAudio::WavReader> reader;
+    quint32 track;
+    double rate;
+    qint64 limitNs;
+    qint64 total;
+    qint64 sample = 0;
+    QByteArray data;
+    bool loaded = false;
+};
+
 // A file of bytes with no time of its own (EFM t-values, AC3 data), in chunks of one size, which are spread over the
 // time of the video in proportion to where they are in the file
 class ChunkSource : public BlockSource
@@ -295,6 +333,7 @@ struct Capture {
     double pcmRate = 44100;
     std::unique_ptr<QFile> tbc;
     std::unique_ptr<QFile> pcm;
+    std::shared_ptr<CvbsAudio::WavReader> wav;      // the audio of a CVBS capture: a 24-bit WAV, not a .pcm
 };
 
 void addCaptureOptions(QCommandLineParser &parser)
@@ -309,9 +348,9 @@ void addCaptureOptions(QCommandLineParser &parser)
 
 // The codec a track of a kind is kept in, for the codec asked for: raw; flac for the tracks of 16-bit samples; ffv1 for CVBS;
 // auto, the best for each. A codec that is for other tracks leaves this one raw.
-bool codecFor(const QString &asked, Ldx::Kind kind, Ldx::Codec &codec)
+bool codecFor(const QString &asked, Ldx::Kind kind, Ldx::Codec &codec, int depth = 16)
 {
-    const bool sixteen = kind == Ldx::Kind::Tbc || kind == Ldx::Kind::Rf || kind == Ldx::Kind::Pcm;
+    const bool sixteen = (kind == Ldx::Kind::Tbc || kind == Ldx::Kind::Rf || kind == Ldx::Kind::Pcm) && depth == 16;
     codec = Ldx::Codec::Raw;
     if (asked == "raw") return true;
     if (asked == "auto") { codec = sixteen ? Ldx::Codec::Flac : (kind == Ldx::Kind::Cvbs ? Ldx::Codec::Ffv1 : Ldx::Codec::Raw); return true; }
@@ -487,9 +526,30 @@ bool readCapture(const CaptureOptions &options, const QString &input, Capture &c
     capture.metadata.parameters["namespace"] = "ldx.tbcmetadata";
     capture.metadata.parameters["format"] = "ld-decode-json";
 
-    capture.hasAudio = !options.pcm.isEmpty();
-    if (capture.hasAudio) {
+    // The audio of a CVBS capture is a 24-bit WAV (<name>_audio_0.wav, taken when it is there), the audio of a TBC a .pcm
+    QString wavName;
+    if (capture.cvbs) {
+        if (!options.pcm.isEmpty() && options.pcm.endsWith(".wav", Qt::CaseInsensitive)) wavName = options.pcm;
+        else if (options.pcm.isEmpty() && QFileInfo::exists(CvbsAudio::wavFileName(Cvbs::baseName(input), 0))) wavName = CvbsAudio::wavFileName(Cvbs::baseName(input), 0);
+    }
+    capture.hasAudio = !options.pcm.isEmpty() || !wavName.isEmpty();
+    if (!wavName.isEmpty()) {
+        capture.wav = std::make_shared<CvbsAudio::WavReader>();
+        if (!capture.wav->open(wavName)) {
+            err << "Could not read the audio " << wavName << "\n";
+            return false;
+        }
+        capture.pcmRate = capture.wav->info().sampleRate;
+        capture.audio.kind = Ldx::Kind::Pcm;
+        capture.audio.depth = 24;
+        capture.audio.codec = Ldx::Codec::Raw;      // (FLAC is for the tracks of 16 bits here)
+        capture.audio.name = QFileInfo(wavName).fileName();
+        capture.audio.parameters["sampleRate"] = capture.pcmRate;
+        capture.audio.parameters["channels"] = 2;
+        capture.audio.parameters["bits"] = 24;
+    } else if (capture.hasAudio) {
         capture.pcm.reset(new QFile(options.pcm));
+
         if (!capture.pcm->open(QIODevice::ReadOnly)) {
             err << "Could not open " << options.pcm << "\n";
             return false;
@@ -689,10 +749,13 @@ int pack(const QStringList &arguments)
 
     OnceSource metadata(capture.metadata.number, capture.metadataJson);
     FieldSource fields(*capture.tbc, capture.video.number, capture.system, capture.unitBytes, capture.start, capture.fields, capture.unitFields, capture.convert);
-    PcmSource pcm(capture.hasAudio ? *capture.pcm : *capture.tbc, capture.audio.number, capture.pcmRate, fields.endTimeNs());
+    PcmSource pcm(capture.pcm ? *capture.pcm : *capture.tbc, capture.audio.number, capture.pcmRate, fields.endTimeNs());
+    std::unique_ptr<Wav24Source> wav;
+    if (capture.wav) wav = std::make_unique<Wav24Source>(capture.wav, capture.audio.number, capture.pcmRate, fields.endTimeNs());
     FieldMetadataSource fieldMetadata(capture.metadata.number, capture.fieldJson, capture.system, capture.start, capture.unitFields);
     std::vector<BlockSource *> sources { &metadata, &fieldMetadata, &fields };
-    if (capture.hasAudio) sources.push_back(&pcm);
+    if (wav) sources.push_back(wav.get());
+    else if (capture.hasAudio) sources.push_back(&pcm);
     std::vector<std::unique_ptr<ChunkSource>> chunkSources;
     for (ByteTrack &bytes: byteTracks) {
         if (!bytes.file) continue;
@@ -704,7 +767,7 @@ int pack(const QStringList &arguments)
         return 1;
     }
     out << "Packed " << fields.written() << " fields";
-    if (capture.hasAudio) out << " and " << pcm.samples() << " audio samples";
+    if (capture.hasAudio) out << " and " << (wav ? wav->samples() : pcm.samples()) << " audio samples";
     for (const std::unique_ptr<ChunkSource> &chunks: chunkSources) out << ", " << chunks->bytes() << " bytes of EFM or AC3";
     out << " as track " << capture.video.number << " of " << output << "\n";
     return 0;
@@ -753,9 +816,12 @@ int addStream(const QStringList &arguments)
     LdxSource old(rewrite.reader, {});
     OnceSource metadata(capture.metadata.number, capture.metadataJson);
     FieldSource fields(*capture.tbc, capture.video.number, capture.system, capture.unitBytes, capture.start, capture.fields, capture.unitFields, capture.convert);
-    PcmSource pcm(capture.hasAudio ? *capture.pcm : *capture.tbc, capture.audio.number, capture.pcmRate, fields.endTimeNs());
+    PcmSource pcm(capture.pcm ? *capture.pcm : *capture.tbc, capture.audio.number, capture.pcmRate, fields.endTimeNs());
+    std::unique_ptr<Wav24Source> wav;
+    if (capture.wav) wav = std::make_unique<Wav24Source>(capture.wav, capture.audio.number, capture.pcmRate, fields.endTimeNs());
     std::vector<BlockSource *> sources { &old, &metadata, &fields };
-    if (capture.hasAudio) sources.push_back(&pcm);
+    if (wav) sources.push_back(wav.get());
+    else if (capture.hasAudio) sources.push_back(&pcm);
     if (!mergeInto(writer, sources) || !writer.finish(error)) {
         if (!error.isEmpty()) err << error << "\n";
         return 1;
@@ -982,7 +1048,10 @@ int setStack(const QStringList &arguments)
         const qint64 end = fields->endTimeNs();
         sources.push_back(fields.get());
         owned.push_back(std::move(fields));
-        if (capture->hasAudio) {
+        if (capture->wav) {
+            owned.push_back(std::make_unique<Wav24Source>(capture->wav, capture->audio.number, capture->pcmRate, end));
+            sources.push_back(owned.back().get());
+        } else if (capture->hasAudio) {
             owned.push_back(std::make_unique<PcmSource>(*capture->pcm, capture->audio.number, capture->pcmRate, end));
             sources.push_back(owned.back().get());
         }
@@ -1203,7 +1272,7 @@ int recompress(const QStringList &arguments)
         if (!samples || (parser.isSet("id") && track.number != parser.value("id").toUInt())) continue;
         // (a codec that is for other tracks leaves this one as it is, except raw, which is for all)
         Ldx::Codec codec;
-        codecFor(asked, track.kind, codec);
+        codecFor(asked, track.kind, codec, track.depth);
         if (codec == Ldx::Codec::Raw && asked != "raw" && asked != "auto") continue;
         if (track.codec != codec) changed++;
         track.codec = codec;
@@ -1339,8 +1408,32 @@ int unpack(const QStringList &arguments)
     std::map<quint32, std::shared_ptr<Cvbs::SampleConverter>> converters;
     std::map<quint32, CvbsOut> cvbsTracks;
     std::map<quint32, std::unique_ptr<QFile>> files;
+    // The 24-bit audio of a CVBS capture goes back to the WAV file it came from: <data file name>_audio_0.wav
+    struct WavOut {
+        std::unique_ptr<CvbsAudio::WavWriter> writer;
+        QString path;
+        quint32 about;
+    };
+    std::map<quint32, WavOut> wavTracks;
     for (const Ldx::Track &track: reader.tracks()) {
+        if (track.kind == Ldx::Kind::Pcm && track.depth == 24) {
+            const quint32 about = static_cast<quint32>(track.parameters.value("track").toInt(0));
+            WavOut wavOut;
+            wavOut.about = about;
+            wavOut.path = directory.filePath(CvbsAudio::wavFileName(QString("%1.%2").arg(base).arg(about), 0));
+            wavOut.writer = std::make_unique<CvbsAudio::WavWriter>();
+            if (!wavOut.writer->open(wavOut.path, static_cast<quint32>(track.parameters.value("sampleRate").toDouble(CvbsAudio::CVBS_SAMPLE_RATE)))) {
+                err << "Could not write " << wavOut.path << "\n";
+                return 1;
+            }
+            out << "  track " << track.number << " -> " << QFileInfo(wavOut.path).fileName() << "\n";
+            wavTracks[track.number] = std::move(wavOut);
+        }
+    }
+    for (const Ldx::Track &track: reader.tracks()) {
+        if (wavTracks.count(track.number)) continue;
         QString suffix = ".bin";
+
         if (track.kind == Ldx::Kind::Tbc) suffix = ".tbc";
         else if (track.kind == Ldx::Kind::Cvbs) suffix = ".cvbs";
         else if (track.kind == Ldx::Kind::Pcm) suffix = ".pcm";
@@ -1382,6 +1475,11 @@ int unpack(const QStringList &arguments)
     }
     Ldx::Block block;
     while (reader.nextBlock(block)) {
+        const auto wavFound = wavTracks.find(block.track);
+        if (wavFound != wavTracks.end()) {
+            wavFound->second.writer->write(block.data);
+            continue;
+        }
         const auto found = files.find(block.track);
         if (found == files.end()) continue;
         if (keepLast.contains(block.track)) {
@@ -1401,6 +1499,12 @@ int unpack(const QStringList &arguments)
     }
     for (const auto &kept: current) files[kept.first]->write(kept.second.current());
 
+    for (auto &wavOut: wavTracks) {
+        if (!wavOut.second.writer->close()) {
+            err << "Writing " << wavOut.second.path << " failed\n";
+            return 1;
+        }
+    }
     // The core metadata of a CVBS file, which says how its samples are kept
     for (const auto &cvbs: cvbsTracks) {
         files[cvbs.first]->close();
