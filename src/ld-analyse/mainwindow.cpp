@@ -2903,7 +2903,7 @@ void MainWindow::setupAudio()
 {
     audio = new AudioEngine(this);
     waveform = new WaveformPanel(audio, this);
-    waveform->setMaximumHeight(120);
+    waveform->setMaximumHeight(72);
     waveform->hide();
     ui->verticalLayout->insertWidget(ui->verticalLayout->indexOf(ui->mediaControl_frame), waveform);
 

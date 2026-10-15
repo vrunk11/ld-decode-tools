@@ -1549,6 +1549,10 @@ int verify(const QStringList &arguments)
                     break;
                 }
             }
+            if (indexed > 0 && !blocks.empty()) {
+                err << "    last block: the index says " << reader.blockTimeNs(track.number, indexed - 1) << " ns, the file "
+                    << blocks.back().timeNs << " ns\n";
+            }
             problems++;
             continue;
         }

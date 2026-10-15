@@ -17,6 +17,7 @@
 #include <QRandomGenerator>
 
 #include <algorithm>
+#include <set>
 #include <cstdio>
 #ifdef Q_OS_WIN
 #include <fcntl.h>
@@ -1039,8 +1040,13 @@ struct Reader::Private
                 if (a.timeNs != b.timeNs) return a.timeNs < b.timeNs;
                 if (a.clusterPosition != b.clusterPosition) return a.clusterPosition < b.clusterPosition;     // (blocks of the same time: as written)
                 return a.relativePosition < b.relativePosition; });
-            entry.second.erase(std::unique(entry.second.begin(), entry.second.end(), [](const IndexEntry &a, const IndexEntry &b) {
-                return a.timeNs == b.timeNs && a.clusterPosition == b.clusterPosition && a.relativePosition == b.relativePosition; }), entry.second.end());
+            // (a block is at one place: two cues for it, whatever their times, are one block)
+            std::set<std::pair<quint64, quint64>> seen;
+            std::vector<IndexEntry> unique;
+            for (const IndexEntry &candidate: entry.second) {
+                if (seen.insert({candidate.clusterPosition, candidate.relativePosition}).second) unique.push_back(candidate);
+            }
+            entry.second = std::move(unique);
         }
         return true;
     }
@@ -1392,6 +1398,15 @@ bool Reader::buildIndex(QString &error)
         return false;
     }
     d->indexed = true;
+    // A writer may leave a cue for a block that is not there (the end of the file cut, a cue written before its block): an
+    // entry at the end of a track that cannot be read is no block, and the track has one less
+    for (auto &track: d->index) {
+        while (!track.second.empty()) {
+            Block last;
+            if (readBlock(track.first, static_cast<qint64>(track.second.size()) - 1, last)) break;
+            track.second.pop_back();
+        }
+    }
     return true;
 }
 
