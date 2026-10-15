@@ -37,6 +37,13 @@ void PlaybackController::setSpeed(double newSpeed)
     speed = newSpeed;
 }
 
+void PlaybackController::setExternalClock(std::function<double()> seconds)
+{
+    externalClock = std::move(seconds);
+    // Go on from the position that is shown, by the new clock
+    if (isPlaying()) rebase(shownPosition);
+}
+
 void PlaybackController::setLoop(bool newLoop)
 {
     loop = newLoop;
@@ -69,6 +76,7 @@ void PlaybackController::rebase(qint32 fromPosition)
     shownPosition = fromPosition;
     clock.start();
     baseNs = 0;
+    externalBase = externalClock ? externalClock() : 0.0;
 }
 
 void PlaybackController::play(qint32 fromPosition)
@@ -94,7 +102,7 @@ void PlaybackController::pause()
 
 void PlaybackController::tick()
 {
-    const double elapsedSeconds = static_cast<double>(clock.nsecsElapsed() - baseNs) / 1e9;
+    const double elapsedSeconds = externalClock ? externalClock() - externalBase : static_cast<double>(clock.nsecsElapsed() - baseNs) / 1e9;
     qint64 due = static_cast<qint64>(startPosition) + static_cast<qint64>(std::floor(elapsedSeconds * rate * speed));
 
     if (due > lastPosition) {
@@ -113,6 +121,7 @@ void PlaybackController::tick()
             // Wrap round, keeping the time that went past the end
             rebase(firstPosition);
             due = firstPosition;
+            emit looped();
         } else {
             timer.stop();
             if (shownPosition != lastPosition) {

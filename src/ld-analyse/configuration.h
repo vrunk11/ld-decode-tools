@@ -80,6 +80,10 @@ public:
     void setVideoFilter(const QVariantMap &videoFilter);
     QVariantMap getVideoFilter(void);
 
+    // The settings of the audio (volume, channels, waveform...), kept in their own group of the file
+    QVariant audioValue(const QString &key, const QVariant &defaultValue = QVariant());
+    void setAudioValue(const QString &key, const QVariant &value);
+
 signals:
 
 public slots:

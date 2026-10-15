@@ -105,6 +105,7 @@ jobs:
           target: 'desktop'
           arch: 'win64_msvc2022_64'
           cache: true
+          modules: "qtmultimedia"
 
       - name: Configure and build
         shell: pwsh

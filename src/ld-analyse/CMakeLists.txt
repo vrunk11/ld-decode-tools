@@ -51,6 +51,12 @@ target_link_libraries(ld-analyse PRIVATE
     lddecode-library lddecode-chroma lddecode-gui
 )
 
+if(LDDECODE_AUDIO_AVAILABLE)
+    target_sources(ld-analyse PRIVATE audioengine.cpp waveformpanel.cpp)
+    target_link_libraries(ld-analyse PRIVATE Qt6::Multimedia)
+    target_compile_definitions(ld-analyse PRIVATE LDDECODE_HAVE_AUDIO)
+endif()
+
 if(FFMPEG_FOUND)
     target_link_libraries(ld-analyse PRIVATE PkgConfig::FFMPEG)
     target_compile_definitions(ld-analyse PRIVATE LDDECODE_HAVE_FFMPEG)

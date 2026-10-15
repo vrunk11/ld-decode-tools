@@ -369,3 +369,13 @@ QVariantMap Configuration::getVideoFilter(void)
 {
     return settings.viewOptions.videoFilter;
 }
+
+QVariant Configuration::audioValue(const QString &key, const QVariant &defaultValue)
+{
+    return configuration->value("audio/" + key, defaultValue);
+}
+
+void Configuration::setAudioValue(const QString &key, const QVariant &value)
+{
+    configuration->setValue("audio/" + key, value);
+}

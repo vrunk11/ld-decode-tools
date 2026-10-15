@@ -108,9 +108,20 @@ public:
     // The analogue audio of the capture: the PCM track that is about it (16-bit stereo), by samples (a sample is a pair)
     // wide: the 24-bit audio of a CVBS capture (a pair of samples is 6 bytes), read with getAudioBytes, instead of the 16-bit
     // audio of a TBC capture (4 bytes, read with getAudio)
-    bool openAudio(const QString &name, QString &error, bool wide = false);
+    // audioTrack: the id of a pcm track to open (whatever its source and width), 0 for the analogue audio of the capture
+    bool openAudio(const QString &name, QString &error, bool wide = false, qint32 audioTrack = 0);
+    // The pcm tracks about the capture a name gives: the analogue audio, the audio decoded from EFM, imported audio
+    struct AudioTrack {
+        qint32 id = 0;
+        QString name;
+        QString source;         // "analogue", "efm" or the source the track says ("import")
+        double sampleRate = 0;
+        qint32 bits = 16;
+    };
+    static QVector<AudioTrack> audioTracks(const QString &name);
     qint64 audioSamples() const;
     double audioSampleRate() const;
+    qint32 audioBytesPerSample() const;                  // 4 for 16-bit stereo, 6 for 24-bit
     // Left and right in turn, or less if the audio ends
     QVector<qint16> getAudio(qint64 startSample, qint64 numberOfSamples);
     // The samples as they are in the track, a pair after a pair (4 bytes each for 16 bits, 6 for 24)

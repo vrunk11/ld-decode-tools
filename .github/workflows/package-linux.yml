@@ -79,6 +79,7 @@ jobs:
           target: 'desktop'
           arch: 'linux_gcc_64'
           cache: true
+          modules: "qtmultimedia"
 
       # libebml and libmatroska (the LDX container and ld-container) from the
       # manifest, which must work; then libavfilter for the video filters of
