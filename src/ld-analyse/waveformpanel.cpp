@@ -15,6 +15,7 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QSlider>
+#include <QStandardItemModel>
 #include <QToolButton>
 #include <QVBoxLayout>
 
@@ -22,7 +23,7 @@
 
 WaveformView::WaveformView(AudioEngine *engine, QWidget *parent) : QWidget(parent), engine(engine), colour(QColor(0x2a, 0x82, 0xda))
 {
-    setMinimumHeight(60);
+    setMinimumHeight(48);
     setMouseTracking(false);
     setToolTip(tr("Click to go to a place in the audio"));
 }
@@ -107,41 +108,44 @@ WaveformPanel::WaveformPanel(AudioEngine *engine, QWidget *parent) : QWidget(par
     QHBoxLayout *layout = new QHBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(6);
+    setMaximumHeight(72);
 
     controls = new QWidget(this);
-    controls->setFixedWidth(150);
+    controls->setFixedWidth(170);
     QVBoxLayout *column = new QVBoxLayout(controls);
-    column->setContentsMargins(4, 2, 4, 2);
-    column->setSpacing(4);
+    column->setContentsMargins(0, 0, 0, 0);
+    column->setSpacing(3);
 
     sourceCombo = new QComboBox(controls);
-    sourceCombo->setToolTip(tr("Which audio is played: analogue, decoded from EFM..."));
+    sourceCombo->setToolTip(tr("Which audio is played: analogue or decoded from EFM"));
     trackCombo = new QComboBox(controls);
     trackCombo->setToolTip(tr("Which track of the file"));
     column->addWidget(sourceCombo);
     column->addWidget(trackCombo);
 
-    QHBoxLayout *channels = new QHBoxLayout();
+    // The channels and the volume on one line
+    QHBoxLayout *mixRow = new QHBoxLayout();
+    mixRow->setSpacing(3);
     leftButton = new QToolButton(controls);
     leftButton->setText(tr("L"));
     leftButton->setCheckable(true);
     leftButton->setChecked(true);
+    leftButton->setAutoRaise(true);
     leftButton->setToolTip(tr("Play the left channel"));
     rightButton = new QToolButton(controls);
     rightButton->setText(tr("R"));
     rightButton->setCheckable(true);
     rightButton->setChecked(true);
+    rightButton->setAutoRaise(true);
     rightButton->setToolTip(tr("Play the right channel"));
-    channels->addWidget(leftButton);
-    channels->addWidget(rightButton);
-    channels->addStretch(1);
-    column->addLayout(channels);
-
     volumeSlider = new QSlider(Qt::Horizontal, controls);
     volumeSlider->setRange(0, 100);
     volumeSlider->setValue(70);
     volumeSlider->setToolTip(tr("Volume"));
-    column->addWidget(volumeSlider);
+    mixRow->addWidget(leftButton);
+    mixRow->addWidget(rightButton);
+    mixRow->addWidget(volumeSlider, 1);
+    column->addLayout(mixRow);
     column->addStretch(1);
 
     view = new WaveformView(engine, this);
@@ -164,12 +168,22 @@ void WaveformPanel::setTracks(const QVector<AudioTrackInfo> &tracks, qint32 chos
     filling = true;
     allTracks = tracks;
     sourceCombo->clear();
+    const QList<QPair<QString, QString>> sources { { "analogue", tr("Analogue") }, { "efm", tr("EFM digital") }, { "import", tr("Imported") } };
     QStringList seen;
     for (const AudioTrackInfo &track: tracks) {
         if (seen.contains(track.source)) continue;
         seen.append(track.source);
-        const QString name = track.source == "efm" ? tr("EFM digital") : (track.source == "analogue" ? tr("Analogue") : (track.source == "import" ? tr("Imported") : track.source));
+        QString name = track.source;
+        for (const auto &known: sources) if (known.first == track.source) name = known.second;
         sourceCombo->addItem(name, track.source);
+    }
+    // The sources that are not there are shown, out of reach, so that the way to get them is in sight
+    for (const auto &known: sources) {
+        if (known.first == "import" || seen.contains(known.first)) continue;
+        sourceCombo->addItem(tr("%1 (none)").arg(known.second), known.first);
+        if (auto *model = qobject_cast<QStandardItemModel *>(sourceCombo->model())) {
+            model->item(sourceCombo->count() - 1)->setEnabled(false);
+        }
     }
     // The source of the track that is chosen, and the tracks of that source
     const QString wanted = (chosen >= 0 && chosen < tracks.size()) ? tracks[chosen].source : QString();
@@ -196,7 +210,6 @@ void WaveformPanel::sourceChosen()
     }
     filling = wasFilling;
     // One choice only is not a choice: it is not shown
-    sourceCombo->setVisible(sourceCombo->count() > 1);
     trackCombo->setVisible(trackCombo->count() > 1);
     if (!filling && trackCombo->count() > 0) emit trackSelected(trackCombo->itemData(0).toInt());
 }
