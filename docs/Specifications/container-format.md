@@ -28,7 +28,7 @@ A file is a **Matroska file** (RFC 9559) that follows these conventions, so that
 - **Cues** (the index) are written at the end of a finished file, **one cue point for each block**: its time, its track, the position of its cluster (from the data of the segment) and `CueRelativePosition`, the position of the block in the data of that cluster. A writer of a file that is finished SHOULD write the cues; a stream has none (section 15). A reader MUST open a file that has none (section 16).
 - **A Void element** of 4,096 bytes follows the list of tracks of a file (not of a stream), so that a track can be added without moving the data. It is optional for a reader to use it.
 - **Segment size**: known for a file (written when it is finished), unknown (all ones) for a stream.
-- `MuxingApp` and `WritingApp` are `ld-decode-tools ldx`. A reader MUST NOT depend on them.
+- `MuxingApp` and `WritingApp` SHOULD name the program and library that wrote the file (the reference implementation writes `ld-decode-tools ldx`; another implementation writes its own name, for instance `ld-decode-rust`). They carry no meaning for the format: a reader MUST NOT depend on them or refuse a file for their value.
 
 ## 3. Tracks
 
@@ -215,7 +215,7 @@ The history is a JSON array in the tag `LDX_HISTORY`. Every tool that changes a 
 | member | |
 |---|---|
 | `tool` | name of the program (`ld-dropout-correct`) |
-| `version` | the build (its commit) |
+| `version` | the version of the program, as it names its versions: a release number or a commit (free text; a reader does not interpret it) |
 | `command` | what it did: `pack`, `process`, `metadata`, `recompress`, `add`, `remove`, `stack`... |
 | `time` | UTC, ISO 8601 |
 | `detail` | a sentence for a person (optional) |
