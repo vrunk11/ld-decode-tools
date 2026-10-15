@@ -49,7 +49,7 @@ ld-container pack capture.tbc -o - | ld-process-vbi - | ld-process-vits - | ld-a
 ld-container pack capture.cvbs --codec ffv1 -o - | ld-chroma-decoder - out.rgb
 ```
 
-Each tool in the middle (`ld-process-vbi`, `ld-process-vits`) adds the metadata of every field to the stream as the field goes by, so the next tool does not wait for the end. `ld-disc-stacker`, `ld-dropout-correct` and `ld-discmap` can also end a chain (`... | ld-dropout-correct - - | ld-analyse -`): their output on `-` is a stream with the metadata of each field. `ld-disc-stacker` and `ld-dropout-correct` need the metadata of the whole capture before they begin, and refuse a stream that does not send it. A stream is read once and in order: `ld-container verify` needs a file. See the section on pipes in the specification.
+Each tool in the middle (`ld-process-vbi`, `ld-process-vits`) adds the metadata of every field to the stream as the field goes by, so the next tool does not wait for the end. `ld-disc-stacker`, `ld-dropout-correct` and `ld-discmap` can also end a chain (`... | ld-dropout-correct - - | ld-analyse -`): their output on `-` is a stream with the metadata of each field. `ld-disc-stacker` and `ld-dropout-correct` need the metadata of the whole capture before they begin, and refuse a stream that does not send it. A pipe is read once and in order. A stream saved to a file is a file like any other (the tools make its index when they open it), so `pack … -o - > capture.ldx` and `pack … -o capture.ldx` give files that behave the same. See the section on pipes in the specification.
 
 ## The history
 

@@ -1194,6 +1194,8 @@ int history(const QStringList &arguments)
         err << error << "\n";
         return 1;
     }
+    // (what was added to a file at its end is read with the index)
+    if (!isStdio(parser.positionalArguments().first())) reader.buildIndex(error);
     const QJsonArray entries = reader.history();
     if (parser.isSet("json")) {
         out << QJsonDocument(entries).toJson(QJsonDocument::Indented);

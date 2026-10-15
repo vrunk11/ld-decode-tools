@@ -12,6 +12,7 @@
 #include "ldxcodec.h"
 
 #include <QFile>
+#include <QFileInfo>
 #include <QJsonDocument>
 #include <QRandomGenerator>
 
@@ -574,7 +575,8 @@ bool Writer::openAppend(const QString &fileName, QString &error)
         for (const Reader::BlockRef &ref: reader.blockRefs()) {
             d->cueRecords.push_back({ ref.timeNs, ref.track, ref.clusterPosition, ref.relativePosition });
         }
-        const quint64 cuesAt = reader.cuesPosition();
+        // A file with no cues (a stream that was saved as it came) is added to where its data end: there is nothing to overwrite
+        const quint64 cuesAt = reader.cuesPosition() != 0 ? reader.cuesPosition() : static_cast<quint64>(QFileInfo(fileName).size());
         const quint64 segmentAt = reader.segmentPosition();
         if (cuesAt == 0 || segmentAt == 0) {
             error = QObject::tr("%1 has no cues to add after").arg(fileName);
@@ -733,6 +735,7 @@ struct Reader::Private
     std::unique_ptr<IOCallback> input;
     bool streaming = false;                    // read from a pipe: in order, with no index
     QByteArray prefix;                         // the first bytes of a stream, taken by the caller to see what it is
+    quint64 fileSize = 0;                      // of a file (where the data of the segment end, when its size is not known)
     std::unique_ptr<EbmlStream> stream;
     EbmlElement *segmentElement = nullptr;
     int upperLevel = 0;
@@ -1026,8 +1029,9 @@ struct Reader::Private
             }
         }
         if (!found) {
-            error = QObject::tr("The file has no cues, which are its index");
-            return false;
+            // No cues: a stream that was saved as it came (it has no index, as a pipe cannot write one). The index is made by
+            // reading the file once, from the headers of its clusters and blocks, and the file is then read as any other.
+            if (!scanIndex(error)) return false;
         }
         // In the order of time, one entry for each block (several blocks of a track may have the same time)
         for (auto &entry: index) {
@@ -1037,6 +1041,95 @@ struct Reader::Private
                 return a.relativePosition < b.relativePosition; });
             entry.second.erase(std::unique(entry.second.begin(), entry.second.end(), [](const IndexEntry &a, const IndexEntry &b) {
                 return a.timeNs == b.timeNs && a.clusterPosition == b.clusterPosition && a.relativePosition == b.relativePosition; }), entry.second.end());
+        }
+        return true;
+    }
+
+    // The index of a file that has no cues: where each block is, from the headers of the clusters and of their block groups
+    // (the data of the blocks are not read). A cluster whose size is not known ends where the next one begins.
+    bool scanIndex(QString &error)
+    {
+        constexpr quint32 ClusterId = 0x1F43B675, TimestampId = 0xE7, BlockGroupId = 0xA0, BlockId = 0xA1;
+        struct Head { quint32 id = 0; quint64 size = 0; bool unknown = false; int length = 0; };
+        const auto readAt = [this](quint64 position, unsigned char *buffer, size_t size) {
+            input->setFilePointer(static_cast<int64>(position));
+            return input->read(buffer, size);
+        };
+        const auto readValue = [](const unsigned char *bytes, int length, bool marker) {
+            quint64 value = marker ? (bytes[0] & (0xFF >> length)) : bytes[0];
+            for (int i = 1; i < length; i++) value = (value << 8) | bytes[i];
+            return value;
+        };
+        const auto head = [&](quint64 position, Head &element) {
+            unsigned char bytes[16] = {};
+            const size_t got = readAt(position, bytes, sizeof(bytes));
+            if (got < 2) return false;
+            const int idLength = vintLength(bytes[0], 4);
+            if (idLength == 0 || static_cast<size_t>(idLength) >= got) return false;
+            const int sizeLength = vintLength(bytes[idLength], 8);
+            if (sizeLength == 0 || static_cast<size_t>(idLength + sizeLength) > got) return false;
+            element.id = static_cast<quint32>(readValue(bytes, idLength, false));
+            element.size = readValue(bytes + idLength, sizeLength, true);
+            element.unknown = element.size == ((static_cast<quint64>(1) << (7 * sizeLength)) - 1);
+            element.length = idLength + sizeLength;
+            return true;
+        };
+
+        const quint64 dataStart = segmentElement->GetElementPosition() + segmentElement->HeadSize();
+        const quint64 end = fileSize;
+        if (end <= dataStart) {
+            error = QObject::tr("The file has no data");
+            return false;
+        }
+        quint64 position = dataStart;
+        while (position < end) {
+            Head cluster;
+            if (!head(position, cluster)) break;
+            quint64 next = cluster.unknown ? end : position + cluster.length + cluster.size;
+            if (cluster.id == ClusterId) {
+                const quint64 clusterData = position + cluster.length;
+                const quint64 clusterEnd = cluster.unknown ? end : next;
+                qint64 clusterTime = 0;
+                quint64 child = clusterData;
+                while (child < clusterEnd) {
+                    Head element;
+                    if (!head(child, element)) break;
+                    if (cluster.unknown && element.id == ClusterId) break;
+                    const quint64 childNext = child + element.length + element.size;
+                    if (element.id == TimestampId && element.size >= 1 && element.size <= 8) {
+                        unsigned char bytes[8] = {};
+                        readAt(child + element.length, bytes, static_cast<size_t>(element.size));
+                        clusterTime = static_cast<qint64>(readValue(bytes, static_cast<int>(element.size), false));
+                    } else if (element.id == BlockGroupId) {
+                        // The Block (the first child of the group): a track number, 2 bytes of time from the cluster, flags
+                        quint64 inGroup = child + element.length;
+                        while (inGroup < childNext) {
+                            Head inside;
+                            if (!head(inGroup, inside)) break;
+                            if (inside.id == BlockId) {
+                                unsigned char blockHead[16] = {};
+                                if (readAt(inGroup + inside.length, blockHead, sizeof(blockHead)) < 4) break;
+                                const int trackLength = vintLength(blockHead[0], 8);
+                                if (trackLength == 0) break;
+                                const quint32 trackNumber = static_cast<quint32>(readValue(blockHead, trackLength, true));
+                                const qint16 relative = static_cast<qint16>((blockHead[trackLength] << 8) | blockHead[trackLength + 1]);
+                                index[trackNumber].push_back({ (clusterTime + relative) * static_cast<qint64>(timecodeScale),
+                                                               position - dataStart, child - clusterData });
+                                break;
+                            }
+                            inGroup += inside.length + inside.size;
+                        }
+                    }
+                    child = childNext;
+                }
+                if (cluster.unknown) next = child;
+            }
+            if (next <= position) break;
+            position = next;
+        }
+        if (index.empty()) {
+            error = QObject::tr("The file has no cues and no blocks to make an index of");
+            return false;
         }
         return true;
     }
@@ -1186,6 +1279,7 @@ bool Reader::begin(const QString &fileName, QString &error, FILE *stream)
             d->streaming = true;
         } else {
             d->input.reset(new StdIOCallback(fileName.toLocal8Bit().constData(), MODE_READ));
+            d->fileSize = static_cast<quint64>(QFileInfo(fileName).size());
         }
         d->stream.reset(new EbmlStream(*d->input));
 

@@ -42,6 +42,10 @@ Tracks 1 and 3 have `"codec": "flac"` (`A_FLAC`, laced blocks, the top bit of th
 
 The metadata track has **5 blocks**: the parameters alone (no fields, `numberOfSequentialFields` 0) and then one block for each of the 4 fields, each stamped with the time of its field and **before** the video block of that field. The current metadata (section 8.3) is **the same as for `tbc-raw.ldx`**: `a3976cbf...412b5`. The file is a finished one (with cues); a stream written to a pipe has the same blocks and no cues.
 
+### `tbc-nocues.ldx`: a stream saved as it came
+
+The same blocks as `tbc-stream.ldx`, written as a producer writes them to a pipe and saved to a file: **no cues**, and a segment whose size is not known. A reader opens it as a file (section 16), makes the index by reading it, and returns the same bytes for every track as `tbc-stream.ldx` (the sums above, and `a3976cbf...412b5` for the metadata).
+
 ### `tbc-yc.ldx`: a Y/C capture
 
 Tracks: `1 tbc` (luma, = `tiny.tbc`), `2 metadata` (about track 1), `3 tbc` with `"role": "chroma"` and `"track": 1` (= `tiny_chroma.tbc`, `251d7b04...f917`). The captures of the file are the track 1 alone.
