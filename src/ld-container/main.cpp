@@ -1540,6 +1540,15 @@ int verify(const QStringList &arguments)
         const std::vector<Seen> &blocks = seen[track.number];
         if (reader.blockCount(track.number) != static_cast<qint64>(blocks.size())) {
             err << "  track " << track.number << ": " << blocks.size() << " blocks in the file, " << reader.blockCount(track.number) << " in the index\n";
+            // Where they part: the first times that are not the same
+            const qint64 indexed = reader.blockCount(track.number);
+            for (qint64 i = 0; i < indexed && i < static_cast<qint64>(blocks.size()); i++) {
+                if (reader.blockTimeNs(track.number, i) != blocks[static_cast<size_t>(i)].timeNs) {
+                    err << "    first difference at block " << i << ": the index says " << reader.blockTimeNs(track.number, i)
+                        << " ns, the file " << blocks[static_cast<size_t>(i)].timeNs << " ns\n";
+                    break;
+                }
+            }
             problems++;
             continue;
         }
