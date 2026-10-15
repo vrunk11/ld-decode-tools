@@ -4,6 +4,7 @@ add_library(lddecode-library STATIC
     tbc/biphasecode.cpp
     tbc/closedcaption.cpp
     tbc/dropouts.cpp
+    tbc/efmchain.cpp
     tbc/filters.cpp
     tbc/fieldvbi.cpp
     tbc/fmcode.cpp

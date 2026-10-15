@@ -31,6 +31,9 @@
 
 #include "tbc/logging.h"
 #include "efm_processor.h"
+#include "efmchain.h"
+#include "ldxcapture.h"
+#include <QTemporaryDir>
 
 int main(int argc, char *argv[])
 {
@@ -87,6 +90,10 @@ int main(int argc, char *argv[])
                                  QCoreApplication::translate("main", "Specify output Data24 Section file (use '-' for stdout, optional if using stdout)"));
 
     // Process the command line options and arguments given by the user
+    QCommandLineOption chainNoTimecodesOption(
+            "no-timecodes",
+            QCoreApplication::translate("main", "For an LDX file as the input: decode its EFM without timecodes (EFM that is not ECMA-130 compliant, the usual one of a LaserDisc)"));
+    parser.addOption(chainNoTimecodesOption);
     parser.process(app);
 
     // Standard logging options
@@ -145,6 +152,18 @@ int main(int argc, char *argv[])
     } else {
         qWarning() << "Too many arguments. Expected: [input] [output] (use '-' for stdin/stdout)";
         return 1;
+    }
+
+    // An LDX file as the input: the stages of the EFM decoder before this one are run on its EFM, with the tools beside this
+    // program, and this stage goes on from the file the last of them made
+    QTemporaryDir stagesDirectory;
+    if (LdxCapture::isLdxName(inputFilename)) {
+        QString stagesFile, stagesError;
+        if (!EfmChain::decode(inputFilename, EfmChain::Stage::F2Sections, parser.isSet(chainNoTimecodesOption), stagesDirectory, stagesFile, stagesError)) {
+            qCritical().noquote() << stagesError;
+            return 1;
+        }
+        inputFilename = stagesFile;
     }
 
     // Perform the processing
