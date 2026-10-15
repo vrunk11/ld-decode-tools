@@ -9,6 +9,7 @@
  ******************************************************************************/
 
 #include <QCoreApplication>
+#include <QCryptographicHash>
 #include <QFileInfo>
 #include <QJsonObject>
 #include <QTemporaryDir>
@@ -725,6 +726,71 @@ static void testSameTime(const QString &path)
     }
 }
 
+#ifdef LDX_EXAMPLES_DIR
+// The examples of the specification (docs/Specifications/examples): what a reader returns for each track, by SHA-256
+static QString sumOfTrack(Ldx::Reader &reader, quint32 track)
+{
+    QCryptographicHash hash(QCryptographicHash::Sha256);
+    const qint64 blocks = reader.blockCount(track);
+    for (qint64 i = 0; i < blocks; i++) {
+        Ldx::Block block;
+        CHECK(reader.readBlock(track, i, block));
+        hash.addData(block.data);
+    }
+    return QString::fromLatin1(hash.result().toHex());
+}
+
+static void testExamples()
+{
+    std::cerr << "Testing the examples of the specification\n";
+    const QString directory = QStringLiteral(LDX_EXAMPLES_DIR);
+    const QString tbc = "191919f892445d7aea0c5598f6b998cbb3a611cd5af0f4feb2c383800cf29d8f";
+    const QString pcm = "2e1345f1fc63dacca0c177ceaba46d651c41ce3368809f62324010c69d178464";
+    struct Expected { const char *file; quint32 track; const char *sum; };
+    const Expected expected[] = {
+        { "tbc-raw.ldx", 1, "191919f892445d7aea0c5598f6b998cbb3a611cd5af0f4feb2c383800cf29d8f" },
+        { "tbc-raw.ldx", 3, "2e1345f1fc63dacca0c177ceaba46d651c41ce3368809f62324010c69d178464" },
+        { "tbc-raw.ldx", 4, "95f267b5cfda93763d87c0121cefc7dcdee75ce2d51aaf65e4386fe61eededa4" },
+        { "tbc-flac.ldx", 1, "191919f892445d7aea0c5598f6b998cbb3a611cd5af0f4feb2c383800cf29d8f" },
+        { "tbc-flac.ldx", 3, "2e1345f1fc63dacca0c177ceaba46d651c41ce3368809f62324010c69d178464" },
+        { "tbc-stream.ldx", 1, "191919f892445d7aea0c5598f6b998cbb3a611cd5af0f4feb2c383800cf29d8f" },
+        { "tbc-yc.ldx", 3, "251d7b04048c25f51eb7780e2222c8b4ac17ffdde6cd35ebe3cf2e52b978f917" },
+    };
+    Q_UNUSED(tbc);
+    Q_UNUSED(pcm);
+    for (const Expected &entry: expected) {
+        const QString file = directory + "/" + entry.file;
+        if (QString(entry.file).contains("flac") && !Ldx::flacAvailable()) continue;
+        Ldx::Reader reader;
+        QString error;
+        CHECK(reader.open(file, error));
+        CHECK(reader.profile() == 1);
+        CHECK(reader.buildIndex(error));
+        if (sumOfTrack(reader, entry.track) != entry.sum) {
+            std::cerr << "  " << entry.file << " track " << entry.track << ": not the bytes the specification says\n";
+            std::exit(1);
+        }
+    }
+    // The metadata of the stream has the parameters and then a block for each field, before the video of its field
+    Ldx::Reader reader;
+    QString error;
+    CHECK(reader.open(directory + "/tbc-stream.ldx", error));
+    CHECK(reader.buildIndex(error));
+    CHECK(reader.blockCount(2) == 5);
+    // The FFV1 example: two frames of 477,750 words
+    if (Ldx::ffv1Available()) {
+        Ldx::Reader cvbs;
+        CHECK(cvbs.open(directory + "/cvbs-ffv1.ldx", error));
+        CHECK(cvbs.buildIndex(error));
+        CHECK(cvbs.blockCount(1) == 2);
+        Ldx::Block frame;
+        CHECK(cvbs.readBlock(1, 0, frame));
+        CHECK(frame.data.size() == 477750 * 2);
+        CHECK(sumOfTrack(cvbs, 3) == "c422f4b9314a316b74193e02dee667e24c548ebe906d48bb3cdd25849f0d6f31" || cvbs.blockCount(3) == 1);
+    }
+}
+#endif
+
 int main(int argc, char *argv[])
 {
     QCoreApplication application(argc, argv);
@@ -743,6 +809,9 @@ int main(int argc, char *argv[])
     testStream(directory.filePath("stream.ldx"));
     testSameTime(directory.filePath("sametime.ldx"));
     testNotAnLdxFile(directory.filePath("garbage.ldx"));
+#ifdef LDX_EXAMPLES_DIR
+    testExamples();
+#endif
 
     std::cerr << "All tests passed\n";
     return 0;
