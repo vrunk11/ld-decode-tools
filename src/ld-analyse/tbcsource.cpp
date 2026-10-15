@@ -1414,10 +1414,10 @@ bool TbcSource::startBackgroundLoad(QString sourceFilename)
         // view -- unless the chroma file has metadata of its own
         const QString lumaFilename = isCvbs ? Cvbs::pairedDataFileName(sourceFilename)
                                             : TbcFiles::lumaFileName(sourceFilename);
-        const bool hasOwnMetadata = !isCvbs && !TbcFiles::isOrcYcFile(sourceFilename)
+        const bool hasOwnMetadata = !isCvbs && !LdxCapture::isLdxName(sourceFilename) && !TbcFiles::isOrcYcFile(sourceFilename)
                                     && (QFileInfo::exists(LdDecodeMetaData::metadataFileName(sourceFilename, LdDecodeMetaData::MetadataFormat::Sqlite))
                                         || QFileInfo::exists(LdDecodeMetaData::metadataFileName(sourceFilename, LdDecodeMetaData::MetadataFormat::Json)));
-        if (!hasOwnMetadata && QFileInfo::exists(lumaFilename)) sourceFilename = lumaFilename;
+        if (!hasOwnMetadata && (QFileInfo::exists(lumaFilename) || LdxCapture::isLdxName(lumaFilename))) sourceFilename = lumaFilename;
     }
 
     // SQLite (.tbc.db), or JSON (.tbc.json) when that is all there is. For decode-orc's
@@ -1457,7 +1457,7 @@ bool TbcSource::startBackgroundLoad(QString sourceFilename)
     QString chromaSourceFilename = isCvbs ? Cvbs::pairedDataFileName(sourceFilename)
                                           : TbcFiles::chromaFileName(sourceFilename);
     if (chromaSourceFilename == sourceFilename) chromaSourceFilename.clear();
-    if (!chromaSourceFilename.isEmpty() && QFileInfo::exists(chromaSourceFilename)) {
+    if (!chromaSourceFilename.isEmpty() && (QFileInfo::exists(chromaSourceFilename) || LdxCapture::isLdxName(chromaSourceFilename))) {
         // Yes! Open it.
         tbcDebugStream() << "TbcSource::startBackgroundLoad(): Loading chroma TBC file...";
         emit busy("Loading chroma file...");

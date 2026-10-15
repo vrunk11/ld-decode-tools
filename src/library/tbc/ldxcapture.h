@@ -65,6 +65,13 @@ public:
     // The name of a track of a file
     static QString trackName(const QString &path, qint32 track);
 
+    // A Y/C capture is two tracks of a file: the luma (or composite) track, and a chroma track, a `tbc` track whose parameters
+    // say "role": "chroma" and "track": the id of the luma. These give the name of one from the other (empty if there is
+    // none), and whether a name is a chroma track.
+    static bool isChromaTrack(const QString &name);
+    static QString lumaOfChroma(const QString &name);
+    static QString chromaOfLuma(const QString &name);
+
     // Whether the capture a name gives is CVBS (a cvbs track) and not a TBC
     static bool isCvbs(const QString &name);
 

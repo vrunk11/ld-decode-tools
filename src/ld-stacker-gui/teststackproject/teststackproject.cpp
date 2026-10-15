@@ -16,6 +16,7 @@
 #include <cstdlib>
 
 #include "ldxcapture.h"
+#include "tbcfiles.h"
 #include "stackproject.h"
 #ifdef LDDECODE_WITH_LDX
 #include "ldx.h"
@@ -192,6 +193,33 @@ int main(int argc, char *argv[])
         CHECK(plain.finish(error));
         CHECK(!StackProject::isSession(plainFile));
         CHECK(!kept.load(plainFile, error));
+    }
+
+    // A Y/C capture in an LDX file: the chroma track is about the luma one, and each is found from the other
+    {
+        Ldx::Writer writer;
+        Ldx::Track luma, chroma;
+        luma.kind = Ldx::Kind::Tbc;
+        chroma.kind = Ldx::Kind::Tbc;
+        writer.addTrack(luma);
+        chroma.parameters["role"] = "chroma";
+        chroma.parameters["track"] = static_cast<int>(luma.number);
+        writer.addTrack(chroma);
+        const QString ycFile = base.absoluteFilePath("yc.ldx");
+        CHECK(writer.open(ycFile, error));
+        CHECK(writer.writeBlock(1, 0, QByteArray(10, 'x')));
+        CHECK(writer.writeBlock(2, 0, QByteArray(10, 'y')));
+        CHECK(writer.finish(error));
+
+        CHECK(LdxCapture::chromaOfLuma(ycFile) == ycFile + "#2");
+        CHECK(LdxCapture::chromaOfLuma(ycFile + "#1") == ycFile + "#2");
+        CHECK(LdxCapture::isChromaTrack(ycFile + "#2") && !LdxCapture::isChromaTrack(ycFile + "#1") && !LdxCapture::isChromaTrack(ycFile));
+        CHECK(LdxCapture::lumaOfChroma(ycFile + "#2") == ycFile + "#1");
+        CHECK(TbcFiles::chromaFileName(ycFile) == ycFile + "#2" && TbcFiles::lumaFileName(ycFile + "#2") == ycFile + "#1");
+        QVector<qint32> tracks;
+        QStringList names;
+        CHECK(LdxCapture::listCaptures(ycFile, tracks, names, error));
+        CHECK(tracks.size() == 1 && tracks[0] == 1);      // (the chroma goes with its luma)
     }
 #endif
 
