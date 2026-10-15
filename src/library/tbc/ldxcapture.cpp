@@ -437,7 +437,9 @@ quint32 LdxCapture::metadataTrackNumber() const
 void LdxMetadataMerger::add(const QByteArray &data)
 {
     if (data.contains("videoParameters")) {
+        // A whole set of metadata (or the parameters alone) supersedes what came before it, the fields sent one by one too
         base = data;
+        fieldJson.clear();
         return;
     }
     LdDecodeMetaData::Field field;

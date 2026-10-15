@@ -223,6 +223,24 @@ int main(int argc, char *argv[])
     }
 #endif
 
+    // The current metadata of a capture from the blocks of its track: a set, then fields replace, then a new set starts again
+    {
+        const QByteArray whole = "{\"videoParameters\":{\"numberOfSequentialFields\":2,\"system\":\"NTSC\"},\"fields\":[{\"seqNo\":1,\"syncConf\":10},{\"seqNo\":2,\"syncConf\":20}]}";
+        LdxMetadataMerger merger;
+        merger.add(whole);
+        merger.add("{\"seqNo\":2,\"syncConf\":99}");
+        merger.add("{\"seqNo\":3,\"syncConf\":30}");
+        const QJsonObject now = QJsonDocument::fromJson(merger.current()).object();
+        const QJsonArray fields = now.value("fields").toArray();
+        CHECK(fields.size() == 3);
+        CHECK(fields[0].toObject().value("syncConf").toInt() == 10 && fields[1].toObject().value("syncConf").toInt() == 99 && fields[2].toObject().value("syncConf").toInt() == 30);
+        CHECK(now.value("videoParameters").toObject().value("numberOfSequentialFields").toInt() == 3);
+        merger.add("{\"videoParameters\":{\"numberOfSequentialFields\":0,\"system\":\"NTSC\"}}");
+        merger.add("{\"seqNo\":1,\"syncConf\":5}");
+        const QJsonObject again = QJsonDocument::fromJson(merger.current()).object();
+        CHECK(again.value("fields").toArray().size() == 1 && again.value("fields").toArray()[0].toObject().value("syncConf").toInt() == 5);
+    }
+
     std::fprintf(stderr, "teststackproject: all tests passed\n");
     return 0;
 }

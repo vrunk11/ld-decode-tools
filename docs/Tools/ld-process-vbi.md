@@ -51,4 +51,4 @@ The input can be an LDX file (`capture.ldx`, or `capture.ldx#3` for one of its t
 ld-container pack capture.tbc -o - | ld-process-vbi - | ld-process-vits - | ld-analyse -
 ```
 
-A stream without metadata gets the defaults of its video system. The history of the stream records the tool. See the specification of the container format (section 19).
+A stream without metadata gets the defaults of its video system. The history of the stream records the tool. See the specification of the container format (section 15).

@@ -26,7 +26,7 @@ ld-container unpack file.ldx -o directory
 - `extract` writes the data of one track as it is, to a file or, without `-o`, to the standard output, to be piped (`ld-container extract capture.ldx --id 4 | ld-process-efm ...`). For a metadata track it writes the current block, the last one.
 - `verify` reads every block of the file in the order it was written and by its place in its track (the way the tools read a capture), and says if the two disagree.
 - `unpack` writes one file per track (`name.<id>.tbc`, `name.<id>.pcm`, the metadata as `name.<id>.tbc.json`) and the attachments (`session.stack`).
-- `pack --live-metadata` sends the metadata as a producer fed by a pipe does: the parameters of the video first, then the metadata of each field in a block of its own, just before its video (specification, section 19). The tools that read a stream take the fields from them as they come; it is how the chain `ld-decode | tool | tool | ld-analyse -` can add metadata along the way.
+- `pack --live-metadata` sends the metadata as a producer fed by a pipe does: the parameters of the video first, then the metadata of each field in a block of its own, just before its video (specification, section 15). The tools that read a stream take the fields from them as they come; it is how the chain `ld-decode | tool | tool | ld-analyse -` can add metadata along the way.
 - `pack --efm` and `--ac3` add the EFM and AC3 files as tracks (cut in chunks, stamped over the time of the video, put end to end they are the file).
 
 An LDX file is a Matroska file: `ffprobe` lists its tracks, and `ffmpeg -i file.ldx -map 0:0 -f s16le out.bin` writes the samples of the first track as raw 16-bit data, identical to the fields that were packed.
@@ -55,9 +55,9 @@ ld-container pack capture.tbc --pcm capture.pcm -o - | ld-container recompress -
 ld-container pack capture.cvbs --codec ffv1 -o - | ld-chroma-decoder - out.rgb
 ```
 
-A stream has no index, so `verify` needs a file, and an LDX stream is read in order. The messages go to the standard error when the standard output carries the data. See the specification (section 19).
+A stream has no index, so `verify` needs a file, and an LDX stream is read in order. The messages go to the standard error when the standard output carries the data. See the specification (section 15).
 
-`ld-container history file.ldx` shows the history of a file: for each entry the time, the tool and its build, what it did, and the arguments it was given (`--json` for another program). Every tool that changes a capture adds an entry (specification, section 20).
+`ld-container history file.ldx` shows the history of a file: for each entry the time, the tool and its build, what it did, and the arguments it was given (`--json` for another program). Every tool that changes a capture adds an entry (specification, section 12).
 
 A CVBS capture packed with `ld-container pack capture.cvbs` takes its audio `capture_audio_0.wav` with it, as a 24-bit `pcm` track (raw), and `unpack` writes the WAV back as it was.
 
