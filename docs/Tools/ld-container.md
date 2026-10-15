@@ -33,7 +33,7 @@ An LDX file is a Matroska file: `ffprobe` lists its tracks, and `ffmpeg -i file.
 
 ## Limits of this version
 
-- FLAC (the TBC and the audio) and FFV1 (CVBS) are written and read; the Y/C pairs and the audio of CVBS captures are not tracks yet.
+- FLAC (the TBC and the audio) and FFV1 (CVBS) are written and read; the Y/C pairs (TBC and CVBS) and the audio of CVBS captures are tracks.
 - The time stamps have a resolution of one microsecond.
 - `add`, `remove` and `stack` write the file again, to another file.
 - ld-analyse, ld-chroma-decoder, ld-disc-stacker, ld-dropout-correct, ld-discmap, ld-export-metadata, ld-tbc-to-cvbs and ld-stacker-gui open an LDX file, or a track of it (`file.ldx#3`), and the session it keeps; ld-process-vbi and ld-process-vits save their metadata into it, as a block added at the end. The audio is not read by the graphical programs yet, a `cvbs` track, the pipe is still to come, and the EFM tools read the track through `extract`.
@@ -61,7 +61,7 @@ A stream has no index: what reads a pipe reads it once, in order. A stream that 
 
 A CVBS capture packed with `ld-container pack capture.cvbs` takes its audio `capture_audio_0.wav` with it, as a 24-bit `pcm` track (raw), and `unpack` writes the WAV back as it was.
 
-A Y/C capture packs with its chroma: `ld-container pack capture.tbc` (or `capture.tbcy`) takes `capture_chroma.tbc` (or `capture.tbcc`) beside it as a second `tbc` track with `"role": "chroma"`, about the luma track. `unpack` writes it as `<name>.<id>.chroma.tbc`, and `ld-analyse` shows the pair as it shows a Y/C pair of files. A chroma file given alone is refused: pack the luma file. A CVBS Y/C pair is not packed.
+A Y/C capture packs with its chroma: `ld-container pack capture.tbc` (or `capture.tbcy`) takes `capture_chroma.tbc` (or `capture.tbcc`) beside it as a second `tbc` track with `"role": "chroma"`, about the luma track. `unpack` writes it as `<name>.<id>.chroma.tbc`, and `ld-analyse` shows the pair as it shows a Y/C pair of files. A chroma file given alone is refused: pack the luma file. A CVBS Y/C pair works the same: `ld-container pack capture.cvbsy` takes `capture.cvbsc` with it as a second `cvbs` track, and `unpack` writes `capture.<id>.cvbsy` and `.cvbsc` with their `.meta`.
 
 ## Audio
 

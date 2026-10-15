@@ -59,7 +59,7 @@ Parameters are in the description of the track (section 4). A writer MUST give t
 | `tbc`, `cvbs` | `system` (required) | `"PAL"`, `"NTSC"` or `"PAL-M"` |
 | | `sampleRate` | sample rate of the video, in Hz (4 times the subcarrier for the standard captures) |
 | | `fieldWidth`, `fieldHeight` (required for `tbc`) | samples of a line, and lines of a field, as in the metadata |
-| `tbc` | `role` | `"chroma"` for the chroma file of a Y/C capture (section 7.3) |
+| `tbc`, `cvbs` | `role` | `"chroma"` for the chroma file of a Y/C capture (section 7.3) |
 | | `track` | for a chroma track: the id of the luma track |
 | `cvbs` | `lineWidth` (required) | samples of a line of the frame |
 | | `frameSamples` (required) | samples of a frame: 477,750 (NTSC), 709,379 (PAL), 477,225 (PAL-M) |
@@ -159,7 +159,7 @@ See section 14.
 
 ### 7.3 Y/C captures
 
-A Y/C capture (a luma file and a chroma file: `name.tbc` + `name_chroma.tbc`, or `name.tbcy` + `name.tbcc`) is **two `tbc` tracks**: the luma, as for any capture, and a **chroma track** with `"role": "chroma"` and `"track": <id of the luma track>` in its parameters. The chroma has no metadata track: the metadata of the luma are those of the pair. The chroma track has as many units as the luma and the same time for each. A reader that does not know the role reads it as another capture; the tools list only the tracks that are not chroma as the captures of a file. A CVBS Y/C pair (`.cvbsy`, `.cvbsc`) is not carried in version 1.
+A Y/C capture (a luma file and a chroma file: `name.tbc` + `name_chroma.tbc`, or `name.tbcy` + `name.tbcc`) is **two `tbc` tracks**: the luma, as for any capture, and a **chroma track** with `"role": "chroma"` and `"track": <id of the luma track>` in its parameters. The chroma has no metadata track: the metadata of the luma are those of the pair. The chroma track has as many units as the luma and the same time for each. A reader that does not know the role reads it as another capture; the tools list only the tracks that are not chroma as the captures of a file. A CVBS Y/C pair (`name.cvbsy` and `name.cvbsc` of decode-orc, which share `name.meta`, the dropouts and the companion metadata) is the same with `cvbs` tracks: the luma `cvbs` track, and a chroma `cvbs` track with `"role": "chroma"` and `"track": <the id of the luma track>`, each with the parameters and the codec of section 3.1 and 6. `unpack` names them `<name>.<id of the luma>.cvbsy` and `.cvbsc`.
 
 ## 8. Metadata
 

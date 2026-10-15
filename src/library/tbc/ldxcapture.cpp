@@ -255,7 +255,7 @@ bool tracksOf(const QString &name, QString &path, qint32 &asked, QVector<Ldx::Tr
 
 bool isChroma(const Ldx::Track &track)
 {
-    return track.kind == Ldx::Kind::Tbc && track.parameters.value("role").toString() == "chroma";
+    return (track.kind == Ldx::Kind::Tbc || track.kind == Ldx::Kind::Cvbs) && track.parameters.value("role").toString() == "chroma";
 }
 #endif
 
@@ -302,7 +302,7 @@ QString LdxCapture::chromaOfLuma(const QString &name)
     quint32 luma = static_cast<quint32>(asked);
     if (luma == 0) {
         for (const Ldx::Track &track: tracks) {
-            if (track.kind == Ldx::Kind::Tbc && !isChroma(track)) { luma = track.number; break; }
+            if ((track.kind == Ldx::Kind::Tbc || track.kind == Ldx::Kind::Cvbs) && !isChroma(track)) { luma = track.number; break; }
         }
     }
     for (const Ldx::Track &track: tracks) {

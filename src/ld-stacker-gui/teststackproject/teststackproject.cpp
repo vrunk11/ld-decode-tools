@@ -221,6 +221,29 @@ int main(int argc, char *argv[])
         CHECK(LdxCapture::listCaptures(ycFile, tracks, names, error));
         CHECK(tracks.size() == 1 && tracks[0] == 1);      // (the chroma goes with its luma)
     }
+
+    // The same for a CVBS Y/C pair (two cvbs tracks)
+    {
+        Ldx::Writer writer;
+        Ldx::Track luma, chroma;
+        luma.kind = Ldx::Kind::Cvbs;
+        chroma.kind = Ldx::Kind::Cvbs;
+        writer.addTrack(luma);
+        chroma.parameters["role"] = "chroma";
+        chroma.parameters["track"] = static_cast<int>(luma.number);
+        writer.addTrack(chroma);
+        const QString ycFile = base.absoluteFilePath("cvbsyc.ldx");
+        CHECK(writer.open(ycFile, error));
+        CHECK(writer.writeBlock(1, 0, QByteArray(10, 'x')));
+        CHECK(writer.writeBlock(2, 0, QByteArray(10, 'y')));
+        CHECK(writer.finish(error));
+        CHECK(LdxCapture::chromaOfLuma(ycFile) == ycFile + "#2" && LdxCapture::isChromaTrack(ycFile + "#2"));
+        CHECK(LdxCapture::lumaOfChroma(ycFile + "#2") == ycFile + "#1");
+        QVector<qint32> tracks;
+        QStringList names;
+        CHECK(LdxCapture::listCaptures(ycFile, tracks, names, error));
+        CHECK(tracks.size() == 1 && tracks[0] == 1);
+    }
 #endif
 
     // The current metadata of a capture from the blocks of its track: a set, then fields replace, then a new set starts again
