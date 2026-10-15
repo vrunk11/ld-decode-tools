@@ -155,7 +155,8 @@ int main(int argc, char *argv[])
         // An LDX stream says by itself what it holds (the video system, TBC or CVBS): it is what a pipe is when no format is asked
         // for and no video system is said. Its video is shown as the video of any pipe is, as it arrives.
         const bool formatGiven = parser.isSet(inputFormatOption);
-        const bool ldxInput = (formatGiven && parser.value(inputFormatOption).toLower() == "ldx") || (!formatGiven && !parser.isSet(systemOption));
+        // (with no format said, the way the input begins tells an LDX stream from raw video, whatever --system says)
+        const bool ldxInput = formatGiven ? parser.value(inputFormatOption).toLower() == "ldx" : LdxStream::stdinIsLdx();
         if (ldxInput) {
             QString streamError;
             if (!LdxStream::openStdin(streamError)) {
