@@ -148,7 +148,7 @@ private:
 class StreamInput : public IOCallback
 {
 public:
-    explicit StreamInput(FILE *file) : file(file) {}
+    explicit StreamInput(FILE *file, const QByteArray &alreadyRead = QByteArray()) : file(file), window(alreadyRead) {}
     uint32 read(void *buffer, size_t size) override
     {
         char *out = static_cast<char *>(buffer);
@@ -204,7 +204,7 @@ private:
     static constexpr int MaxWindow = 64 << 20;
     static constexpr int KeepBehind = 16 << 20;
     FILE *file;
-    QByteArray window;
+    QByteArray window;                  // (what was read already is the beginning of it)
     uint64 windowStart = 0;
     uint64 position = 0;
 };
@@ -732,6 +732,7 @@ struct Reader::Private
 {
     std::unique_ptr<IOCallback> input;
     bool streaming = false;                    // read from a pipe: in order, with no index
+    QByteArray prefix;                         // the first bytes of a stream, taken by the caller to see what it is
     std::unique_ptr<EbmlStream> stream;
     EbmlElement *segmentElement = nullptr;
     int upperLevel = 0;
@@ -1170,8 +1171,9 @@ bool Reader::open(const QString &fileName, QString &error)
     return begin(fileName, error, nullptr);
 }
 
-bool Reader::openStream(FILE *file, QString &error)
+bool Reader::openStream(FILE *file, QString &error, const QByteArray &alreadyRead)
 {
+    d->prefix = alreadyRead;
     return begin(QObject::tr("the stream"), error, file);
 }
 
@@ -1180,7 +1182,7 @@ bool Reader::begin(const QString &fileName, QString &error, FILE *stream)
     try {
         if (stream) {
             makeBinary(stream);
-            d->input.reset(new StreamInput(stream));
+            d->input.reset(new StreamInput(stream, d->prefix));
             d->streaming = true;
         } else {
             d->input.reset(new StdIOCallback(fileName.toLocal8Bit().constData(), MODE_READ));

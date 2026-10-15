@@ -78,3 +78,7 @@ Each F2 section represents 1/75th of a second and contains:
 The output F2 section file contains binary data that can be processed by:
 - `efm-decoder-d24` - For further decoding to Data24 format
 - `efm-stacker-f2` - For multi-source error correction
+
+## LDX files and streams
+
+The input can be an LDX file (`capture.ldx`, or `capture.ldx#4` for the `efm` track 4) or an LDX stream on the standard input (`ld-container pack capture.tbc --efm capture.efm -o - | efm-decoder-f2 - out.f2`): the EFM t-values of the capture are read from it as they would be from the `.efm` file. Raw t-values on the standard input are still read as before; the two are told apart by how they begin.

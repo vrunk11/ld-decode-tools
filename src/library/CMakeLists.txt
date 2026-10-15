@@ -8,6 +8,7 @@ add_library(lddecode-library STATIC
     tbc/fieldvbi.cpp
     tbc/fmcode.cpp
     tbc/jsonio.cpp
+    tbc/ldxbytetrack.cpp
     tbc/ldxcapture.cpp
     tbc/ldxfilter.cpp
     tbc/ldxstream.cpp

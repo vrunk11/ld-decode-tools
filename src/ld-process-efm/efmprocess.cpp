@@ -23,6 +23,8 @@
 ************************************************************************/
 
 #include "efmprocess.h"
+#include "ldxbytetrack.h"
+#include "ldxcapture.h"
 
 #include <vector>
 
@@ -106,7 +108,9 @@ void EfmProcess::reportStatistics() const
 bool EfmProcess::process(QString inputFilename, QString outputFilename)
 {
     // Start of file handling
-    QFile inputFileHandle;
+    QFile inputFile;
+    LdxByteTrack inputLdx;
+    QIODevice &inputFileHandle = LdxCapture::isLdxName(inputFilename) ? static_cast<QIODevice &>(inputLdx) : static_cast<QIODevice &>(inputFile);
     QFile outputFileHandle;
 
     // Ensure input file is valid
@@ -120,8 +124,17 @@ bool EfmProcess::process(QString inputFilename, QString outputFilename)
     }
 
     // Open the input EFM data file
-    inputFileHandle.setFileName(inputFilename);
-    if (!inputFileHandle.open(QIODevice::ReadOnly)) {
+    // The EFM of an LDX file (capture.ldx, or capture.ldx#4 for the track 4) is read in place of an .efm file
+    bool opened = false;
+    if (LdxCapture::isLdxName(inputFilename)) {
+        QString ldxError;
+        opened = inputLdx.openFile(inputFilename, LdxByteTrack::Kind::Efm, ldxError);
+        if (!opened) qCritical().noquote() << ldxError;
+    } else {
+        inputFile.setFileName(inputFilename);
+        opened = inputFile.open(QIODevice::ReadOnly);
+    }
+    if (!opened) {
         // Failed to open file
         qDebug() << "EfmDecoder::process(): Could not open EFM input file";
         return false;
