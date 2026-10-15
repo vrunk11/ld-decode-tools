@@ -49,7 +49,11 @@
             "widgets"
           ]
         },
-        "qtsvg"
+        "qtsvg",
+        {
+          "name": "qtmultimedia",
+          "default-features": false
+        }
       ]
     }
   }

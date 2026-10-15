@@ -45,6 +45,10 @@
 #include "tbcsource.h"
 #include "playbackcontroller.h"
 #include "playbackrenderer.h"
+#ifdef LDDECODE_HAVE_AUDIO
+#include "audioengine.h"
+#include "waveformpanel.h"
+#endif
 #include "videofilter.h"
 #include "videofilterdialog.h"
 #include "theme.h"
@@ -236,6 +240,21 @@ private:
     QActionGroup *speedActions;
     QAction *speedNormalAction = nullptr;
     QAction *speedSeparator = nullptr;
+#ifdef LDDECODE_HAVE_AUDIO
+    // The audio that plays with the video, and its waveform under it (shown when the capture has audio)
+    AudioEngine *audio = nullptr;
+    WaveformPanel *waveform = nullptr;
+    QAction *actionWaveform = nullptr;
+    bool waveformWanted = true;
+    void setupAudio();
+    void loadAudio();
+    void unloadAudio();
+    bool audioStart(qint32 position);
+    void audioStop();
+    void updateAudioPlayhead();
+    void waveformSeek(double seconds);
+    double positionSeconds(qint32 position);
+#endif
     void setPlaybackOptionsVisible(bool visible);
     void setupPlayback();
     void togglePlayback();

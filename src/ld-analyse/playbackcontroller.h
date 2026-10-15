@@ -14,6 +14,7 @@
 #include <QObject>
 #include <QElapsedTimer>
 #include <QTimer>
+#include <functional>
 
 // The clock of the video playback. It knows nothing of where frames come from: it
 // says which position (frame, or field in field view) is due at this moment, and the
@@ -30,6 +31,9 @@ public:
     void setRate(double positionsPerSecond);
     void setSpeed(double speed);
     void setLoop(bool loop);
+    // Take the time from somewhere else than the wall clock: the seconds of sound played since play() (the video then keeps
+    // to the sound). Null goes back to the wall clock. At normal speed only.
+    void setExternalClock(std::function<double()> seconds);
     void setRange(qint32 first, qint32 last);
     // A live stream: the range grows as video arrives, and playback waits at its end for more
     // instead of stopping, until the stream has ended
@@ -50,6 +54,8 @@ signals:
     // Playback reached the end of the range (and stopped, unless looping)
     void reachedEnd();
     void stateChanged(bool playing);
+    // Playback went from the end to the start again (looping)
+    void looped();
 
 private slots:
     void tick();
@@ -68,6 +74,8 @@ private:
     bool streamEnded = false;
     bool atEdge = false;     // live and caught up with the video that has arrived
     qint64 baseNs = 0;       // clock time at which startPosition was due
+    std::function<double()> externalClock;
+    double externalBase = 0.0;
     void rebase(qint32 fromPosition);
 };
 

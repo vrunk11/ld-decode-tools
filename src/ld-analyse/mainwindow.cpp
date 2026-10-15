@@ -709,10 +709,23 @@ void MainWindow::setupPlayback()
         action->setChecked(speed == 1.0);
         if (speed == 1.0) speedNormalAction = action;
         speedActions->addAction(action);
-        connect(action, &QAction::triggered, this, [this, speed]() { playback->setSpeed(speed); });
+        connect(action, &QAction::triggered, this, [this, speed]() {
+            playback->setSpeed(speed);
+#ifdef LDDECODE_HAVE_AUDIO
+            // The sound plays at the speed of the video only: at another speed it is off
+            if (playback->isPlaying()) {
+                audioStop();
+                if (speed == 1.0) audioStart(playbackDue);
+            }
+#endif
+        });
     }
 
     updatePlaybackState(false);
+
+#ifdef LDDECODE_HAVE_AUDIO
+    setupAudio();
+#endif
 }
 
 // Draw the play or pause symbol in the theme's play button colour (icons from the style are black)
@@ -743,6 +756,9 @@ void MainWindow::updatePlayButtonIcon()
 void MainWindow::updatePlaybackState(bool playing)
 {
     playbackShowsPause = playing;
+#ifdef LDDECODE_HAVE_AUDIO
+    if (!playing) audioStop();
+#endif
     updatePlayButtonIcon();
     actionPlayPause->setText(playing ? tr("&Pause") : tr("&Play"));
     updateLiveControls();
@@ -806,6 +822,9 @@ void MainWindow::togglePlayback()
     // The clock starts at once: the picture on show stays until the first decoded one is ready,
     // rather than the button waiting for it
     firstImageShown = false;
+#ifdef LDDECODE_HAVE_AUDIO
+    if (!isLive) audioStart(playbackStartPosition);
+#endif
     playback->play(playbackStartPosition);
 }
 
@@ -997,6 +1016,9 @@ void MainWindow::updateGuiLoaded()
 {
     // Enable the GUI controls
     setGuiEnabled(true);
+#ifdef LDDECODE_HAVE_AUDIO
+    loadAudio();
+#endif
 
     // Where the SNR in the graphs comes from
     for (SnrSourceBar *bar: { blackSnrAnalysisDialog->sourceBar(), whiteSnrAnalysisDialog->sourceBar() }) {
@@ -1069,6 +1091,9 @@ void MainWindow::updateGuiLoaded()
 // Method to update the GUI when a file is unloaded
 void MainWindow::updateGuiUnloaded()
 {
+#ifdef LDDECODE_HAVE_AUDIO
+    unloadAudio();
+#endif
     resetContext();
     snrFileTimer->stop();
     liveTimer->stop();
@@ -1455,6 +1480,9 @@ void MainWindow::setCurrentFrame(qint32 number)
 
     sanitizeCurrentPosition();
     showImage();
+#ifdef LDDECODE_HAVE_AUDIO
+    updateAudioPlayhead();
+#endif
 }
 
 // Set the current field, frame is updated based on field number
@@ -1467,6 +1495,9 @@ void MainWindow::setCurrentField(qint32 number)
 
     sanitizeCurrentPosition();
     showImage();
+#ifdef LDDECODE_HAVE_AUDIO
+    updateAudioPlayhead();
+#endif
 }
 
 void MainWindow::sanitizeCurrentPosition()
@@ -2863,3 +2894,134 @@ void MainWindow::resizeEvent(QResizeEvent *event)
 		resizeTimer->start();
 	}
 }
+
+#ifdef LDDECODE_HAVE_AUDIO
+// The audio ---------------------------------------------------------------------------------------------------------------
+
+// The waveform panel, under the video, the View menu entry that shows it, and the engine that plays
+void MainWindow::setupAudio()
+{
+    audio = new AudioEngine(this);
+    waveform = new WaveformPanel(audio, this);
+    waveform->setMaximumHeight(120);
+    waveform->hide();
+    ui->verticalLayout->insertWidget(ui->verticalLayout->indexOf(ui->mediaControl_frame), waveform);
+
+    ui->menuView->addSeparator();
+    actionWaveform = ui->menuView->addAction(tr("&Waveform"));
+    actionWaveform->setCheckable(true);
+    actionWaveform->setEnabled(false);
+
+    // What was chosen the last time
+    waveformWanted = configuration.audioValue("waveformVisible", true).toBool();
+    const bool left = configuration.audioValue("left", true).toBool();
+    const bool right = configuration.audioValue("right", true).toBool();
+    const qint32 volume = configuration.audioValue("volume", 70).toInt();
+    waveform->setMix(left, right, volume);
+    audio->setMix(left, right, volume / 100.0);
+    waveform->setColor(QColor(configuration.audioValue("waveformColour", "#2a82da").toString()));
+    waveform->setControlsVisible(configuration.audioValue("sidePanel", true).toBool());
+
+    connect(actionWaveform, &QAction::toggled, this, [this](bool shown) {
+        waveformWanted = shown;
+        configuration.setAudioValue("waveformVisible", shown);
+        waveform->setVisible(shown && audio->hasAudio());
+    });
+    connect(waveform, &WaveformPanel::trackSelected, this, [this](qint32 index) {
+        const bool wasPlaying = audio->isPlaying();
+        const double at = audio->videoSecondsNow();
+        audio->selectTrack(index);
+        waveform->refresh();
+        if (wasPlaying && playback->isPlaying()) audio->start(at);
+    });
+    connect(waveform, &WaveformPanel::mixChanged, this, [this](bool leftOn, bool rightOn, qint32 volume) {
+        audio->setMix(leftOn, rightOn, volume / 100.0);
+        configuration.setAudioValue("left", leftOn);
+        configuration.setAudioValue("right", rightOn);
+        configuration.setAudioValue("volume", volume);
+    });
+    connect(waveform, &WaveformPanel::seekRequested, this, &MainWindow::waveformSeek);
+    connect(audio, &AudioEngine::peaksProgress, this, [this](qint32) { waveform->refresh(); });
+    connect(audio, &AudioEngine::peaksFinishedSignal, this, [this]() { waveform->refresh(); });
+    connect(audio, &AudioEngine::problem, this, [this](const QString &message) { statusBar()->showMessage(message, 8000); });
+    // Looping: the video goes back to its start, and so does the sound
+    connect(playback, &PlaybackController::looped, this, [this]() {
+        if (!audio->isPlaying()) return;
+        audioStop();
+        audioStart(playbackStartPosition);
+    });
+}
+
+// A capture has been loaded: its audio, if it has any, is what the waveform shows
+void MainWindow::loadAudio()
+{
+    const bool usable = !tbcSource.getIsLive();
+    const QVector<AudioTrackInfo> tracks = usable ? audio->setVideo(tbcSource.getCurrentSourceFilename()) : audio->setVideo(QString());
+    if (tracks.isEmpty()) {
+        unloadAudio();
+        return;
+    }
+    // The analogue audio of the capture first, if it has some
+    qint32 first = 0;
+    for (qint32 i = 0; i < tracks.size(); i++) {
+        if (tracks[i].source == "analogue") { first = i; break; }
+    }
+    audio->selectTrack(first);
+    waveform->setTracks(tracks, first);
+    actionWaveform->setEnabled(true);
+    const QSignalBlocker blocker(actionWaveform);
+    actionWaveform->setChecked(waveformWanted);
+    waveform->setVisible(waveformWanted);
+    updateAudioPlayhead();
+}
+
+// No capture, or one with no audio: nothing to show or to play
+void MainWindow::unloadAudio()
+{
+    audioStop();
+    audio->setVideo(QString());
+    waveform->hide();
+    actionWaveform->setEnabled(false);
+}
+
+double MainWindow::positionSeconds(qint32 position)
+{
+    const double frameRate = tbcSource.getSystem() == PAL ? 25.0 : 30000.0 / 1001.0;
+    const double rate = tbcSource.getFieldViewEnabled() ? 2.0 * frameRate : frameRate;
+    return (position - 1) / rate;
+}
+
+// Play the sound from a position of the video, and let the video keep to it. False if there is no sound to play.
+bool MainWindow::audioStart(qint32 position)
+{
+    if (!audio->hasAudio() || audio->currentTrack() < 0 || playback->getSpeed() != 1.0) return false;
+    if (!audio->start(positionSeconds(position))) return false;
+    playback->setExternalClock([this]() { return audio->playedSeconds(); });
+    return true;
+}
+
+void MainWindow::audioStop()
+{
+    if (!audio) return;
+    audio->stop();
+    playback->setExternalClock(nullptr);
+}
+
+void MainWindow::updateAudioPlayhead()
+{
+    if (!audio || !waveform || !waveform->isVisible()) return;
+    const qint32 position = tbcSource.getFieldViewEnabled() ? currentFieldNumber : currentFrameNumber;
+    waveform->setPlayheadSeconds(positionSeconds(position));
+}
+
+// A click on the waveform: go to that place of the video
+void MainWindow::waveformSeek(double seconds)
+{
+    if (!tbcSource.getIsSourceLoaded() || tbcSource.getIsLive()) return;
+    pausePlayback();
+    const double frameRate = tbcSource.getSystem() == PAL ? 25.0 : 30000.0 / 1001.0;
+    const double rate = tbcSource.getFieldViewEnabled() ? 2.0 * frameRate : frameRate;
+    const qint32 last = tbcSource.getFieldViewEnabled() ? tbcSource.getNumberOfFields() : tbcSource.getNumberOfFrames();
+    ui->posHorizontalSlider->setValue(qBound(1, static_cast<qint32>(seconds * rate) + 1, qMax(1, last)));
+}
+#endif // LDDECODE_HAVE_AUDIO

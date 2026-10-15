@@ -47,6 +47,7 @@
           buildInputs = with pkgs; [
             qt6.qtbase
             qt6.qtsvg
+            qt6.qtmultimedia
             fftw
             ffmpeg
             libebml
@@ -71,6 +72,7 @@
             pkg-config
             qt6.qtbase
             qt6.qtsvg
+            qt6.qtmultimedia
             fftw
             ffmpeg
             libebml

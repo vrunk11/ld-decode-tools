@@ -639,7 +639,40 @@ bool LdxCapture::writeMetadata(const QString &name, const QByteArray &json, QStr
 #endif
 }
 
-bool LdxCapture::openAudio(const QString &name, QString &error, bool wide)
+QVector<LdxCapture::AudioTrack> LdxCapture::audioTracks(const QString &name)
+{
+    QVector<AudioTrack> found;
+#ifdef LDDECODE_WITH_LDX
+    QString path;
+    qint32 asked;
+    QVector<Ldx::Track> tracks;
+    if (!isLdxName(name) || !tracksOf(name, path, asked, tracks)) return found;
+    // The capture: the track named, or the first video track that is not a chroma
+    quint32 video = static_cast<quint32>(asked);
+    if (video == 0) {
+        for (const Ldx::Track &track: tracks) {
+            if ((track.kind == Ldx::Kind::Tbc || track.kind == Ldx::Kind::Cvbs) && !isChroma(track)) { video = track.number; break; }
+        }
+    }
+    for (const Ldx::Track &track: tracks) {
+        if (track.kind != Ldx::Kind::Pcm) continue;
+        const int about = track.parameters.value("track").toInt(0);
+        if (about != 0 && about != static_cast<int>(video)) continue;
+        AudioTrack audio;
+        audio.id = static_cast<qint32>(track.number);
+        audio.name = track.name;
+        audio.source = track.parameters.value("source").toString("analogue");
+        audio.sampleRate = track.parameters.value("sampleRate").toDouble(44100);
+        audio.bits = track.depth == 24 ? 24 : 16;
+        found.append(audio);
+    }
+#else
+    Q_UNUSED(name);
+#endif
+    return found;
+}
+
+bool LdxCapture::openAudio(const QString &name, QString &error, bool wide, qint32 audioTrack)
 {
 #ifdef LDDECODE_WITH_LDX
     if (!open(name, error)) return false;
@@ -647,7 +680,14 @@ bool LdxCapture::openAudio(const QString &name, QString &error, bool wide)
     // The PCM track about the capture or, failing that, the first one
     const Ldx::Track *chosen = nullptr;
     const QVector<Ldx::Track> tracks = d->reader.tracks();
+    if (audioTrack > 0) {
+        for (const Ldx::Track &candidate: tracks) {
+            if (candidate.kind == Ldx::Kind::Pcm && candidate.number == static_cast<quint32>(audioTrack)) chosen = &candidate;
+        }
+        wide = chosen && chosen->depth == 24;
+    }
     for (const Ldx::Track &candidate: tracks) {
+        if (chosen) break;
         if (candidate.kind != Ldx::Kind::Pcm || (candidate.depth == 24) != wide) continue;
         if (candidate.parameters.value("source").toString() == "efm") continue;      // (the audio decoded from EFM is not the analogue audio)
         if (candidate.parameters.value("track").toInt(0) == d->trackId) { chosen = &candidate; break; }
@@ -706,6 +746,15 @@ double LdxCapture::audioSampleRate() const
     return d->audioRate;
 #else
     return 0;
+#endif
+}
+
+qint32 LdxCapture::audioBytesPerSample() const
+{
+#ifdef LDDECODE_WITH_LDX
+    return d->audioFrameBytes;
+#else
+    return 4;
 #endif
 }
 

@@ -1,6 +1,8 @@
 add_library(lddecode-library STATIC
     tbc/cvbs.cpp
     tbc/cvbsaudio.cpp
+    tbc/audiopeaks.cpp
+    tbc/audioreader.cpp
     tbc/biphasecode.cpp
     tbc/closedcaption.cpp
     tbc/dropouts.cpp
