@@ -19,6 +19,7 @@
 #include <QJsonObject>
 #include <QObject>
 #include <algorithm>
+#include <memory>
 #include <cstring>
 #include <vector>
 
@@ -102,6 +103,111 @@ QJsonArray LdxCapture::historyOf(const QString &name)
 #else
     Q_UNUSED(name);
     return QJsonArray();
+#endif
+}
+
+bool LdxCapture::addTrackFromFile(const QString &ldxPath, const QString &kind, const QString &dataFile, const QJsonObject &parameters,
+                                  const QString &trackName, qint32 about, const QJsonObject &historyEntry, QString &error)
+{
+#ifdef LDDECODE_WITH_LDX
+    const Ldx::Kind trackKind = Ldx::kindFromName(kind);
+    if (trackKind != Ldx::Kind::Pcm && trackKind != Ldx::Kind::Efm && trackKind != Ldx::Kind::Ac3 && trackKind != Ldx::Kind::Annotations) {
+        error = QObject::tr("A track of kind %1 cannot be added from a file: use pcm, efm, ac3 or annotations").arg(kind);
+        return false;
+    }
+    QFile data(dataFile);
+    if (!data.open(QIODevice::ReadOnly)) {
+        error = QObject::tr("Could not open %1").arg(dataFile);
+        return false;
+    }
+
+    // The time of the capture, and the track the new one goes with
+    qint64 durationNs = 0;
+    quint32 aboutTrack = static_cast<quint32>(about);
+    {
+        Ldx::Reader indexed;
+        if (!indexed.open(ldxPath, error) || !indexed.buildIndex(error)) return false;
+        if (indexed.profile() < 1) {
+            error = QObject::tr("%1 is not an LDX file").arg(ldxPath);
+            return false;
+        }
+        durationNs = indexed.lastTimeNs();
+        if (aboutTrack == 0) {
+            for (const Ldx::Track &track: indexed.tracks()) {
+                if ((track.kind == Ldx::Kind::Tbc || track.kind == Ldx::Kind::Cvbs) && track.parameters.value("role").toString() != "chroma") { aboutTrack = track.number; break; }
+            }
+        }
+    }
+
+    auto readerOwner = std::make_unique<Ldx::Reader>();
+    Ldx::Reader &reader = *readerOwner;
+    if (!reader.open(ldxPath, error)) return false;
+    Ldx::Writer writer;
+    for (Ldx::Track track: reader.tracks()) writer.addTrack(track);
+    writer.setNextTrackId(reader.nextTrackId());
+    for (const Ldx::Reader::Attachment &attachment: reader.attachments()) writer.addAttachment(attachment.name, attachment.mediaType, attachment.data);
+    QJsonArray history = reader.history();
+    history.append(historyEntry);
+    writer.setHistory(history);
+
+    Ldx::Track added;
+    added.kind = trackKind;
+    added.depth = trackKind == Ldx::Kind::Pcm ? 16 : (trackKind == Ldx::Kind::Annotations ? 0 : 8);
+    added.name = trackName;
+    added.parameters = parameters;
+    if (aboutTrack != 0) added.parameters["track"] = static_cast<int>(aboutTrack);
+    writer.addTrack(added);
+
+    const QString partial = ldxPath + ".part";
+    if (!writer.open(partial, error)) return false;
+
+    // The blocks of the new track, in the order of their time among the old ones
+    const double rate = parameters.value("sampleRate").toDouble(44100);
+    const qint64 chunkBytes = trackKind == Ldx::Kind::Pcm ? 1470 * 4 : (trackKind == Ldx::Kind::Annotations ? Q_INT64_C(1) << 30 : 65536);
+    const qint64 total = data.size();
+    qint64 position = 0;
+    QByteArray chunk = data.read(chunkBytes);
+    auto chunkTime = [&]() -> qint64 {
+        if (trackKind == Ldx::Kind::Pcm) return static_cast<qint64>(static_cast<double>(position / 4) * 1.0e9 / rate);
+        if (trackKind == Ldx::Kind::Annotations || total <= 0) return 0;
+        return static_cast<qint64>(static_cast<double>(position) / static_cast<double>(total) * static_cast<double>(durationNs));
+    };
+    auto putChunk = [&]() {
+        if (!writer.writeBlock(added.number, chunkTime(), chunk)) return false;
+        position += chunk.size();
+        chunk = data.read(chunkBytes);
+        return true;
+    };
+    bool ok = true;
+    Ldx::Block old;
+    bool haveOld = reader.nextBlock(old);
+    while (ok && (haveOld || !chunk.isEmpty())) {
+        if (!chunk.isEmpty() && (!haveOld || chunkTime() < old.timeNs)) {
+            ok = putChunk();
+        } else {
+            ok = writer.writeBlock(old.track, old.timeNs, old.data);
+            haveOld = reader.nextBlock(old);
+        }
+    }
+    if (!ok) {
+        error = writer.lastError().isEmpty() ? QObject::tr("Could not write %1").arg(partial) : writer.lastError();
+        QFile::remove(partial);
+        return false;
+    }
+    if (!writer.finish(error)) {
+        QFile::remove(partial);
+        return false;
+    }
+    readerOwner.reset();        // (the old file is closed before it is replaced)
+    if (!QFile::remove(ldxPath) || !QFile::rename(partial, ldxPath)) {
+        error = QObject::tr("Could not put the new file in the place of %1 (it is %2)").arg(ldxPath, partial);
+        return false;
+    }
+    return true;
+#else
+    Q_UNUSED(ldxPath); Q_UNUSED(kind); Q_UNUSED(dataFile); Q_UNUSED(parameters); Q_UNUSED(trackName); Q_UNUSED(about); Q_UNUSED(historyEntry);
+    error = unsupported();
+    return false;
 #endif
 }
 
@@ -543,6 +649,7 @@ bool LdxCapture::openAudio(const QString &name, QString &error, bool wide)
     const QVector<Ldx::Track> tracks = d->reader.tracks();
     for (const Ldx::Track &candidate: tracks) {
         if (candidate.kind != Ldx::Kind::Pcm || (candidate.depth == 24) != wide) continue;
+        if (candidate.parameters.value("source").toString() == "efm") continue;      // (the audio decoded from EFM is not the analogue audio)
         if (candidate.parameters.value("track").toInt(0) == d->trackId) { chosen = &candidate; break; }
         if (!chosen) chosen = &candidate;
     }

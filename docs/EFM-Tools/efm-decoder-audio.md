@@ -136,3 +136,7 @@ efm-decoder-audio stacked.d24 output.wav --audacity-labels
 - Real-time processing: ~75x faster than real-time on modern hardware
 - Memory usage: Minimal (processes sections sequentially)
 - Quality depends heavily on CIRC correction effectiveness from efm-decoder-d24
+
+## LDX files
+
+The output can be an LDX file that exists (`efm-decoder-audio capture.d24 capture.ldx`): the decoded audio is added to it as a `pcm` track with `"source": "efm"`, without a WAV header, and the history records it. `ld-container wav capture.ldx --source efm` gives it back as a WAV file. The Audacity labels are not put in an LDX file.

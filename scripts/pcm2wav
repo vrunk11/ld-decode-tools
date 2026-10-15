@@ -1,3 +1,13 @@
 #!/bin/bash
 
+# Wrap 44.1 kHz 16-bit stereo PCM audio in a WAV file: pcm2wav capture.pcm (gives capture.pcm.wav).
+# An LDX file gives the WAV of its analogue audio: pcm2wav capture.ldx (gives capture.wav); pcm2wav capture.ldx efm gives the
+# audio decoded from EFM that is kept in it.
+
+case "$1" in
+    *.ldx)
+        exec ld-container wav "$1" --source "${2:-analogue}"
+        ;;
+esac
+
 ffmpeg -f s16le -ar 44.1k -ac 2 -y -i $1 $1.wav

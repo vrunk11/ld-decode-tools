@@ -31,6 +31,9 @@
 
 #include "tbc/logging.h"
 #include "efm_processor.h"
+#include "ldxcapture.h"
+#include <QFile>
+#include <QFileInfo>
 
 int main(int argc, char *argv[])
 {
@@ -170,6 +173,23 @@ int main(int argc, char *argv[])
         return 1;
     }
 
+    // An LDX file as the output: the audio is decoded to a file of its own, and then put in the LDX file as a track
+    // (the digital audio of the capture, "source": "efm"), which must be a file that is there
+    const bool ldxOutput = LdxCapture::isLdxName(outputFilename);
+    const QString ldxFile = outputFilename;
+    if (ldxOutput) {
+        if (outputWavMetadata) {
+            qCritical() << "The Audacity labels are not put in an LDX file: name a .wav file";
+            return 1;
+        }
+        if (!QFileInfo::exists(ldxFile)) {
+            qCritical().noquote() << ldxFile << "must be an LDX file that exists: the audio is added to it as a track";
+            return 1;
+        }
+        outputFilename = ldxFile + ".audio.part";
+        noWavHeader = true;
+    }
+
     // Validate --no-wav-header requirement for stdout pipeline
     if (outputFilename == "-" && !noWavHeader) {
         qCritical() << "ERROR: When piping output to stdout, --no-wav-header is mandatory";
@@ -190,7 +210,24 @@ int main(int argc, char *argv[])
     efmProcessor.setDebug(showAudioDebug, showAudioCorrectionDebug);
 
     if (!efmProcessor.process(inputFilename, outputFilename)) {
+        if (ldxOutput) QFile::remove(outputFilename);
         return 1;
+    }
+
+    if (ldxOutput) {
+        QJsonObject parameters;
+        parameters["sampleRate"] = 44100;
+        parameters["channels"] = 2;
+        parameters["source"] = "efm";
+        QString error;
+        const bool added = LdxCapture::addTrackFromFile(ldxFile, "pcm", outputFilename, parameters, "audio decoded from EFM", 0,
+                                                       LdxCapture::historyEntry("process", "digital audio decoded from EFM, added as a track"), error);
+        QFile::remove(outputFilename);
+        if (!added) {
+            qCritical().noquote() << error;
+            return 1;
+        }
+        qInfo().noquote() << "The audio was added to" << ldxFile << "as a track";
     }
 
     // Quit with success

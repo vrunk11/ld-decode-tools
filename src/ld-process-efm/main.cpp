@@ -30,6 +30,9 @@
 
 #include "logging.h"
 #include "efmprocess.h"
+#include "ldxcapture.h"
+#include <QFile>
+#include <QFileInfo>
 
 int main(int argc, char *argv[])
 {
@@ -176,6 +179,22 @@ int main(int argc, char *argv[])
         return 1;
     }
 
+    // An LDX file as the output: the audio is decoded to a file of its own, and then put in the LDX file as a track
+    // (the digital audio of the capture, "source": "efm"), which must be a file that is there
+    const bool ldxOutput = LdxCapture::isLdxName(outputFilename);
+    const QString ldxFile = outputFilename;
+    if (ldxOutput) {
+        if (decodeAsData) {
+            qCritical() << "Only audio is put in an LDX file: name a file for the data";
+            return 1;
+        }
+        if (!QFileInfo::exists(ldxFile)) {
+            qCritical().noquote() << ldxFile << "must be an LDX file that exists: the audio is added to it as a track";
+            return 1;
+        }
+        outputFilename = ldxFile + ".audio.part";
+    }
+
     // Perform the processing
     qInfo() << "Beginning EFM processing of" << inputFilename;
     EfmProcess efmProcess;
@@ -184,7 +203,27 @@ int main(int argc, char *argv[])
     efmProcess.setDecoderOptions(pad, decodeAsData, audioIsDts, noTimeStamp);
     efmProcess.setAudioErrorTreatment(errorTreatment);
 
-    if (!efmProcess.process(inputFilename, outputFilename)) return 1;
+    if (!efmProcess.process(inputFilename, outputFilename)) {
+        if (ldxOutput) QFile::remove(outputFilename);
+        return 1;
+    }
+
+    if (ldxOutput) {
+        QJsonObject parameters;
+        parameters["sampleRate"] = 44100;
+        parameters["channels"] = 2;
+        parameters["source"] = "efm";
+        if (audioIsDts) parameters["content"] = "dts";
+        QString error;
+        const bool added = LdxCapture::addTrackFromFile(ldxFile, "pcm", outputFilename, parameters, "audio decoded from EFM", 0,
+                                                       LdxCapture::historyEntry("process", "digital audio decoded from EFM, added as a track"), error);
+        QFile::remove(outputFilename);
+        if (!added) {
+            qCritical().noquote() << error;
+            return 1;
+        }
+        qInfo().noquote() << "The audio was added to" << ldxFile << "as a track";
+    }
 
     // Quit with success
     return 0;

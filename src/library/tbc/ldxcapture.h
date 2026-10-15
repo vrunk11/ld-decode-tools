@@ -58,6 +58,15 @@ public:
     // that of the LDX file or stream ("-"), empty for anything else
     static QJsonArray historyOf(const QString &name);
 
+    // Put the output of a tool in an LDX file as a track of its own: the decoded audio of EFM (kind "pcm", with the parameters
+    // "source": "efm", "sampleRate": 44100, "channels": 2), AC3 data ("ac3"), EFM t-values ("efm"), or a text of annotations
+    // ("annotations"). The data are the file dataFile (raw, for audio 16-bit stereo), put in blocks and stamped over the time of
+    // the capture: audio by its sample rate, the rest in proportion to where it is in the file. `about` is the id of the video
+    // track it goes with (0: the first). The LDX file is written again, in its place, with the track and an entry of the
+    // history added to it.
+    static bool addTrackFromFile(const QString &ldxPath, const QString &kind, const QString &dataFile, const QJsonObject &parameters,
+                                 const QString &trackName, qint32 about, const QJsonObject &historyEntry, QString &error);
+
     // Whether a name is that of an LDX file or of one of its tracks
     static bool isLdxName(const QString &name);
     // The path and the track (0 when none is named) of a name

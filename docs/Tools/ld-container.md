@@ -62,3 +62,9 @@ A stream has no index: what reads a pipe reads it once, in order. A stream that 
 A CVBS capture packed with `ld-container pack capture.cvbs` takes its audio `capture_audio_0.wav` with it, as a 24-bit `pcm` track (raw), and `unpack` writes the WAV back as it was.
 
 A Y/C capture packs with its chroma: `ld-container pack capture.tbc` (or `capture.tbcy`) takes `capture_chroma.tbc` (or `capture.tbcc`) beside it as a second `tbc` track with `"role": "chroma"`, about the luma track. `unpack` writes it as `<name>.<id>.chroma.tbc`, and `ld-analyse` shows the pair as it shows a Y/C pair of files. A chroma file given alone is refused: pack the luma file. A CVBS Y/C pair is not packed.
+
+## Audio
+
+`ld-container wav capture.ldx [-o capture.wav] [--source analogue|efm] [--id n]` writes the audio of a file as a WAV: the analogue audio (16-bit, or 24-bit for a CVBS capture) or, with `--source efm`, the digital audio decoded from EFM. The script `scripts/pcm2wav capture.ldx` does the same.
+
+`ld-container addtrack capture.ldx --kind pcm|efm|ac3|annotations --input file [--about id] [--name n] [--rate hz] [--source efm]` puts a file in the LDX file as a track of its own, in its place: the audio decoded from EFM (`--kind pcm --source efm`, 16-bit stereo), AC3 data, EFM t-values or annotations. The audio of EFM can also be put there by the tools that decode it (see `ld-process-efm`).
