@@ -150,6 +150,7 @@ bool LdxFieldFilter::run(const Options &options, const Process &process, QString
                 }
                 haveParameters = true;
                 wholeFields.clear();
+                comingFields.clear();
                 for (qint32 number = 1; number <= metadata.getNumberOfFields(); number++) wholeFields.push_back(metadata.getField(number));
             } else {
                 LdDecodeMetaData::Field field;

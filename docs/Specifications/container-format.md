@@ -1,244 +1,286 @@
 # LDX: container format for decode data
 
-**Version 1.0, ratified by the author of the fork. Nothing is implemented yet.**
-Extension: **`.ldx`**. Profile tag: `LDX_PROFILE` = `1`.
+**Version 1.0.** Extension `.ldx`. Profile tag `LDX_PROFILE` = `1`. Media type `video/x-matroska` (DocType `matroska`).
 
-The format is for the users of this fork. Compatibility with ld-decode or decode-orc is not a goal of version 1.0: ld-decode support will come from a custom build or fork. If a common container is wanted later, it is a new version of the profile (section 11).
-What is left open (section 12) does not change what a file contains: it is about the first implementation.
+This document is the normative description of the format. A program that follows it can write files that the tools of this repository read, and read what they write. The words MUST, SHOULD and MAY are used as in RFC 2119. Every number in a file is as Matroska has it (big-endian EBML); the samples inside a block are little-endian. All JSON is UTF-8.
 
-## 1. Why
+The reference implementation is `src/library/ldx` (the container) and `src/library/tbc` (what the tools do with it), and `ld-container` is the tool that makes, shows and checks files. [Examples and test vectors](#21-examples-and-test-vectors) are in `docs/Specifications/examples`.
 
-Today a decode is several files that must be kept together: the `.tbc` or `.cvbs`, its `.db` or `.json`, the `.efm`, `.ac3` and `.pcm` files, a `.stack` session. Tools read them one by one, and each pair of tools has to agree on the formats between them.
+## 1. Purpose
 
-This format has two uses, and everything else follows from them:
+A capture of a LaserDisc or a tape is several files that must be kept together (the `.tbc` or `.cvbs`, its `.db` or `.json`, the `.pcm` or `.wav` audio, the `.efm` and `.ac3` data, a `.stack` session). LDX puts all of them in **one file, or one pipe**, with:
 
-1. **One pipe, or one file, with everything in it.** A producer such as ld-decode can pipe to ld-analyse or to any other tool, whatever the source (TBC, CVBS, RF, audio, EFM), and the tools do not have to care which format the data was in.
-2. **Lossless compression**, to save space, without losing the metadata that goes with the data.
+1. **Everything of a capture in one stream**, so that a tool can send it to the next whatever the source (TBC, CVBS, RF, audio, EFM), and the next tool is told by the stream what it holds.
+2. **Lossless compression** (FLAC for 16-bit samples, FFV1 for 10-bit CVBS), without losing the metadata that goes with the data.
+3. **Room for what was not planned**: values per field that no database has, annotations written by hand, and the history of what was done. A tool keeps what it does not understand.
+4. **Several captures in one file** (the sources of a stack, the captures of one tape) that a stacking session can name by number, so that the session does not depend on where a file is.
 
-Because the format is meant to last, it must also allow tools to **add data it did not plan for** (per-frame values that are in no existing database or JSON, annotations written by hand), and keep what a tool does not understand.
+Not goals: replacing the CVBS file format (whose sample encodings are reused); being a general video format (a player is not expected to show a decoded picture); editing the samples in place; compatibility with the files of ld-decode or decode-orc (the tools of this repository read and write those files as before, and `ld-container` converts).
 
-### Not goals
+## 2. A Matroska profile
 
-- Replacing the CVBS file format specification, whose sample encodings it reuses.
-- A general video format. Players are not expected to show a decoded picture.
-- Editing the stored data in place.
+A file is a **Matroska file** (RFC 9559) that follows these conventions, so that ffmpeg, VLC and any Matroska library open it. It is recognised by the tag `LDX_PROFILE` (section 4). The DocType is `matroska` (DocTypeVersion 4, DocTypeReadVersion 2).
 
-## 2. Principle: a Matroska profile
+- **Time scale: 1,000 ns** (one tick is a microsecond). A time in nanoseconds is rounded to a microsecond (section 10).
+- **Clusters** are about 30 ms long (a field or two): a block is stamped from the start of its cluster in the 16 bits Matroska gives, which holds for that span. A writer MUST start a new cluster when a block is 30 ms or more after the start of the current one.
+- **Blocks** are in `BlockGroup`s. A block of a track holds **one unit** of that track (section 5); the frames of a unit that a codec makes (several FLAC frames) are **EBML-laced** in the one block. A raw unit is one frame with no lacing.
+- **Blocks are written in the order of their time, all tracks together.** Blocks of one track MAY have the same time (a unit of metadata about a field, or the two fields of a frame): they are then read in the order they are in the file.
+- **Cues** (the index) are written at the end of a finished file, **one cue point for each block**: its time, its track, the position of its cluster (from the data of the segment) and `CueRelativePosition`, the position of the block in the data of that cluster. Cues MUST be written for a file that is finished; they MUST NOT be written for a stream (section 15).
+- **A Void element** of 4,096 bytes follows the list of tracks of a file (not of a stream), so that a track can be added without moving the data. It is optional for a reader to use it.
+- **Segment size**: known for a file (written when it is finished), unknown (all ones) for a stream.
+- `MuxingApp` and `WritingApp` are `ld-decode-tools ldx`. A reader MUST NOT depend on them.
 
-A file is a **Matroska file** (RFC 9559) that follows the conventions below. Reasons, from what was compared (NUT, a custom block format, SQLite, ZIP):
+## 3. Tracks
 
-- It can be written to a pipe (a segment and its clusters may have an unknown size), and read by ffmpeg and VLC.
-- FLAC and FFV1, the two codecs wanted, are normal Matroska codecs.
-- Several tracks, attachments, tags and a per-block side data mechanism already exist.
+Each stream is a **Matroska track**. Its **id is its track number**: it is never given to another track in the same file, even after the track is removed (the tag `LDX_NEXT_TRACK_ID` holds the next id to give, and only goes up). Everything that refers to a stream (a session, a metadata track, a chroma track) uses the id.
 
-What it costs: a library to read and write it (libebml and libmatroska, or ffmpeg), and a weak point: adding data about an old timestamp after the file is written (section 9).
+| Kind | Content | Unit of a block | Depth | Matroska track |
+|---|---|---|---|---|
+| `tbc` | the fields of a TBC capture | one field | 16 | audio, `A_PCM/INT/LIT`, or `A_FLAC`, 1 channel |
+| `cvbs` | the frames of a CVBS capture | one frame | 10 | audio, `A_PCM/INT/LIT`, or video, `V_FFV1` |
+| `rf` | RF samples | a number of samples | 16 | audio, `A_PCM/INT/LIT`, or `A_FLAC` |
+| `pcm` | the analogue audio of the disc | a number of stereo samples | 16 or 24 | audio, `A_PCM/INT/LIT` (or `A_FLAC` for 16) , 2 channels |
+| `efm` | EFM t-values | a chunk of bytes | 8 | `D_LDX/EFM` (type 33) |
+| `ac3` | AC3 data | a chunk of bytes | 8 | `D_LDX/AC3` (type 33) |
+| `metadata` | JSON (section 11) | any | 0 | `D_LDX/METADATA` (type 33) |
+| `annotations` | free text or JSON | any | 0 | `D_LDX/ANNOTATIONS` (type 33) |
 
-A reader recognises the profile by the tag `LDX_PROFILE` (the version of this document, as an integer) in the Segment tags. The DocType stays `matroska`, so that generic players still open the file.
+- Samples that are raw are carried in an **audio track** (`A_PCM/INT/LIT`, with `BitDepth` 16, or 24 for the 24-bit audio): ffmpeg writes and reads 16-bit PCM in Matroska bit for bit, while it refuses raw grey video there. The track still describes itself as in section 4. The audio sampling frequency of such a track is a **stand-in, 48,000 Hz** (FLAC limits the rate and a rate of 14 to 40 MHz is not one for audio); **the real rate is in the parameters** of the track (`sampleRate`).
+- A reader that does not know a kind MUST skip the track and MUST copy it on when it writes a file (section 16).
+- A file MAY hold any number of tracks of one kind. A `metadata`, `annotations`, `pcm`, `efm` or `ac3` track says which video track it is about with `"track": <id>` in its parameters; without it, it is about the first video track.
+- **Unit and time**: a `tbc` unit is a field, stamped with the time of the field; a `cvbs` unit is a frame, stamped with the time of its first field; the units of audio, EFM and AC3 are consecutive pieces, stamped with the time of their first sample (audio) or in proportion to where they are in their data over the time of the video (EFM and AC3, which have no time of their own).
 
-## 3. Streams
+### 3.1 Parameters of the tracks
 
-Each stream is a **Matroska track**. A track has a *kind*, a *bit depth* (the useful bits of a sample), a *codec*, and parameters. They are written as a JSON object (UTF-8) in a **tag of the track** (`LDX_TRACK`, whose target is the track), so that a tool that does not know the track can still list it. (A raw track also has it in its `CodecPrivate`, as the first files did; the `CodecPrivate` of a FLAC track is the data its decoder needs, so the tag is the way that works for all.)
+Parameters are in the description of the track (section 4). A writer MUST give those marked required; a reader MUST ignore those it does not know.
 
-| Kind | Content | Unit of a block | Depth |
-|---|---|---|---|
-| `tbc` | the fields of a TBC | one field | 16 |
-| `cvbs` | the frames of a CVBS capture, their samples as 10-bit values (section 18) | one frame | 10 |
-| `rf` | RF samples | a fixed number of samples | 16 |
-| `pcm` | the analogue audio of the disc | a fixed number of samples | 16 |
-| `efm` | EFM t-values | one frame (variable size) | 8 |
-| `ac3` | AC3 data | one frame (variable size) | 8 |
-| `metadata` | JSON, see section 6 | any | text |
-| `annotations` | free text or JSON written by a person or a tool, see section 6 | any | text |
-
-A block carries the data of one unit and is stamped with the time of the unit (the field rate for fields, in nanoseconds). Fields of a frame follow each other, first field first. A kind that is not in this table is ignored by a reader that does not know it, and must be copied on (section 8).
-
-**Several streams of the same kind.** A file can hold any number of tracks of one kind, for example the captures of the same VHS tape or the sources of a stack, each a `tbc` or `cvbs` track with its own parameters. A track is identified by its **id**, which is its Matroska track number: it is never reused in a file, and everything that refers to a stream (a `.stack` session, a metadata block, an annotation) refers to it by that id. A track has a `name` for people (for example `capture 1`).
-
-**Adding and removing a stream.** A tool can add a stream to a file, or remove the stream with the id *x*:
-
-- *Adding* gives the new track the next free id. The first implementation writes the file again with the new track (the blocks of the other tracks are copied and merged by time with the new ones). Free space (padding) is kept after the list of tracks so that a later version can add a track without moving the data.
-- *Removing* writes the file again without the track and its blocks. The id of a removed track is never given to another track: the tag `LDX_NEXT_TRACK_ID` holds the next id to give, and it only goes up.
-- A metadata or annotation track says which track it is about in its parameters (`"track": id`), so that each capture of a file has its own ld-decode metadata. Removing a track removes the metadata tracks that are about it.
-- A `.stack` session, a metadata block or an annotation that refers to a removed id is not valid, and the tool that removes the stream must say so (or remove them with it).
-
-The parameters of a track are those the tools already use: video system, sample rate, field width and height, the position of the active region, the black, white and blanking levels, the order of the fields. They are the fields of the existing `videoParameters` where they exist.
-
-## 4. Codecs
-
-| Depth | Codecs allowed | Matroska track |
+| Kind | Parameter | Meaning |
 |---|---|---|
-| 16 bits (`tbc`, `rf`, `pcm`) | raw, FLAC | raw: audio track `A_PCM/INT/LIT`, 16 bits, one channel. FLAC: `A_FLAC` |
-| 10 bits (`cvbs`) | raw, FFV1 (`gray10le`) | raw: audio track `A_PCM/INT/LIT`, 16-bit words holding values 0 to 1023. FFV1: video track |
-| 8 bits (`efm`, `ac3`) | raw | binary track |
-| text | raw (JSON, UTF-8) | metadata track (type 33) |
+| `tbc`, `cvbs` | `system` (required) | `"PAL"`, `"NTSC"` or `"PAL-M"` |
+| | `sampleRate` | sample rate of the video, in Hz (4 times the subcarrier for the standard captures) |
+| | `fieldWidth`, `fieldHeight` (required for `tbc`) | samples of a line, and lines of a field, as in the metadata |
+| `tbc` | `role` | `"chroma"` for the chroma file of a Y/C capture (section 7.3) |
+| | `track` | for a chroma track: the id of the luma track |
+| `cvbs` | `lineWidth` (required) | samples of a line of the frame |
+| | `frameSamples` (required) | samples of a frame: 477,750 (NTSC), 709,379 (PAL), 477,225 (PAL-M) |
+| | `sampleEncoding` | the CVBS encoding the frames had in their file (`CVBS_U10_4FSC`...), to give the file back as it was |
+| | `padValue` | the blanking level, 10 bits, with which the end of an FFV1 image is filled |
+| `pcm` | `sampleRate` (required) | real sample rate |
+| | `channels` | 2 |
+| | `bits` | 24 for the audio of a CVBS capture; absent or 16 otherwise |
+| `metadata` | `namespace`, `format`, `track` | `"ldx.tbcmetadata"`, `"ld-decode-json"`, the video track it is about |
 
-The samples of fields and of RF are therefore carried in **audio tracks** (a field is a block of 16-bit samples). This was tested: ffmpeg writes 16-bit PCM into Matroska and reads it back bit for bit, while it refuses raw grey video there (`gray16le` and `gray10le` are not supported natively, and its VFW mode turns them into another pixel format and loses the data). The kind of the track (`tbc`, `cvbs`, `rf`...) says what the samples are, not the type of the Matroska track, and the sample rate of an audio track is not the real one (next point).
+## 4. Tags
 
-- **The real sample rate is in the parameters of the track.** FLAC declares a rate of at most 655,350 Hz (ffmpeg refuses more), and the sample rate of an audio track is not meant to be the 14 to 40 MHz of a capture. The Matroska or FLAC rate is a stand-in (as `ld-compress` writes 40 kHz for RF), and a reader takes the rate from the parameters.
-- **Raw is valid for every stream, and every reader must read it.** In a pipe tools write raw (nothing to spend CPU on).
-- **Compression is a choice of the writer.** A file written to be kept is compressed by the rule above. A tool that only converts (a recompression step, in the manner of `ld-compress`) can turn a raw file into a compressed one without touching the rest.
-- Decoding gives back **the same samples** that were given to the encoder. A reader returns decoded samples to the tool, so the tool does not know the codec.
-- A reader that does not have a codec **refuses the stream with a message that names the codec**. It never reads data it cannot interpret.
+All the tags are `SimpleTag`s with a name and a string.
 
-Measured on 40 fields of an NTSC capture (910 x 263, size as a share of the raw 16-bit data): 16 bits, FLAC 69 to 87 %, FFV1 75 to 98 %. Values reduced to 10 bits (a simulation, not lossless for a TBC), FFV1 31 to 40 %, FLAC 31 to 34 %. A real `.cvbs` has not been measured yet.
+| Tag | Target | Value |
+|---|---|---|
+| `LDX_PROFILE` | the segment | the version of this document as an integer: `1` |
+| `LDX_HISTORY` | the segment | the history, a compact JSON array (section 12) |
+| `LDX_NEXT_TRACK_ID` | the segment | the next track id to give, an integer (it only goes up) |
+| `LDX_TRACK` | a track (by its `TagTrackUID`) | the description of the track, a compact JSON object (below) |
 
-## 5. Time
+The description of a track, whatever its codec, is:
 
-All blocks have a timestamp. The resolution of a timestamp in the file is **one microsecond** (the Matroska timestamp scale is 1000 ns), so a time given in nanoseconds is rounded to a microsecond. The timeline is the one of the first field of the first frame, in nanoseconds. Tracks of unequal unit (fields, audio blocks) are aligned by their timestamps and not by a count.
+```
+{ "ldx": 1, "kind": "tbc", "codec": "raw", "depth": 16, "parameters": { ... } }
+```
 
-## 6. Metadata and annotations
+`kind` is one of the names of section 3, `codec` is `raw`, `flac` or `ffv1`, `depth` is the depth of the table of section 3 (a missing depth is 16), `parameters` is an object (section 3.1). A raw track has the same JSON as its `CodecPrivate`, as the first files had; a reader MUST read the tag, and MAY fall back on the `CodecPrivate` of a raw track when the tag is missing. The `CodecPrivate` of a FLAC or FFV1 track is what its decoder needs (below).
 
-Metadata are blocks of JSON (UTF-8) on a track of kind `metadata` or `annotations`. A track declares a **namespace** in its parameters:
+The **first tags** of a file or stream are written before the data. A tool that adds to a finished file (section 17) writes tags at the end: **the last tags of the file are the current ones** (a reader reads all of them and the later value of a tag replaces an earlier one).
 
-- `ldx.*` is reserved for names defined in this specification (for example `ldx.vbi`, `ldx.vits`, `ldx.dropouts`, `ldx.blacklevel`).
-- Anything else is a name chosen by a tool, written in reverse domain order (`com.example.mytool`), so that two tools never write two incompatible `blacklevel`.
+## 5. Units
 
-Each block says what it applies to (a time, or a range of time) and gives its values. A tool is free to add a track of its own at any time it writes the file. A tool must not rewrite a block it did not write.
+A unit is the content of one block *after the codec is undone*. Writers write units; readers return units; the tools never see codec frames.
 
-When two blocks of the same track, target and key give a value, **the last block written wins**. The earlier block stays in the file. A block can carry a `deleted` flag to cancel an earlier one.
+### 5.1 `tbc`: a field
 
-Annotations are the same, with an author, a time of writing, and free content.
+The samples of a field in order, `fieldWidth * fieldHeight` unsigned 16-bit little-endian words (the line after line of a TBC file). Fields are written in the order of the capture and the two fields of a frame follow each other. A unit is the same bytes as that part of the `.tbc` file.
 
-## 7. History
+### 5.2 `cvbs`: a frame
 
-The tag `LDX_HISTORY` holds a JSON list, to which each tool that writes the file adds an entry: the program, its version, its options, the time, and the file or files it read. A tool never removes an entry of another one.
+The samples of a frame of a CVBS file, as **10-bit values in 16-bit little-endian words** (0 to 1,023), `frameSamples` of them: the `CVBS_U10` encoding **whatever the encoding of the file the frame comes from**. A frame of another encoding is converted by taking its TBC-domain value (16 bits, by the rules of the CVBS specification for that encoding) and dividing by 64 (shifting right by 6); `unpack` converts back (shifting left by 6 and applying the inverse of the encoding), which gives the file back byte for byte for a frame that came from a file.
 
-## 8. Streams that pass through tools
+### 5.3 `pcm`: audio
 
-A tool that reads a file or a pipe and writes another **copies the tracks and blocks it does not understand, unchanged**, and adds its own. Without this rule the first tool that does not know a track would lose it.
+A unit is a number of stereo samples, left then right for each sample: **16-bit signed little-endian** (4 bytes a sample) or, with `"bits": 24`, **24-bit signed little-endian** (6 bytes a sample, as in the WAV file `name_audio_0.wav` of decode-orc). Units follow each other without a gap: the first sample of a block is `time * sampleRate`, rounded. The 16-bit audio of a TBC capture is the `.pcm` file of ld-decode.
 
-## 9. Pipes, and writing after the fact
+### 5.4 `efm`, `ac3`: bytes
 
-- A segment and its clusters are written with an unknown size when the output is a pipe. A reader does not need the end of the file.
-- Elements that need the end (the index of positions, a final list of tags) are written only if the output can be sought.
-- To add data to a finished file (an annotation, a new metadata track), a tool writes new blocks at the end and a new tag list and index, with the space of the old ones turned to padding. This works for a modest amount of data. Adding many values about **old** timestamps may need the file to be written again: this is the weak point of the choice of Matroska, and it must be measured.
+Chunks of the file they come from (64 KiB, the last one shorter). **Put end to end, the chunks are the file.** Their time is spread over the time of the video, in proportion to where a chunk is in the file.
 
-## 10. Embedded `.stack`
+### 5.5 `rf`
 
-A stacking session can be an attachment named `session.stack` (media type `application/json`), in the format of the `.stack` files. Each of its sources names **a track of the same file by its id** (`"track": 2`) instead of a path, so that the session does not depend on where any file is on a disk, and the file can be moved, shared or renamed. One file then holds the captures (the sources of a stack, or several captures of the same VHS tape) and the way they are stacked.
+Samples of the RF capture, 16-bit little-endian, in pieces of any size, the rate in `sampleRate`.
 
-A source of a session kept in a file names its capture in one of three ways, so that a session can embed the captures it uses, link to them, or mix the two (a file that copies every source can be heavy, and a session can point at another LDX file instead):
+## 6. Codecs
+
+| Depth | Allowed |
+|---|---|
+| 16 bits (`tbc`, `rf`, `pcm`) | raw, FLAC |
+| 10 bits (`cvbs`) | raw, FFV1 |
+| 24 bits (`pcm`), 8 bits, text | raw |
+
+- **Raw is valid for every track and every reader MUST read it.** In a pipe, writers use raw.
+- **Decoding returns exactly the samples that were encoded.** A reader that does not have a codec MUST refuse the track with a message that names the codec; it MUST NOT read data it cannot interpret.
+- **A codec is the choice of the writer**; a tool may change it for a file that is written (`ld-container recompress`) without touching the rest.
+
+### 6.1 FLAC (`"codec": "flac"`)
+
+- Matroska codec `A_FLAC`. `CodecPrivate` is `fLaC` followed by the 34-byte STREAMINFO block of the encoder (as Matroska requires).
+- A block of the file is **one unit** coded as the **FLAC frames** the encoder gives, **EBML-laced** (a single frame is not laced). Frames are of **32,768 samples** (the last one shorter), **a unit is at most 8 frames, 262,144 samples** per channel; a longer unit MUST be refused by a writer. (A field of a TBC is 239,330 samples.)
+- **Unsigned samples** (`tbc`): the encoder is given the samples made signed by subtracting 32,768 (flipping the top bit), and the decoder's output is made unsigned again by adding it. A FLAC decoder that does not know this shows the samples with the top bit flipped.
+- **Stereo** (`pcm`) is two FLAC channels together, not one channel of alternating samples.
+- Compression level 8. The sample rate in the FLAC data and in Matroska is the stand-in 48,000 Hz.
+- Each unit is coded with an encoder of its own (a short frame is only allowed as the last of a stream), so a block can be decoded alone.
+
+### 6.2 FFV1 (`"codec": "ffv1"`)
+
+- Matroska codec `V_FFV1`, a video track of `lineWidth` x `height` pixels, with `height = ceil(frameSamples / lineWidth)`. `CodecPrivate` is the FFV1 configuration record of the encoder.
+- The pixel format is **10-bit grey, little-endian** (`gray10le`): a frame of `frameSamples` words is **laid out as an image row after row**; when the last row is not whole, **it is filled up with `padValue`** (a PAL frame, 709,379 samples, is 625 lines and 4 samples: an image of 1,135 x 626 whose last row has 4 samples and 1,131 of padding). A decoder cuts the frame to `frameSamples` again. NTSC (910 x 525) and PAL-M frames fill their images.
+- FFV1 version 3, Golomb-Rice off (range coder, `coder` 1), `context` 1, 4 slices with CRC, **every frame a key frame** (a block decodes alone).
+- A player that knows Matroska shows the track as video of that size.
+
+## 7. Video captures
+
+### 7.1 One capture
+
+A capture is a video track (`tbc` or `cvbs`), the `metadata` track about it, and as many of the `pcm`, `efm` and `ac3` tracks about it as the capture has.
+
+### 7.2 Which capture a name gives
+
+See section 14.
+
+### 7.3 Y/C captures
+
+A Y/C capture (a luma file and a chroma file: `name.tbc` + `name_chroma.tbc`, or `name.tbcy` + `name.tbcc`) is **two `tbc` tracks**: the luma, as for any capture, and a **chroma track** with `"role": "chroma"` and `"track": <id of the luma track>` in its parameters. The chroma has no metadata track: the metadata of the luma are those of the pair. The chroma track has as many units as the luma and the same time for each. A reader that does not know the role reads it as another capture; the tools list only the tracks that are not chroma as the captures of a file. A CVBS Y/C pair (`.cvbsy`, `.cvbsc`) is not carried in version 1.
+
+## 8. Metadata
+
+### 8.1 The format
+
+The metadata of a capture are **ld-decode metadata as JSON** (the content of a `.tbc.json`), on the `metadata` track about the capture, namespace `ldx.tbcmetadata`, format `ld-decode-json`:
+
+```
+{ "videoParameters": { ... }, "pcmAudioParameters": { ... }, "fields": [ { ... }, ... ] }
+```
+
+- `videoParameters` members: `system`, `fieldWidth`, `fieldHeight`, `sampleRate`, `activeVideoStart`, `activeVideoEnd`, `colourBurstStart`, `colourBurstEnd`, `black16bIre`, `white16bIre`, `blanking16bIre`, `isMapped`, `isSubcarrierLocked`, `isWidescreen`, `isSourcePal`, `numberOfSequentialFields`, `tapeFormat`, `gitBranch`, `gitCommit`.
+- `pcmAudioParameters` members: `sampleRate`, `bits`, `isSigned`, `isLittleEndian`.
+- a field has `seqNo` (from 1, in the order of the video), `isFirstField`, `syncConf`, `medianBurstIRE`, `fieldPhaseID`, `audioSamples`, `diskLoc`, `fileLoc`, `efmTValues`, `pad`, `decodeFaults`, `vbi`, `vitc`, `ntsc`, `cc`, `vitsMetrics`, `dropOuts`.
+- **`numberOfSequentialFields` MUST equal the number of members of `fields`** in a block that has fields.
+
+The members are those the tools of this repository read and write; the JSON of a `.tbc.json` of ld-decode is valid. A reader MUST ignore members it does not know and a tool that rewrites metadata MUST keep them.
+
+### 8.2 Blocks
+
+Three kinds of block can be on a metadata track. A reader tells them by their content:
+
+1. **A whole set**: a block with `videoParameters` and `fields`. This is what `ld-container pack` writes for a file.
+2. **The parameters alone**: a block with `videoParameters` and **no fields** (`numberOfSequentialFields` 0), with the `pcmAudioParameters`. The fields come in blocks of the third kind.
+3. **One field**: a block that is a single JSON object as a member of `fields` is (it has `seqNo`, and no `videoParameters`).
+
+### 8.3 The current metadata
+
+A reader makes the current metadata of a capture by reading the blocks of the track in the order they are in the file. **A block with `videoParameters` (kinds 1 and 2) starts the metadata again**: it is the base, with its `fields` if it has any, and what came before it no longer counts. **A block of one field (kind 3) replaces the field with its `seqNo` in the base, or adds it.** `numberOfSequentialFields` is the number of fields that results. A block never removes a field.
+
+An earlier block stays in the file until the file is written again. A tool that changes metadata of a finished file adds a block stamped after everything in the file (section 17); a tool in a pipe sends the changed block of a field before the video of that field (section 15).
+
+### 8.4 Other metadata
+
+A track of kind `metadata` or `annotations` that is not `ldx.tbcmetadata` declares its own **namespace** in its parameters: `ldx.*` is reserved for names defined by this specification, anything else is chosen by a tool in reverse domain order (`com.example.mytool`). Each block says what it applies to (a time or a range of time) and gives its values; of two blocks of one track, target and key, the last wins, and a block MAY carry `"deleted": true` to cancel an earlier one. A tool MUST NOT rewrite a block it did not write.
+
+## 9. Attachments
+
+An LDX file MAY hold files as Matroska attachments (name, media type, data). Defined: `session.stack` (section 13). A reader MUST ignore attachments it does not know and a tool that writes a file MUST copy them on.
+
+## 10. Time
+
+All blocks have a time in the time scale of the file (1 µs). The timeline is that of the first field of the capture. A field is `1/50` s (PAL) or `1001/60000` s (NTSC, PAL-M) after the one before: the time of field *n* (from 0) is `n * 20,000,000 ns` for PAL and `n * 16,683,333 ns` for NTSC and PAL-M (`n * 1,000,000,000 * 1001 / 60000`), rounded to a microsecond. A frame of CVBS has the time of its first field. Units of different tracks are lined up by their time, not by a count.
+
+## 11. Streams of tracks that a tool does not know
+
+A tool that reads a file or a stream and writes another **MUST copy the tracks, blocks, attachments and tags it does not understand, unchanged**, and add its own. A tool MAY change a track it knows how to (recompress, remove) and MUST say so in the history.
+
+## 12. History
+
+The history is a JSON array in the tag `LDX_HISTORY`. Every tool that changes a capture adds **one entry** (an object), after the earlier ones:
+
+| member | |
+|---|---|
+| `tool` | name of the program (`ld-dropout-correct`) |
+| `version` | the build (its commit) |
+| `command` | what it did: `pack`, `process`, `metadata`, `recompress`, `add`, `remove`, `stack`... |
+| `time` | UTC, ISO 8601 |
+| `detail` | a sentence for a person (optional) |
+| `arguments` | the arguments of the program as given (optional) |
+
+A tool MAY add members of its own (the files it read, the options it took, what it counted); a reader ignores those it does not know. A tool MUST NOT remove or change an entry of another. A stream keeps those that came in, and the tool adds its entry to the header of the stream it sends on. The history is a record, not a lock: nothing in a file depends on it.
+
+## 13. Sessions (`session.stack`)
+
+A stacking session can be an attachment named `session.stack` (media type `application/json`), in the format of the `.stack` files of `ld-stacker-gui` and `ld-disc-stacker`. Each of its sources names its capture in one of three ways:
 
 | Source | Meaning |
 |---|---|
-| `"track": 2` | a track of the same LDX file |
-| `"file": "other.ldx", "track": 2` | a track of another LDX file (a link) |
-| `"file": "capture.tbc"` | a file outside this one (a link): a TBC, a CVBS, an LDX file or a `.stack` session |
+| `"track": 2` | the track 2 of the same LDX file |
+| `"file": "other.ldx", "track": 2` | the track 2 of another LDX file (a link) |
+| `"file": "capture.tbc"` | a file outside this one (a link): a TBC, a CVBS, an LDX file or a `.stack` file |
 
-The path of a link is relative to where the `.ldx` file is, so that the two can be moved together. A tool that writes a session into a file can **embed** the sources that are files (it then copies each into a track of its own, with its metadata and audio, and names it by its id) or **leave them as links**; the choice is the tool's, and both give a valid file. A tool that adds or removes a stream updates the sources that are tracks of the same file: a removed track is taken out of the session, and the tool says so. Links are not touched. A `.stack` file on its own keeps working unchanged, and a session can be taken out of a file and put back.
+The path of a link is relative to the `.ldx` file. A tool that writes a session into a file MAY embed the sources that are files (copying each into a track of its own with its metadata and audio) or leave them as links; both are valid. A tool that removes a track MUST take the sources that name it out of the session and say so; links are not touched.
 
-## 11. Reading rules
+## 14. Names, and which capture a tool reads
 
-- A track kind or a codec that is unknown: the stream is skipped (kind) or refused with the name (codec).
-- A field of the parameters that is unknown is ignored.
-- A change of the profile version that makes an older reader wrong is a change of its major number, and a reader refuses a major number it does not know.
+The tools take an LDX file where they take a `.tbc`, `.cvbs` or `.stack`:
 
-## 12. Left to the first implementation
-
-These do not change what a file contains. The prototype settles them, and the result is written here.
-
-1. **Late annotations** about old timestamps: how much data is acceptable before the file is written again. Measure.
-2. A real **`.cvbs`** to measure FFV1 against FLAC (the figures in section 4 come from a simulation at 10 bits).
-3. **A TBC reduced to 10 bits** (lossy): allowed or not, and how it is recorded in the history. Not allowed by this version: a `tbc` track is 16 bits.
-4. **Frame as unit** rather than field for the metadata of a frame (the time stamp of the first field of the frame is used meanwhile).
-5. What **VLC** and ffmpeg show for the tracks.
-
-## 13. Decisions of this version
-
-- Name and extension: LDX, `.ldx`.
-- A Matroska profile, with the tag `LDX_PROFILE` = 1 and the DocType `matroska`.
-- Codecs by depth: 16 bits raw or FLAC, 10 bits raw or FFV1, raw everywhere in a pipe.
-- Raw samples in PCM audio tracks, the real rate in the parameters.
-- Namespaced metadata, the last block wins, history in `LDX_HISTORY`, unknown blocks copied.
-- Compatibility with ld-decode and decode-orc is not a goal of 1.0.
-- Libraries: **libebml and libmatroska** (LGPL-2.1-or-later, in vcpkg, compatible with the GPL-3 of the tools) read and write the container, which gives control of every element: custom tracks, tags, attachments, padding, unknown sizes for pipes, copying unknown blocks. **ffmpeg (libavcodec)** does the encoding and decoding of FLAC and FFV1, and nothing else: a block is encoded by ffmpeg, then wrapped by our own code into the container (and unwrapped before decoding). It is optional. Raw data, metadata and the container need no ffmpeg, so a reader without it still reads every raw file, as section 4 requires. A library that writes Matroska but does not keep unknown elements (libavformat) is not used for the container.
-
-## 14. Next steps
-
-1. A prototype, `ld-container pack | unpack | info`, with a `tbc` or `cvbs` stream, a `pcm` stream and a `metadata` track.
-2. Measure what section 12 lists, and write the results here.
-3. Use the format in the tools: the library reads `.ldx` as it reads `.tbc`, `.cvbs` and `.stack`.
-
-## 15. How the tools name and open a capture
-
-The tools take an LDX file where they take a `.tbc`, and say which capture with the id of its track:
-
-| Name | What the tool reads |
+| Name | What is read |
 |---|---|
-| `capture.ldx` | the stack of the session the file keeps (section 10), or, when it keeps none, its first `tbc` track |
-| `capture.ldx#3` | the track 3 (a `tbc` track, with the metadata track that is about it) |
+| `capture.ldx` | the stack of the session the file keeps; if it keeps none, its first video track (`tbc` or `cvbs`) that is not a chroma track |
+| `capture.ldx#3` | the track 3, with the metadata, audio, EFM and AC3 tracks that are about it |
+| `-` | an LDX stream on the standard input (section 15) |
 
-A source of a session that is a track of another file is the same name (`"file": "other.ldx", "track": 3` is `other.ldx#3`). The metadata of a capture are read from its metadata track, and the metadata of a session are those of its first source that is on, as for a `.stack` file. The tools do not write metadata into an LDX file: `ld-container` does.
+The `#` and the number are only a part of the name the tool is given: nothing is written. A source of a session that is a track of another file is the same name (`"file": "other.ldx", "track": 3` is `other.ldx#3`). The metadata of a session are those of its first source that is on. The default track of a file is the first, by id.
 
-The first implementation reads `tbc` tracks that are raw or FLAC. A `cvbs` track is read as the fields of its frames (section 18); FFV1 needs ffmpeg.
+## 15. Streams (pipes)
 
-## 16. Adding to a file in place
+An LDX stream is an LDX file written to something that cannot be seeked: **one producer to one consumer**, everything in one stream.
 
-A tool that adds blocks to a file that is already written does it where the file ends, and moves nothing: the new clusters go where the cues were, the cues are written again with the blocks that were there and the new ones, the size of the segment is corrected, and the file is cut after the cues. Tags written at the end hold the history, with what was done added; the last tags of the file are the current ones. A file that is cut short while it is added to can be taken back to its last cues.
+**A producer writes**: the EBML header, a segment **with unknown size**, the info, the tracks, the tags (with the history up to now) and the attachments, then the clusters as the blocks come, in the order of their time. **Nothing is written again**: no cues and no padding, and the tags are only at the start. The **metadata of the video are sent before the video they describe**: either as one set (section 8.2, kind 1), or as the parameters (kind 2) followed, for each field, by the block of that field (kind 3) **stamped with the time of the field and placed just before its video**. A producer that has no metadata yet sends the video alone, and the consumer takes the video system from the track and the defaults of the system. Codecs are as for a file: raw in a pipe is the usual choice, a consumer decodes FLAC and FFV1.
 
-**The metadata of a capture** (`ldx.tbcmetadata`, the ld-decode metadata as JSON) are one block of a metadata track whose parameters say which track it is about (`"track": 1`). **The last block of that track is the current metadata**: a tool that changes them (ld-process-vbi, ld-process-vits, any tool that now saves metadata) adds a new block, stamped after everything that is in the file, and what was there stays until the file is written again. `ld-container unpack` and `extract` write the last block.
+**A consumer reads in order**: it cannot seek or read a block again, and there is no index. It keeps a window of what has come in. A consumer that needs the metadata of all the fields before it begins (stacking, dropout correction across sources) MUST refuse a stream that sends them field by field and say why; a consumer that works field by field (decoding, display) takes the metadata of a field from its block when it has the field, and the defaults when there is none.
 
-**EFM and AC3** are tracks of kind `efm` and `ac3` (8 bits). The file they come from has no time of its own, so it is cut in chunks of 64 KiB, which are stamped in proportion to where they are in the file over the time of the video; the chunks put end to end are the file. Their parameters say which track they go with.
+**A tool in the middle** passes along what it does not know (section 11), may replace the metadata of a field by sending a later block for the same `seqNo` before the video of that field, and adds its entry to the history of the header it sends. It SHOULD hold back only the field it is working on, not the stream.
 
-**Analogue audio** is a `pcm` track (16-bit stereo, the real sample rate in its parameters, blocks of whole samples one after the other). A tool that wants the samples from a number reads them from the track about the capture: the first sample of a block is found from its time and the sample rate.
+**Standard input and output** are binary. A tool that writes a stream on the standard output sends its messages to the standard error. A tool that takes raw data on the standard input as well tells a stream from it by how it begins (the bytes `1A 45 DF A3`).
 
-## 17. FLAC
+## 16. Reading rules
 
-A track of 16-bit samples (`tbc`, `rf`, `pcm`) can be kept as FLAC (`"codec": "flac"` in the description of the track). It is the Matroska codec `A_FLAC`, so that its `CodecPrivate` is `fLaC` and the STREAMINFO block, and a player that knows Matroska lists the track.
+- A track **kind** that is unknown: skip the track. A **codec** that is unknown: refuse the track and name it. A **parameter** that is unknown: ignore it.
+- A file with no `LDX_PROFILE`, or with a profile that is not an integer, is not an LDX file. A reader MUST refuse a **major version** it does not know: a change of this specification that makes an older reader wrong is a new profile number.
+- A cue is for one block; if there are several cues for blocks of one track at the same time, they are in the order of the blocks in the file (sorted by time, then by position).
 
-- **A block of the file holds one block of samples** (a field, a piece of audio) as the FLAC frames of the encoder, laced (EBML lacing). Frames are of 32,768 samples, so a block is at most 8 frames, **262,144 samples** per channel (a field of a TBC is 239,330). A longer block is refused.
-- **Unsigned samples** (`tbc`) are made signed before they are coded, by taking 32,768 from them (the top bit flipped), and the other way after, so that the wave does not jump where it crosses the middle of the range. A reader of FLAC that does not know this sees the samples with the top bit flipped.
-- **Stereo audio** (`pcm`, two channels) is coded as two FLAC channels together, not as one channel of samples that alternate.
-- **Sample rate**: the rate in the FLAC and Matroska data is a stand-in (48,000 Hz), as for raw tracks. The real rate is in the parameters of the track.
-- **ffmpeg** (libavcodec) encodes and decodes; the container is written by the library. A build without ffmpeg reads and writes raw tracks only, and says so for a FLAC track.
-- **Other programs**: `ffprobe` lists a FLAC track, and `ffmpeg` decodes it (`-af asetpts=N/SR/TB` to give the samples a continuous time, since a block holds more samples than its place in the file's time stands for).
+## 17. Changing a file
 
-Measured on a NTSC capture, the tracks of the TBC and the audio together are about **69 to 71 %** of their raw size.
+**Adding blocks to a finished file in place** (`openAppend`): the new clusters go where the cues were; the cues are written again, with the old ones and the new; the size of the segment is corrected; the file is cut after the cues; the tags written at the end carry the history with what was added. Nothing else is moved. This is how the tools add the new metadata of a capture (a block of the `metadata` track, stamped after everything in the file, section 8.3).
 
-## 18. CVBS and FFV1
+**Adding or removing a track** writes the file again (the other tracks' blocks are copied and merged by time, with the new ones). The new track gets the next free id; a removed id is never given again; a metadata, annotation, audio or chroma track that is about a removed track goes with it.
 
-A capture of CVBS (a `.cvbs` file) is a track of kind `cvbs`: **a block is a frame** of the file, whose samples are given as **10-bit values in 16-bit words** (the CVBS_U10 encoding, whatever the encoding of the file the frame comes from; the encoding it had is in the parameters, so that the file can be given back as it was). The parameters of the track are the video system, `lineWidth` (the samples of a line), `frameSamples` (the samples of a frame: 477,750 for NTSC, 709,379 for PAL, 477,225 for PAL-M), `sampleEncoding`, and `padValue` (the blanking level).
+## 18. Conformance
 
-- **Raw**: the frame as 16-bit words, like the other tracks of samples.
-- **FFV1** (`"codec": "ffv1"`): a video track (`V_FFV1`, level 3, every frame a key frame, 10-bit grey), whose image is as wide as a line and has the rows that fit. **When the last row is not whole it is filled up with `padValue`**: a PAL frame is 625 lines and 4 samples, so its image has 626 rows (the frame is cut off again after it is decoded). NTSC and PAL-M frames fill their images. A player that knows Matroska shows the track as video of 910 x 525 (NTSC) or 1135 x 626 (PAL).
-- **What the tools read**: a cvbs track is read as the two fields of the TBC that a frame maps to, the way a `.cvbs` file is, so a capture of CVBS kept in an LDX file stacks, decodes and shows as one kept in a file. The result of a stack of captures of CVBS is CVBS (a `.cvbs` file), as for files.
-- **Measured** on a part of the NTSC capture kept as CVBS: the track as FFV1 is **34 %** of its size as raw samples, and `unpack` gives the `.cvbs` file back identical, byte for byte.
-- A Y/C pair (`.cvbsy`, `.cvbsc`) and the audio of a CVBS capture (WAV files) are not tracks yet.
+A **writer** MUST: write `LDX_PROFILE`, `LDX_HISTORY`, `LDX_NEXT_TRACK_ID` and `LDX_TRACK` for every track; use the time scale and cluster span of section 2; write cues for a file and none for a stream; keep metadata blocks of a track in the order they were produced; never write a unit of a codec longer than its limit; and put the metadata of a field before its video in a stream.
 
-## 19. Pipes
+A **reader** MUST: read raw tracks; read all the tags and keep the last value; read the current metadata as section 8.3; skip what it does not know; refuse a codec it lacks by name; and, for a file, find a block through the cues.
 
-An LDX file can be sent down a pipe, one producer to one consumer (`ld-container pack capture.tbc -o - | ld-chroma-decoder - out.rgb`), with everything in one stream: the video, its metadata, the audio, whatever the producer has.
+## 19. Names of the tools' files
 
-**What a producer writes** (the library writes it with `Writer::openStream`): the EBML header, a segment **with no size** (it has no end that is known), the info, the tracks, the tags and the attachments, then the clusters as the blocks come, in the order of their time. Nothing is written again, so there are **no cues** and no padding, and the tags have the history up to when the stream began. The **metadata of the video are sent first**, before the video that they describe, because a consumer needs them to start (a producer that does not have them yet sends the video alone, and the consumer then takes the video system from the track and the defaults of the tools). Codecs work as in a file: raw in a pipe is the usual choice, FLAC and FFV1 are decoded by the consumer.
+`ld-container unpack` writes the separate files of a capture as `<name>.<id>.<suffix>`: `.tbc`, `.cvbs` (with its `.meta` and its companion JSON), `.pcm`, `.efm`, `.ac3`, `.chroma.tbc`, `_audio_0.wav` (for the 24-bit audio of a CVBS capture), `.tbc.json` (the current metadata), and the attachments by their names.
 
-**What a consumer does** (`Reader::openStream`): it reads the stream in order, with `nextBlock`; there is no index and no random access (`buildIndex` says so), and a block that has gone by cannot be read again. A window of what has come in is kept, so that the few bytes a reader looks at and puts back can be put back.
+## 20. Libraries
 
-**The tools**: `-` is the standard input, and **an LDX stream is what a pipe is when nothing else is said** (no `--input-format`, no `--system`, no input metadata): the video system, TBC or CVBS, the metadata and the codec come from the stream, so the tools do not have to be told about the format of the video. `--input-format ldx` says it. ld-chroma-decoder and ld-analyse read an LDX stream so; the first TBC or CVBS track is the video, and a stream that is not LDX is refused with a message that says how to read raw video. The data that go down a pipe are binary: the messages of a tool that writes to the standard output go to the standard error.
+The reference implementation uses **libebml and libmatroska** (LGPL-2.1-or-later) for the container and **libavcodec** (ffmpeg) only to encode and decode FLAC and FFV1. A program may use any other library (a Matroska muxer, ffmpeg itself) as long as the conventions above hold.
 
-**Metadata that come along (a chain of pipes)**: a producer fed by a pipe does not have all the metadata at the start (the first tool of the chain knows the parameters of the video, the next one the levels, another the VBI of each field), and it does not wait for the end either, because a pipe is read as it is written. So the metadata of a stream are in **two parts**, on the same `metadata` track:
+## 21. Examples and test vectors
 
-- the **parameters** come first, as one block: ld-decode metadata with the `videoParameters` (and the audio parameters) and **no fields**. A consumer that gets metadata with no fields takes the fields as they come;
-- the metadata of **each field** are one block each, **a JSON object as a member of `fields` is** (`seqNo` from 1 in the stream, `isFirstField`, `syncConf`, `fieldPhaseID`, `vbi`, `dropOuts`...), stamped with the time of the field and **sent just before its video**. A consumer has the metadata of a field by the time it has the field. A field without a block has the defaults of the system.
-
-A tool in the middle of the chain passes the blocks it does not know along unchanged, and it may **replace** the metadata of a field (a later block for the same `seqNo` wins, as the last metadata block of a file does) or add members to them, as long as the block goes before the video it is about. A tool that adds metadata to the stream sends the changed block of a field before that field's video, and so has to hold back the video of that field only until it has computed them (not the whole stream). A file that is written from such a stream keeps all the blocks; `ld-container unpack` and the tools that open a file use the last block of each field.
-
-## 20. The history of a file
-
-The history is a JSON array in the `LDX_HISTORY` tag, in the header of a file or a stream (and, for a tool that adds to a file, in the last tags of it, which are the current ones). Each tool that changes a capture adds **one entry** with the same members, so that a later tool can use the history without knowing the tool that wrote it:
-
-| member | what it is |
-|---|---|
-| `tool` | the name of the program (`ld-dropout-correct`, `ld-container`...) |
-| `version` | the build of the program (its commit) |
-| `command` | what it did: `pack`, `process`, `metadata`, `recompress`, `add`, `remove`, `stack`... |
-| `time` | when, in UTC (ISO 8601) |
-| `detail` | a sentence for a person (optional) |
-| `arguments` | the arguments of the program as they were given, so that the work can be done again or looked at (optional) |
-
-A tool may add members of its own (the files it read, the options it took, what it counted); a reader ignores those it does not know. The entries are in the order of the work, the oldest first; a stream keeps those that came in, and the tool in the chain adds its own before it sends the stream on. The library makes an entry with `LdxCapture::historyEntry`, and `ld-container history file.ldx` shows the history (`--json` gives the array). The history is a record and not a lock: it says what was done, and nothing in a file depends on it.
-
-**Tools that write a stream** (`ld-dropout-correct`, `ld-discmap`, `ld-disc-stacker`, with `-` as the output): the stream begins with the tracks and the history (that of the source, and the entry of the tool: section 20), then the parameters of the video, and then every field with its metadata: the block of the metadata of the field (section 19, "Metadata that come along") just before its video block. A tool whose metadata for a field depend on the whole work (the stacker, which corrects the phase of the fields and takes the metadata of a padded field from another source) makes them before it begins when they do not depend on the video, and when the frame is done for those that do (the dropouts of the fields). The audio of `ld-discmap` is a `pcm` track, blocks stamped with the time of the next field.
-
-**The audio of a CVBS capture** is a `pcm` track of **24 bits** (`"bits": 24` in its parameters, `"channels": 2`, the real `sampleRate`), raw: a block is a number of stereo samples, each a left and a right of 3 bytes (little endian, signed), as in the WAV file `<name>_audio_0.wav` of decode-orc. `ld-container pack` takes that file when it is there, `unpack` writes it back, bit for bit. The codec of a 24-bit track is raw (FLAC is for the tracks of 16 bits in this version). A tool that reads the audio of a TBC capture (16 bits) does not read this track, and the other way round.
-
-**A Y/C capture** (a luma file and a chroma file: `name.tbc` and `name_chroma.tbc`, or `name.tbcy` and `name.tbcc`) is two `tbc` tracks. The luma track is the capture as for any other (with the metadata track about it). The **chroma track** is a `tbc` track whose parameters say `"role": "chroma"` and `"track": <the id of the luma track>`; it has no metadata of its own, those of the luma are the metadata of the pair. A reader that does not know the role reads the chroma as another capture: tools list only the tracks that are not chroma as the captures of a file. A CVBS Y/C pair (`.cvbsy` and `.cvbsc`) is not packed in this version.
+`docs/Specifications/examples/` holds small files that cover the format and the expected content of each, with SHA-256 sums, so that an independent implementation can check that it reads what the reference writes and that its own files are read by the reference tools (`ld-container info`, `verify` and `unpack`). See its `README.md`.

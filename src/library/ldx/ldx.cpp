@@ -381,7 +381,7 @@ struct Writer::Private
                 KaxTrackAudio &audio = GetChild<KaxTrackAudio>(entry);
                 GetChild<KaxAudioSamplingFreq>(audio).SetValue(StandInSampleRate);
                 GetChild<KaxAudioChannels>(audio).SetValue(channelsOf(track));
-                GetChild<KaxAudioBitDepth>(audio).SetValue(16);
+                GetChild<KaxAudioBitDepth>(audio).SetValue(track.depth == 24 ? 24 : 16);
             } else {
                 GetChild<KaxTrackType>(entry).SetValue(33);     // metadata: the codec says what is in it
                 GetChild<KaxCodecID>(entry).SetValue(QByteArray("D_LDX/" + kindName(track.kind).toUpper().toLatin1()).constData());
