@@ -90,11 +90,15 @@ public:
     static bool writeMetadata(const QString &name, const QByteArray &json, QString &error);
 
     // The analogue audio of the capture: the PCM track that is about it (16-bit stereo), by samples (a sample is a pair)
-    bool openAudio(const QString &name, QString &error);
+    // wide: the 24-bit audio of a CVBS capture (a pair of samples is 6 bytes), read with getAudioBytes, instead of the 16-bit
+    // audio of a TBC capture (4 bytes, read with getAudio)
+    bool openAudio(const QString &name, QString &error, bool wide = false);
     qint64 audioSamples() const;
     double audioSampleRate() const;
     // Left and right in turn, or less if the audio ends
     QVector<qint16> getAudio(qint64 startSample, qint64 numberOfSamples);
+    // The samples as they are in the track, a pair after a pair (4 bytes each for 16 bits, 6 for 24)
+    QByteArray getAudioBytes(qint64 startSample, qint64 numberOfSamples);
 
 private:
     // The metadata track that is about this capture (0 if none)

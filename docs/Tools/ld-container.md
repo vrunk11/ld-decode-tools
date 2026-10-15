@@ -58,3 +58,5 @@ ld-container pack capture.cvbs --codec ffv1 -o - | ld-chroma-decoder - out.rgb
 A stream has no index, so `verify` needs a file, and an LDX stream is read in order. The messages go to the standard error when the standard output carries the data. See the specification (section 19).
 
 `ld-container history file.ldx` shows the history of a file: for each entry the time, the tool and its build, what it did, and the arguments it was given (`--json` for another program). Every tool that changes a capture adds an entry (specification, section 20).
+
+A CVBS capture packed with `ld-container pack capture.cvbs` takes its audio `capture_audio_0.wav` with it, as a 24-bit `pcm` track (raw), and `unpack` writes the WAV back as it was.

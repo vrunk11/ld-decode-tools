@@ -49,6 +49,7 @@ bool StackingPool::process()
     const LdDecodeMetaData::VideoParameters &outputParameters = ldDecodeMetaData[0]->getVideoParameters();
     targetVideo.setLdxVideo(outputParameters.fieldWidth, outputParameters.fieldHeight, outputParameters.sampleRate, QString(),
                             historyWith(LdxCapture::historyEntry("process", "stacking of " + QString::number(sourceVideos.size()) + " sources")));
+    targetVideo.setLdxCvbs(ldxCvbs);
     if (ldxStream) targetVideo.setLdxStream(ldDecodeMetaData[0]->parametersJson());
     if (!targetVideo.open(outputFilename, ldDecodeMetaData[0]->getVideoParameters().system,
                           ldDecodeMetaData[0]->getCvbsFileMetadata().sampleEncoding)) {

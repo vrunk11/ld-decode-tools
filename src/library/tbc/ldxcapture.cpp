@@ -62,6 +62,7 @@ struct LdxCapture::Private
     double audioRate = 0;
     std::vector<qint64> audioStarts;
     qint64 audioTotal = 0;
+    qint32 audioFrameBytes = 4;
     qint64 cachedBlock = -1;
     QByteArray cachedData;
 #endif
@@ -454,7 +455,7 @@ bool LdxCapture::writeMetadata(const QString &name, const QByteArray &json, QStr
 #endif
 }
 
-bool LdxCapture::openAudio(const QString &name, QString &error)
+bool LdxCapture::openAudio(const QString &name, QString &error, bool wide)
 {
 #ifdef LDDECODE_WITH_LDX
     if (!open(name, error)) return false;
@@ -463,12 +464,12 @@ bool LdxCapture::openAudio(const QString &name, QString &error)
     const Ldx::Track *chosen = nullptr;
     const QVector<Ldx::Track> tracks = d->reader.tracks();
     for (const Ldx::Track &candidate: tracks) {
-        if (candidate.kind != Ldx::Kind::Pcm) continue;
+        if (candidate.kind != Ldx::Kind::Pcm || (candidate.depth == 24) != wide) continue;
         if (candidate.parameters.value("track").toInt(0) == d->trackId) { chosen = &candidate; break; }
         if (!chosen) chosen = &candidate;
     }
     if (!chosen) {
-        error = QObject::tr("%1 has no analogue audio").arg(name);
+        error = wide ? QObject::tr("%1 has no 24-bit audio").arg(name) : QObject::tr("%1 has no analogue audio").arg(name);
         return false;
     }
     if (chosen->parameters.value("channels").toInt(2) != 2) {
@@ -477,6 +478,7 @@ bool LdxCapture::openAudio(const QString &name, QString &error)
     }
     d->audioRate = chosen->parameters.value("sampleRate").toDouble(44100);
     d->audioTrack = chosen->number;
+    d->audioFrameBytes = wide ? 6 : 4;
 
     // Where each block starts, from its time (the blocks are of whole samples, one after the other)
     const qint64 blocks = d->reader.blockCount(d->audioTrack);
@@ -493,7 +495,7 @@ bool LdxCapture::openAudio(const QString &name, QString &error)
         error = QObject::tr("Could not read the audio of %1").arg(name);
         return false;
     }
-    d->audioTotal = d->audioStarts.back() + last.data.size() / 4;
+    d->audioTotal = d->audioStarts.back() + last.data.size() / d->audioFrameBytes;
     d->cachedBlock = blocks - 1;
     d->cachedData = last.data;
     return true;
@@ -525,9 +527,19 @@ double LdxCapture::audioSampleRate() const
 QVector<qint16> LdxCapture::getAudio(qint64 startSample, qint64 numberOfSamples)
 {
     QVector<qint16> samples;
+    const QByteArray bytes = getAudioBytes(startSample, numberOfSamples);
+    samples.resize(static_cast<qint32>(bytes.size() / 2));
+    if (!bytes.isEmpty()) std::memcpy(samples.data(), bytes.constData(), static_cast<size_t>(bytes.size()));
+    return samples;
+}
+
+QByteArray LdxCapture::getAudioBytes(qint64 startSample, qint64 numberOfSamples)
+{
+    QByteArray samples;
 #ifdef LDDECODE_WITH_LDX
     if (d->audioStarts.empty() || startSample < 0 || numberOfSamples < 1) return samples;
-    samples.reserve(static_cast<qint32>(numberOfSamples * 2));
+    const qint32 frameBytes = d->audioFrameBytes;
+    samples.reserve(static_cast<qint32>(numberOfSamples * frameBytes));
 
     // The block that holds the first sample
     qint64 block = std::upper_bound(d->audioStarts.begin(), d->audioStarts.end(), startSample) - d->audioStarts.begin() - 1;
@@ -541,13 +553,11 @@ QVector<qint16> LdxCapture::getAudio(qint64 startSample, qint64 numberOfSamples)
             d->cachedData = data.data;
         }
         const qint64 first = d->audioStarts[static_cast<size_t>(block)];
-        const qint64 inBlock = d->cachedData.size() / 4;
+        const qint64 inBlock = d->cachedData.size() / frameBytes;
         const qint64 from = position - first;
         const qint64 count = qMin(end - position, inBlock - from);
         if (count <= 0) { block++; continue; }
-        const qint32 old = samples.size();
-        samples.resize(old + static_cast<qint32>(count * 2));
-        std::memcpy(samples.data() + old, d->cachedData.constData() + from * 4, static_cast<size_t>(count * 4));
+        samples.append(d->cachedData.constData() + from * frameBytes, static_cast<qsizetype>(count * frameBytes));
         position += count;
         block++;
     }

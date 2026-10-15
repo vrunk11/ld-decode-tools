@@ -245,10 +245,6 @@ int main(int argc, char *argv[])
     // Metadata filename for output TBC, in the same format as the first input
     // (JSON in gives JSON out) unless named explicitly
     QString outputMetadataFilename;
-    if (ldxOutput && ldDecodeMetaData[0]->isCvbs()) {
-        qCritical("CVBS video cannot be sent as an LDX stream yet: name an output file, or give --output-metadata for a raw stream");
-        return -1;
-    }
     if (!ldxOutput && !metadataOptions.selectOutput(LdDecodeMetaData::metadataFileName(outputFilename, ldDecodeMetaData[0]->getFormat()),
                                       ldDecodeMetaData[0]->getFormat(), outputMetadataFilename)) {
         return -1;
@@ -331,7 +327,7 @@ int main(int argc, char *argv[])
     CorrectorPool correctorPool(outputFilename, outputMetadataFilename, maxThreads,
                                 ldDecodeMetaData, sourceVideos,
                                 reverse, intraField, overCorrect);
-    correctorPool.setLdx(ldxOutput, LdxCapture::historyOf(inputFilenames[0]));
+    correctorPool.setLdx(ldxOutput, LdxCapture::historyOf(inputFilenames[0]), TargetVideo::sourceIsCvbs(inputFilenames[0]));
     if (!correctorPool.process()) result = 1;
 
     // Report on the result of the correction process

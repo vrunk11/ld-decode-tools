@@ -21,6 +21,7 @@
 #endif
 
 #include "ldxcapture.h"
+#include "ldxstream.h"
 #ifdef LDDECODE_WITH_LDX
 #include "ldx.h"
 #endif
@@ -36,6 +37,7 @@ struct TargetVideo::LdxOutput {
     Ldx::Writer writer;
     quint32 video = 0, audio = 0, metadata = 0;
     qint64 fields = 0;
+    bool cvbs = false;
 };
 
 namespace {
@@ -61,7 +63,7 @@ void TargetVideo::setLdxVideo(qint32 fieldWidth, qint32 fieldHeight, double samp
     ldxHistory = history;
 }
 
-void TargetVideo::setLdxAudio(double sampleRate) { ldxAudioRate = sampleRate; }
+void TargetVideo::setLdxAudio(double sampleRate, qint32 bits) { ldxAudioRate = sampleRate; ldxAudioBits = bits; }
 bool TargetVideo::isLdx() const { return ldx != nullptr; }
 
 bool TargetVideo::writeAudio(const QByteArray &samples)
@@ -75,11 +77,19 @@ bool TargetVideo::writeAudio(const QByteArray &samples)
 
 void TargetVideo::setLdxVideo(qint32, qint32, double, const QString &, const QJsonArray &) {}
 void TargetVideo::setLdxStream(const QByteArray &) {}
-void TargetVideo::setLdxAudio(double) {}
+void TargetVideo::setLdxAudio(double, qint32) {}
 bool TargetVideo::isLdx() const { return false; }
 bool TargetVideo::writeAudio(const QByteArray &) { return false; }
 
 #endif
+
+bool TargetVideo::sourceIsCvbs(const QString &inputName)
+{
+    if (inputName == "-") return LdxStream::instance() && LdxStream::instance()->isCvbs();
+    const QString reference = StackProject::referenceFile(inputName);
+    if (LdxCapture::isLdxName(reference)) return LdxCapture::isCvbs(reference);
+    return Cvbs::isDataFileName(reference);
+}
 
 bool TargetVideo::open(const QString &fileName, VideoSystem system, Cvbs::SampleEncoding encoding)
 {
@@ -95,8 +105,19 @@ bool TargetVideo::open(const QString &fileName, VideoSystem system, Cvbs::Sample
         }
         ldx = std::make_shared<LdxOutput>();
         Ldx::Track video;
-        video.kind = Ldx::Kind::Tbc;
-        video.depth = 16;
+        video.kind = ldxCvbs ? Ldx::Kind::Cvbs : Ldx::Kind::Tbc;
+        video.depth = ldxCvbs ? 10 : 16;
+        ldx->cvbs = ldxCvbs;
+        if (ldxCvbs) {
+            // What a frame is (the length of a line, and its samples) is what the codec needs and what gives the file back
+            geometry = Cvbs::geometry(system);
+            converter = std::make_unique<Cvbs::SampleConverter>(encoding, system);
+            frameData.resize(static_cast<qint32>(geometry.frameSamples));
+            video.parameters["lineWidth"] = geometry.lineWidth;
+            video.parameters["frameSamples"] = static_cast<double>(geometry.frameSamples);
+            video.parameters["sampleEncoding"] = Cvbs::sampleEncodingName(encoding);
+            video.parameters["padValue"] = Cvbs::standardLevels(system).blanking;
+        }
         video.name = ldxName.isEmpty() ? QFileInfo(fileName).completeBaseName() : ldxName;
         video.parameters["system"] = system == PAL ? "PAL" : (system == NTSC ? "NTSC" : "PAL-M");
         video.parameters["sampleRate"] = ldxSampleRate;
@@ -116,10 +137,11 @@ bool TargetVideo::open(const QString &fileName, VideoSystem system, Cvbs::Sample
         if (ldxAudioRate > 0) {
             Ldx::Track audio;
             audio.kind = Ldx::Kind::Pcm;
-            audio.depth = 16;
+            audio.depth = ldxAudioBits;
             audio.name = video.name + " audio";
             audio.parameters["sampleRate"] = ldxAudioRate;
             audio.parameters["channels"] = 2;
+            if (ldxAudioBits != 16) audio.parameters["bits"] = ldxAudioBits;
             audio.parameters["track"] = static_cast<int>(video.number);
             ldx->writer.addTrack(audio);
             ldx->audio = audio.number;
@@ -141,10 +163,6 @@ bool TargetVideo::open(const QString &fileName, VideoSystem system, Cvbs::Sample
         if (!opened) {
             qCritical().noquote() << "Unable to open output LDX file" << fileName << "-" << error;
             ldx.reset();
-            return false;
-        }
-        if (cvbs) {
-            qCritical() << "CVBS video cannot be written to an LDX file here";
             return false;
         }
         return true;
@@ -181,7 +199,9 @@ bool TargetVideo::writeField(const QVector<quint16> &fieldData, const QByteArray
 #ifdef LDDECODE_WITH_LDX
     if (ldx && ldx->metadata != 0 && !metadataJson.isEmpty()) {
         // (the metadata of a field go just before its video)
-        if (!ldx->writer.writeBlock(ldx->metadata, fieldTimeNs(ldx->fields, ldxSystem), metadataJson)) {
+        // (the fields of a CVBS frame have the time of the frame)
+        const qint64 at = ldx->cvbs ? ldx->fields - (ldx->fields % 2) : ldx->fields;
+        if (!ldx->writer.writeBlock(ldx->metadata, fieldTimeNs(at, ldxSystem), metadataJson)) {
             qCritical().noquote() << "Could not write to the output LDX file:" << ldx->writer.lastError();
             return false;
         }
@@ -195,6 +215,30 @@ bool TargetVideo::writeField(const QVector<quint16> &fieldData, const QByteArray
 bool TargetVideo::writeField(const QVector<quint16> &fieldData)
 {
 #ifdef LDDECODE_WITH_LDX
+    if (ldx && ldx->cvbs) {
+        if (fieldData.size() != geometry.fieldLength()) {
+            qCritical() << "Field of" << fieldData.size() << "samples does not fit a CVBS frame of" << geometry.fieldLength() << "sample fields";
+            return false;
+        }
+        ldx->fields++;
+        // Hold the first field of each frame until the second arrives
+        if (!hasPendingField) {
+            pendingField = fieldData;
+            hasPendingField = true;
+            return true;
+        }
+        Cvbs::fieldsToFrame(pendingField.constData(), fieldData.constData(), geometry, *converter, frameData.data());
+        hasPendingField = false;
+        // The samples of a cvbs track are 10-bit values in words
+        QByteArray words(frameData.size() * 2, 0);
+        quint16 *values = reinterpret_cast<quint16 *>(words.data());
+        for (qint32 i = 0; i < frameData.size(); i++) values[i] = static_cast<quint16>(converter->toTbc(frameData[i]) >> 6);
+        if (!ldx->writer.writeBlock(ldx->video, fieldTimeNs(ldx->fields - 2, ldxSystem), words)) {
+            qCritical().noquote() << "Could not write to the output LDX file:" << ldx->writer.lastError();
+            return false;
+        }
+        return true;
+    }
     if (ldx) {
         const QByteArray bytes(reinterpret_cast<const char *>(fieldData.constData()), fieldData.size() * 2);
         if (!ldx->writer.writeBlock(ldx->video, fieldTimeNs(ldx->fields, ldxSystem), bytes)) {
@@ -240,6 +284,10 @@ bool TargetVideo::close()
 #ifdef LDDECODE_WITH_LDX
     if (ldx) {
         QString error;
+        if (hasPendingField) {
+            qWarning() << "The output ended with an unpaired field, which is not written: CVBS holds whole frames";
+            hasPendingField = false;
+        }
         const bool ok = ldx->writer.finish(error);
         if (!ok) qCritical().noquote() << "Could not finish the output LDX file:" << error;
         ldx.reset();
@@ -258,8 +306,8 @@ bool TargetVideo::close()
 
 bool checkSameVideoContainer(const QString &inputFileName, const QString &outputFileName)
 {
-    // stdout carries whatever the input is
-    if (outputFileName == "-") return true;
+    // stdout carries whatever the input is, and an LDX file holds TBC or CVBS
+    if (outputFileName == "-" || LdxCapture::isLdxName(outputFileName)) return true;
 
     const bool inputIsCvbs = Cvbs::isDataFileName(StackProject::referenceFile(inputFileName));
     const bool outputIsCvbs = Cvbs::isDataFileName(outputFileName);

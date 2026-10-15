@@ -56,7 +56,7 @@ public:
                        bool& _reverse, bool& _intraField, bool& _overCorrect, QVector<qint32> &availableSourcesForFrame, QVector<double> &sourceFrameQuality);
 
     // What the output is when it is an LDX file or stream: the history of the source, and whether "-" is a stream
-    void setLdx(bool stream, const QJsonArray &history) { ldxStream = stream; sourceHistory = history; }
+    void setLdx(bool stream, const QJsonArray &history, bool cvbs) { ldxStream = stream; sourceHistory = history; ldxCvbs = cvbs; }
 
     bool setOutputFrame(qint32 frameNumber,
                         SourceVideo::Data firstTargetFieldData, SourceVideo::Data secondTargetFieldData,
@@ -110,6 +110,7 @@ private:
 
     // An output that is an LDX stream ("-"): each field goes with its own metadata
     bool ldxStream = false;
+    bool ldxCvbs = false;
     QJsonArray sourceHistory;
     qint32 streamFieldCount = 0;
 
