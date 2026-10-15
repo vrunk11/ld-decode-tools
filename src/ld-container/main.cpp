@@ -368,6 +368,7 @@ struct CaptureOptions {
     QString name;               // the name of the capture, the name of its file when empty
     QString codec = "raw";      // how the video and the audio are kept
     bool live = false;          // the metadata of the fields go before their video, one block each (see the pipes of the specification)
+    bool asChroma = false;      // the file is the chroma file of a Y/C capture (read for the track about the luma)
 };
 
 CaptureOptions captureOptions(const QCommandLineParser &parser)
@@ -395,8 +396,8 @@ bool readCapture(const CaptureOptions &options, const QString &input, Capture &c
     const LdDecodeMetaData::VideoParameters &video = metadata.getVideoParameters();
     capture.system = video.system;
     capture.cvbs = Cvbs::isDataFileName(input);
-    if (capture.cvbs && Cvbs::channel(input) != Cvbs::Channel::Composite) {
-        err << "Only the composite CVBS files (.cvbs) can be packed, and not " << input << "\n";
+    if (capture.cvbs && Cvbs::channel(input) == Cvbs::Channel::Chroma && !options.asChroma) {
+        err << input << " is the chroma file of a Y/C capture: pack its luma file " << Cvbs::pairedDataFileName(input) << ", which takes it\n";
         return false;
     }
 
@@ -576,6 +577,20 @@ struct ChromaPart {
 
 bool readChroma(const CaptureOptions &options, const QString &input, ChromaPart &part)
 {
+    if (Cvbs::isDataFileName(input)) {
+        // .cvbsy with .cvbsc beside it; a .cvbs is composite and has none
+        const QString partner = Cvbs::pairedDataFileName(input);
+        if (partner.isEmpty() || Cvbs::channel(input) != Cvbs::Channel::Luma) return true;
+        if (!QFileInfo::exists(partner)) {
+            err << "The chroma file " << partner << " of the Y/C capture " << input << " does not exist\n";
+            return false;
+        }
+        CaptureOptions chromaOptions = options;
+        chromaOptions.asChroma = true;
+        if (!readCapture(chromaOptions, partner, part.capture)) return false;
+        part.present = true;
+        return true;
+    }
     if (TbcFiles::isChromaFile(input)) {
         err << input << " is the chroma file of a Y/C capture: pack its luma file " << TbcFiles::lumaFileName(input) << ", which takes it\n";
         return false;
@@ -1605,12 +1620,25 @@ int unpack(const QStringList &arguments)
         else if (track.kind == Ldx::Kind::Cvbs) suffix = ".cvbs";
         else if (track.kind == Ldx::Kind::Pcm) suffix = ".pcm";
         if (track.kind == Ldx::Kind::Tbc && track.parameters.value("role").toString() == "chroma") suffix = ".chroma.tbc";
+        // A CVBS Y/C pair is named as decode-orc names it: <name>.cvbsy and <name>.cvbsc, both with the id of the luma
+        quint32 fileId = track.number;
+        if (track.kind == Ldx::Kind::Cvbs) {
+            if (track.parameters.value("role").toString() == "chroma") {
+                suffix = ".cvbsc";
+                fileId = static_cast<quint32>(track.parameters.value("track").toInt(0));
+            } else {
+                for (const Ldx::Track &other: reader.tracks()) {
+                    if (other.kind == Ldx::Kind::Cvbs && other.parameters.value("role").toString() == "chroma"
+                        && other.parameters.value("track").toInt(0) == static_cast<int>(track.number)) suffix = ".cvbsy";
+                }
+            }
+        }
         else if (track.kind == Ldx::Kind::Efm) suffix = ".efm";
         else if (track.kind == Ldx::Kind::Ac3) suffix = ".ac3";
         else if (track.kind == Ldx::Kind::Metadata) suffix = ".json";
         else if (track.kind == Ldx::Kind::Annotations) suffix = ".annotations.json";
         // The files are told apart by the id of their track. What is about a CVBS capture is named as its companion: <data file>.json
-        QString name = QString("%1.%2%3").arg(base).arg(track.number).arg(track.kind == Ldx::Kind::Metadata ? ".tbc" + suffix : suffix);
+        QString name = QString("%1.%2%3").arg(base).arg(fileId).arg(track.kind == Ldx::Kind::Metadata ? ".tbc" + suffix : suffix);
         if (track.kind == Ldx::Kind::Metadata) {
             const quint32 about = static_cast<quint32>(track.parameters.value("track").toInt(0));
             for (const Ldx::Track &other: reader.tracks()) {
