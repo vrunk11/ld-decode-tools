@@ -12,6 +12,8 @@
 
 #include <QFileInfo>
 
+#include "ldxcapture.h"
+
 namespace TbcFiles {
 
 namespace {
@@ -37,6 +39,7 @@ bool isOrcYcFile(const QString &fileName)
 
 bool isChromaFile(const QString &fileName)
 {
+    if (LdxCapture::isLdxName(fileName)) return LdxCapture::isChromaTrack(fileName);
     return endsWith(fileName, ".tbcc") || endsWith(fileName, "_chroma.tbc");
 }
 
@@ -55,6 +58,7 @@ QString baseName(const QString &fileName)
 
 QString lumaFileName(const QString &fileName)
 {
+    if (LdxCapture::isLdxName(fileName)) return LdxCapture::lumaOfChroma(fileName);
     if (endsWith(fileName, ".tbcc")) return without(fileName, 1) + "y";
     if (endsWith(fileName, "_chroma.tbc")) return without(fileName, 11) + ".tbc";
     return fileName;
@@ -62,6 +66,7 @@ QString lumaFileName(const QString &fileName)
 
 QString chromaFileName(const QString &fileName)
 {
+    if (LdxCapture::isLdxName(fileName)) return LdxCapture::isChromaTrack(fileName) ? fileName : LdxCapture::chromaOfLuma(fileName);
     if (isChromaFile(fileName)) return fileName;
 
     QString partner;

@@ -60,3 +60,5 @@ A stream has no index, so `verify` needs a file, and an LDX stream is read in or
 `ld-container history file.ldx` shows the history of a file: for each entry the time, the tool and its build, what it did, and the arguments it was given (`--json` for another program). Every tool that changes a capture adds an entry (specification, section 20).
 
 A CVBS capture packed with `ld-container pack capture.cvbs` takes its audio `capture_audio_0.wav` with it, as a 24-bit `pcm` track (raw), and `unpack` writes the WAV back as it was.
+
+A Y/C capture packs with its chroma: `ld-container pack capture.tbc` (or `capture.tbcy`) takes `capture_chroma.tbc` (or `capture.tbcc`) beside it as a second `tbc` track with `"role": "chroma"`, about the luma track. `unpack` writes it as `<name>.<id>.chroma.tbc`, and `ld-analyse` shows the pair as it shows a Y/C pair of files. A chroma file given alone is refused: pack the luma file. A CVBS Y/C pair is not packed.

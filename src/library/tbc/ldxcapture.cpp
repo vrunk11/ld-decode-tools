@@ -133,6 +133,81 @@ QString LdxCapture::trackName(const QString &path, qint32 track)
     return track > 0 ? QString("%1#%2").arg(path).arg(track) : path;
 }
 
+namespace {
+
+#ifdef LDDECODE_WITH_LDX
+// The tracks of the file a name gives, and the id it names (0: none)
+bool tracksOf(const QString &name, QString &path, qint32 &asked, QVector<Ldx::Track> &tracks)
+{
+    LdxCapture::split(name, path, asked);
+    Ldx::Reader reader;
+    QString error;
+    if (!reader.open(path, error) || reader.profile() < 1) return false;
+    tracks = reader.tracks();
+    return true;
+}
+
+bool isChroma(const Ldx::Track &track)
+{
+    return track.kind == Ldx::Kind::Tbc && track.parameters.value("role").toString() == "chroma";
+}
+#endif
+
+} // namespace
+
+bool LdxCapture::isChromaTrack(const QString &name)
+{
+#ifdef LDDECODE_WITH_LDX
+    QString path;
+    qint32 asked;
+    QVector<Ldx::Track> tracks;
+    if (!isLdxName(name) || !tracksOf(name, path, asked, tracks) || asked <= 0) return false;
+    for (const Ldx::Track &track: tracks) {
+        if (track.number == static_cast<quint32>(asked)) return isChroma(track);
+    }
+#else
+    Q_UNUSED(name);
+#endif
+    return false;
+}
+
+QString LdxCapture::lumaOfChroma(const QString &name)
+{
+#ifdef LDDECODE_WITH_LDX
+    QString path;
+    qint32 asked;
+    QVector<Ldx::Track> tracks;
+    if (!isLdxName(name) || !tracksOf(name, path, asked, tracks) || asked <= 0) return name;
+    for (const Ldx::Track &track: tracks) {
+        if (track.number == static_cast<quint32>(asked) && isChroma(track)) return trackName(path, track.parameters.value("track").toInt(0));
+    }
+#endif
+    return name;
+}
+
+QString LdxCapture::chromaOfLuma(const QString &name)
+{
+#ifdef LDDECODE_WITH_LDX
+    QString path;
+    qint32 asked;
+    QVector<Ldx::Track> tracks;
+    if (!isLdxName(name) || !tracksOf(name, path, asked, tracks)) return QString();
+    // The luma is the track named, or the first video track that is not a chroma
+    quint32 luma = static_cast<quint32>(asked);
+    if (luma == 0) {
+        for (const Ldx::Track &track: tracks) {
+            if (track.kind == Ldx::Kind::Tbc && !isChroma(track)) { luma = track.number; break; }
+        }
+    }
+    for (const Ldx::Track &track: tracks) {
+        if (isChroma(track) && track.parameters.value("track").toInt(0) == static_cast<int>(luma)) return trackName(path, static_cast<qint32>(track.number));
+    }
+#else
+    Q_UNUSED(name);
+#endif
+    return QString();
+}
+
 bool LdxCapture::isCvbs(const QString &name)
 {
 #ifdef LDDECODE_WITH_LDX
@@ -166,6 +241,7 @@ bool LdxCapture::listCaptures(const QString &path, QVector<qint32> &tracks, QStr
     }
     for (const Ldx::Track &track: reader.tracks()) {
         if (track.kind != Ldx::Kind::Tbc && track.kind != Ldx::Kind::Cvbs) continue;
+        if (isChroma(track)) continue;      // (the chroma of a Y/C capture goes with its luma)
         tracks.append(static_cast<qint32>(track.number));
         names.append(track.name);
     }

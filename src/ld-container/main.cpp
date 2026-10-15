@@ -36,6 +36,7 @@
 #include "ldxcapture.h"
 #include "cvbs.h"
 #include "cvbsaudio.h"
+#include "tbcfiles.h"
 #include "lddecodemetadata.h"
 #include "tbc/logging.h"
 
@@ -565,6 +566,44 @@ bool readCapture(const CaptureOptions &options, const QString &input, Capture &c
     return true;
 }
 
+// The chroma file of a Y/C capture (_chroma.tbc beside a .tbc, .tbcc beside a .tbcy), which goes in the file as a track about
+// the luma one: a `tbc` track whose parameters say "role": "chroma" and "track": the id of the luma
+struct ChromaPart {
+    Capture capture;
+    bool present = false;
+    std::unique_ptr<BlockSource> source;
+};
+
+bool readChroma(const CaptureOptions &options, const QString &input, ChromaPart &part)
+{
+    if (TbcFiles::isChromaFile(input)) {
+        err << input << " is the chroma file of a Y/C capture: pack its luma file " << TbcFiles::lumaFileName(input) << ", which takes it\n";
+        return false;
+    }
+    const QString path = TbcFiles::chromaFileName(input);
+    if (path.isEmpty() || path == input || Cvbs::isDataFileName(input)) return true;
+    if (!readCapture(options, path, part.capture)) return false;
+    part.present = true;
+    return true;
+}
+
+void addChromaTrack(Ldx::Writer &writer, ChromaPart &part, quint32 luma)
+{
+    if (!part.present) return;
+    part.capture.video.name += " (chroma)";
+    part.capture.video.parameters["role"] = "chroma";
+    part.capture.video.parameters["track"] = static_cast<int>(luma);
+    writer.addTrack(part.capture.video);
+}
+
+void addChromaSource(ChromaPart &part, const Capture &luma, std::vector<BlockSource *> &sources)
+{
+    if (!part.present) return;
+    part.source = std::make_unique<FieldSource>(*part.capture.tbc, part.capture.video.number, part.capture.system, part.capture.unitBytes,
+                                                luma.start, luma.fields, part.capture.unitFields, part.capture.convert);
+    sources.push_back(part.source.get());
+}
+
 void addCaptureTracks(Ldx::Writer &writer, Capture &capture)
 {
     writer.addTrack(capture.video);
@@ -712,9 +751,12 @@ int pack(const QStringList &arguments)
     CaptureOptions captured = captureOptions(parser);
     captured.live = parser.isSet("live-metadata");
     if (!readCapture(captured, input, capture)) return 1;
+    ChromaPart chroma;
+    if (!readChroma(captured, input, chroma)) return 1;
 
     Ldx::Writer writer;
     addCaptureTracks(writer, capture);
+    addChromaTrack(writer, chroma, capture.video.number);
 
     // What goes with the video as bytes: EFM and AC3
     struct ByteTrack {
@@ -754,6 +796,7 @@ int pack(const QStringList &arguments)
     if (capture.wav) wav = std::make_unique<Wav24Source>(capture.wav, capture.audio.number, capture.pcmRate, fields.endTimeNs());
     FieldMetadataSource fieldMetadata(capture.metadata.number, capture.fieldJson, capture.system, capture.start, capture.unitFields);
     std::vector<BlockSource *> sources { &metadata, &fieldMetadata, &fields };
+    addChromaSource(chroma, capture, sources);
     if (wav) sources.push_back(wav.get());
     else if (capture.hasAudio) sources.push_back(&pcm);
     std::vector<std::unique_ptr<ChunkSource>> chunkSources;
@@ -800,11 +843,15 @@ int addStream(const QStringList &arguments)
     Rewrite rewrite;
     if (!openForRewrite(rewrite, source)) return 1;
     Capture capture;
-    if (!readCapture(captureOptions(parser), input, capture)) return 1;
+    const CaptureOptions addOptions = captureOptions(parser);
+    if (!readCapture(addOptions, input, capture)) return 1;
+    ChromaPart chroma;
+    if (!readChroma(addOptions, input, chroma)) return 1;
 
     Ldx::Writer writer;
     prepareWriter(rewrite, writer, {});
     addCaptureTracks(writer, capture);
+    addChromaTrack(writer, chroma, capture.video.number);
     rewrite.history.append(historyEntry("add", QString("track %1: %2").arg(capture.video.number).arg(QFileInfo(input).fileName())));
     writer.setHistory(rewrite.history);
 
@@ -820,6 +867,7 @@ int addStream(const QStringList &arguments)
     std::unique_ptr<Wav24Source> wav;
     if (capture.wav) wav = std::make_unique<Wav24Source>(capture.wav, capture.audio.number, capture.pcmRate, fields.endTimeNs());
     std::vector<BlockSource *> sources { &old, &metadata, &fields };
+    addChromaSource(chroma, capture, sources);
     if (wav) sources.push_back(wav.get());
     else if (capture.hasAudio) sources.push_back(&pcm);
     if (!mergeInto(writer, sources) || !writer.finish(error)) {
@@ -1437,6 +1485,7 @@ int unpack(const QStringList &arguments)
         if (track.kind == Ldx::Kind::Tbc) suffix = ".tbc";
         else if (track.kind == Ldx::Kind::Cvbs) suffix = ".cvbs";
         else if (track.kind == Ldx::Kind::Pcm) suffix = ".pcm";
+        if (track.kind == Ldx::Kind::Tbc && track.parameters.value("role").toString() == "chroma") suffix = ".chroma.tbc";
         else if (track.kind == Ldx::Kind::Efm) suffix = ".efm";
         else if (track.kind == Ldx::Kind::Ac3) suffix = ".ac3";
         else if (track.kind == Ldx::Kind::Metadata) suffix = ".json";
