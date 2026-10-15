@@ -48,6 +48,10 @@ for ($i = 0; $i -lt 300; $i++) { $efm[$i] = 3 + ($i % 9) }
 & $Bin pack tiny.tbc --pcm tiny.pcm --efm tiny.efm --pcm-rate 44100 -o "$Out\tbc-raw.ldx" | Out-Null
 & $Bin pack tiny.tbc --pcm tiny.pcm --pcm-rate 44100 --codec flac -o "$Out\tbc-flac.ldx" | Out-Null
 & $Bin pack tiny.tbc --pcm tiny.pcm --pcm-rate 44100 --live-metadata -o "$Out\tbc-stream.ldx" | Out-Null
+# the same stream as it goes down a pipe, saved as it came: a file with no cues
+$ErrorActionPreference = "Continue"
+cmd.exe /c """$Bin"" pack tiny.tbc --pcm tiny.pcm --pcm-rate 44100 --live-metadata -o - > ""$Out\tbc-nocues.ldx""" 2>&1 | Out-Null
+$ErrorActionPreference = "Stop"
 
 # --- a Y/C capture: the chroma file is the luma with another offset
 $chroma = $tbc.Clone(); for ($i = 0; $i -lt $chroma.Length; $i += 2) { $chroma[$i] = [byte](($chroma[$i] + 7) -band 255) }

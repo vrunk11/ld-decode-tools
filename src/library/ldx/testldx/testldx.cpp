@@ -16,6 +16,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <iostream>
+#include <map>
 
 #include "ldx.h"
 #include "ldxcodec.h"
@@ -677,7 +678,40 @@ static void testStream(const QString &path)
     // There is no way to the blocks but in turn
     CHECK(!reader.buildIndex(error));
     std::fclose(file);
+
+    // The same stream, saved as it came, is a file with no index: it is opened as any file, the index is made by reading it
+    {
+        Ldx::Reader saved;
+        CHECK(saved.open(path, error));
+        CHECK(saved.buildIndex(error));
+        std::map<quint32, qint64> counts;
+        for (const Ldx::Block &expected: written) counts[expected.track]++;
+        for (const auto &count: counts) CHECK(saved.blockCount(count.first) == count.second);
+        std::map<quint32, qint64> seen;
+        for (const Ldx::Block &expected: written) {
+            Ldx::Block got;
+            CHECK(saved.readBlock(expected.track, seen[expected.track]++, got));
+            CHECK(got.data == expected.data && got.timeNs == expected.timeNs);
+        }
+    }
+
+    // And it can be added to where it ends
+    {
+        Ldx::Writer more;
+        CHECK(more.openAppend(path, error));
+        more.addHistory(QJsonObject { { "tool", "append" } });
+        CHECK(more.writeBlock(2, 200000000LL, QByteArray("more metadata")));
+        CHECK(more.finish(error));
+        Ldx::Reader again;
+        CHECK(again.open(path, error));
+        CHECK(again.buildIndex(error));
+        CHECK(again.blockCount(2) == 2);
+        Ldx::Block last;
+        CHECK(again.readBlock(2, 1, last) && last.data == "more metadata");
+        CHECK(again.history().size() == 2);
+    }
 }
+
 
 static void testNotAnLdxFile(const QString &path)
 {
@@ -754,6 +788,8 @@ static void testExamples()
         { "tbc-flac.ldx", 1, "191919f892445d7aea0c5598f6b998cbb3a611cd5af0f4feb2c383800cf29d8f" },
         { "tbc-flac.ldx", 3, "2e1345f1fc63dacca0c177ceaba46d651c41ce3368809f62324010c69d178464" },
         { "tbc-stream.ldx", 1, "191919f892445d7aea0c5598f6b998cbb3a611cd5af0f4feb2c383800cf29d8f" },
+        { "tbc-nocues.ldx", 1, "191919f892445d7aea0c5598f6b998cbb3a611cd5af0f4feb2c383800cf29d8f" },
+        { "tbc-nocues.ldx", 3, "2e1345f1fc63dacca0c177ceaba46d651c41ce3368809f62324010c69d178464" },
         { "tbc-yc.ldx", 3, "251d7b04048c25f51eb7780e2222c8b4ac17ffdde6cd35ebe3cf2e52b978f917" },
     };
     Q_UNUSED(tbc);

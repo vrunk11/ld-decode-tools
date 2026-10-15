@@ -55,7 +55,7 @@ ld-container pack capture.tbc --pcm capture.pcm -o - | ld-container recompress -
 ld-container pack capture.cvbs --codec ffv1 -o - | ld-chroma-decoder - out.rgb
 ```
 
-A stream has no index, so `verify` needs a file, and an LDX stream is read in order. The messages go to the standard error when the standard output carries the data. See the specification (section 15).
+A stream has no index: what reads a pipe reads it once, in order. A stream that is saved to a file (`ld-container pack capture.tbc -o - > capture.ldx`) is a file like any other: the tools make its index by reading it the first time it is opened (`verify`, `#N`, `ld-analyse`...), and `ld-container recompress capture.ldx -o indexed.ldx` writes it with its index so that this is not needed again. The messages go to the standard error when the standard output carries the data. See the specification (section 15).
 
 `ld-container history file.ldx` shows the history of a file: for each entry the time, the tool and its build, what it did, and the arguments it was given (`--json` for another program). Every tool that changes a capture adds an entry (specification, section 12).
 
