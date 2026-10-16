@@ -228,6 +228,8 @@ private:
     quint32 renderGeneration = 0;
     bool firstImageShown = false;
     qint32 playbackStartPosition = 0;
+    qint32 playbackFirstPosition = 1, playbackLastPosition = 1;
+    void playbackLooped();
     qint32 playbackDue = 0;
     void showRenderedImage();
     // A stream (live input): count what has arrived, and keep the controls and playback to it

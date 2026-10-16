@@ -3,6 +3,7 @@ add_executable(testweave
     ../tbcsource.cpp
     ../filesnr.cpp
     ../livesnr.cpp
+    ../playbackrenderer.cpp
 )
 
 target_link_libraries(testweave PRIVATE Qt::Core Qt::Gui Qt::Widgets lddecode-library lddecode-chroma)
