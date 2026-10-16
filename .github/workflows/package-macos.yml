@@ -177,7 +177,7 @@ jobs:
           relink() {
             local file="$1" prefix="$2" dep
             while IFS= read -r dep; do
-              [[ "$dep" == "$APP_BUNDLE"/Contents/Frameworks/* && "$dep" != "$file" ]] || continue
+              [[ "$dep" == "$APP_BUNDLE"/Contents/Frameworks/* ]] || continue
               install_name_tool -change "$dep" "$prefix/$(basename "$dep")" "$file"
             done < <(otool -L "$file" | tail -n +2 | awk '{print $1}')
           }
@@ -188,6 +188,13 @@ jobs:
             install_name_tool -id "@loader_path/$(basename "$lib")" "$lib"
             echo "$(basename "$lib"): $before -> $(otool -D "$lib" | tail -n +2)"
             relink "$lib" "@loader_path"
+          done
+          # (if a name is still a path of the runner, say which load command it is: the log is all there is to go by)
+          for lib in "$APP_BUNDLE"/Contents/Frameworks/*.dylib; do
+            if otool -L "$lib" | tail -n +2 | grep -q "$APP_BUNDLE"; then
+              echo "still a path of the runner in $(basename "$lib"):"
+              otool -l "$lib" | grep -B3 -A4 "$APP_BUNDLE" || true
+            fi
           done
           while IFS= read -r plugin; do
             relink "$plugin" "@loader_path/../../Frameworks"
