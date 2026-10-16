@@ -343,6 +343,34 @@ int main(int argc, char *argv[])
         QComboBox *refusedSources = refusing.findChildren<QComboBox *>().first();
         CHECK(refusedSources->itemText(refusedSources->findData("efm")).contains("none"));
     }
+
+    // Switching between the analogue audio and audio decoded from EFM, playing, there is sound each time (when there is a sound card)
+    if (QFile::exists(realCapture)) {
+        AudioEngine player;
+        player.setVideo(realCapture);
+        CHECK(player.hasAudio());
+        EfmDecoding decoding(EfmDecoding::Backend::ProcessEfm);
+        QString error;
+        CHECK(decoding.start(realCapture, EfmDecoding::Options(), error));
+        const qint32 efmIndex = player.addDecoded(0, decoding.cacheFile(), "efm");
+        QElapsedTimer decodeWait;
+        decodeWait.start();
+        while (decoding.isRunning() && decodeWait.elapsed() < 120000) { waitMs(50); player.extend(); }
+        const qint32 analogueIndex = 0;
+        CHECK(player.tracks()[analogueIndex].source == "analogue");
+        bool played = true;
+        for (qint32 round = 0; round < 4 && played; round++) {
+            const qint32 index = round % 2 == 0 ? analogueIndex : efmIndex;
+            CHECK(player.selectTrack(index));
+            if (!player.start(2.0)) { played = false; break; }       // (no sound card: nothing to test)
+            waitMs(500);
+            const qint32 loudest = player.takeOutputLevel();
+            std::fprintf(stderr, "switch: round %d, track %d, loudest sample %d, %lld pairs of audio\n", round, index, loudest,
+                         static_cast<long long>(player.pairsGiven()));
+            CHECK(loudest > 100 && player.pairsGiven() > 1000);
+            player.stop();
+        }
+    }
     // The channels and the volume
     bool left = true, right = true;
     qint32 volume = 0;

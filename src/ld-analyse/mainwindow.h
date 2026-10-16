@@ -281,6 +281,8 @@ private:
     void loadAudio();
     void unloadAudio();
     bool audioStart(qint32 position);
+    bool audioStartAt(double videoSeconds);
+    void audioFollowVideo(double videoSeconds);
     void audioStop();
     void updateAudioPlayhead();
     void waveformSeek(double seconds);
