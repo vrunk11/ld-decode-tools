@@ -248,7 +248,6 @@ void MainWindow::buildConfigMenu()
         menu->addAction(action);
     }
     if (actionVideoFilter) menu->addAction(actionVideoFilter);
-    if (actionFilters) menu->addAction(actionFilters);
 #ifdef LDDECODE_HAVE_AUDIO
     menu->addSeparator();
     if (actionAudioConfig) menu->addAction(actionAudioConfig);
