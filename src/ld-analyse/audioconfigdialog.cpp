@@ -110,6 +110,45 @@ AudioConfigDialog::AudioConfigDialog(QWidget *parent) : QDialog(parent), colour(
     importLayout->addStretch(1);
     tabs->addTab(import, tr("Import"));
 
+    // EFM -------------------------------------------------------------------------------------------------------
+    QWidget *efm = new QWidget(this);
+    QVBoxLayout *efmLayout = new QVBoxLayout(efm);
+    efmSource = new QLabel(efm);
+    efmSource->setWordWrap(true);
+    efmLayout->addWidget(efmSource);
+    noTimecodesCheck = new QCheckBox(tr("EFM without timecodes (the usual one of a LaserDisc)"), efm);
+    noTimecodesCheck->setChecked(true);
+    concealCheck = new QCheckBox(tr("Conceal the errors of the audio"), efm);
+    concealCheck->setChecked(true);
+    padCheck = new QCheckBox(tr("Begin the audio at disc time 00:00"), efm);
+    efmLayout->addWidget(noTimecodesCheck);
+    efmLayout->addWidget(concealCheck);
+    efmLayout->addWidget(padCheck);
+    const QString names[2] = { tr("efm-decoder suite"), tr("ld-process-efm") };
+    for (qint32 i = 0; i < 2; i++) {
+        QHBoxLayout *row = new QHBoxLayout();
+        decodeButtons[i] = new QPushButton(tr("Decode with %1").arg(names[i]), efm);
+        decodeButtons[i]->setEnabled(false);
+        stopButtons[i] = new QPushButton(tr("Stop"), efm);
+        stopButtons[i]->setEnabled(false);
+        row->addWidget(decodeButtons[i]);
+        row->addWidget(stopButtons[i]);
+        row->addStretch(1);
+        efmLayout->addLayout(row);
+        decodeStatus[i] = new QLabel(efm);
+        decodeStatus[i]->setWordWrap(true);
+        efmLayout->addWidget(decodeStatus[i]);
+        connect(decodeButtons[i], &QPushButton::clicked, this, [this, i]() {
+            emit decodeRequested(i, noTimecodesCheck->isChecked(), concealCheck->isChecked(), padCheck->isChecked());
+        });
+        connect(stopButtons[i], &QPushButton::clicked, this, [this, i]() { emit decodeStopRequested(i); });
+    }
+    QLabel *efmHelp = new QLabel(tr("Both decoders can run: each gives a track of the EFM source, and the track menu of the waveform switches between them."), efm);
+    efmHelp->setWordWrap(true);
+    efmLayout->addWidget(efmHelp);
+    efmLayout->addStretch(1);
+    tabs->addTab(efm, tr("EFM"));
+
     QDialogButtonBox *close = new QDialogButtonBox(QDialogButtonBox::Close, this);
     top->addWidget(close);
     connect(close, &QDialogButtonBox::rejected, this, &QDialog::close);
@@ -239,4 +278,19 @@ void AudioConfigDialog::finishedReading(int exitCode)
     saveButton->setEnabled(!ldx.isEmpty());
     status->setText(tr("%1: %2 seconds, in use").arg(name).arg(static_cast<double>(samples.size() / 2) / ImportRate, 0, 'f', 1));
     emit imported(samples, ImportRate, name);
+}
+
+void AudioConfigDialog::setEfmSource(const QString &description)
+{
+    hasEfm = !description.isEmpty();
+    efmSource->setText(description.isEmpty() ? tr("The capture has no EFM to decode") : tr("EFM of %1").arg(description));
+    for (qint32 i = 0; i < 2; i++) decodeButtons[i]->setEnabled(!description.isEmpty());
+}
+
+void AudioConfigDialog::setDecodeStatus(qint32 decoder, const QString &text, bool running)
+{
+    if (decoder < 0 || decoder > 1) return;
+    decodeStatus[decoder]->setText(text);
+    stopButtons[decoder]->setEnabled(running);
+    decodeButtons[decoder]->setEnabled(!running && hasEfm);
 }

@@ -14,6 +14,7 @@
 #include <QJsonObject>
 #include <QTemporaryFile>
 #include "ldxcapture.h"
+#include "ldxbytetrack.h"
 #include "ui_mainwindow.h"
 #include "tbc/logging.h"
 #include "cvbs.h"
@@ -3021,6 +3022,11 @@ void MainWindow::showAudioConfig()
             }
         });
         connect(audioConfig, &AudioConfigDialog::saveRequested, this, &MainWindow::saveImportedAudio);
+        connect(audioConfig, &AudioConfigDialog::decodeRequested, this, &MainWindow::startEfmDecoding);
+        connect(audioConfig, &AudioConfigDialog::decodeStopRequested, this, [this](qint32 decoder) {
+            if (efmDecoders[decoder]) efmDecoders[decoder]->stop();
+            audioConfig->setDecodeStatus(decoder, tr("Stopped"), false);
+        });
     }
     const bool isLdx = tbcSource.getIsSourceLoaded() && LdxCapture::isLdxName(tbcSource.getCurrentSourceFilename());
     QString path;
@@ -3029,8 +3035,82 @@ void MainWindow::showAudioConfig()
     const qint32 last = tbcSource.getIsSourceLoaded() ? (tbcSource.getFieldViewEnabled() ? tbcSource.getNumberOfFields() : tbcSource.getNumberOfFrames()) : 0;
     const double frameRate = tbcSource.getSystem() == PAL ? 25.0 : 30000.0 / 1001.0;
     audioConfig->setVideo(last > 0 ? last / (tbcSource.getFieldViewEnabled() ? 2.0 * frameRate : frameRate) : 0.0, path);
+    audioConfig->setEfmSource(efmSourceName());
     audioConfig->show();
     audioConfig->raise();
+}
+
+void MainWindow::stopEfmDecoders()
+{
+    for (EfmDecoding *&decoder: efmDecoders) {
+        delete decoder;
+        decoder = nullptr;
+    }
+    if (audioConfig) {
+        audioConfig->setDecodeStatus(0, QString(), false);
+        audioConfig->setDecodeStatus(1, QString(), false);
+    }
+}
+
+// The EFM of the capture that can be decoded: an LDX file that has some, or the .efm beside a .tbc; empty if there is none
+QString MainWindow::efmSourceName()
+{
+    if (!tbcSource.getIsSourceLoaded() || tbcSource.getIsLive()) return QString();
+    const QString name = tbcSource.getCurrentSourceFilename();
+    if (LdxCapture::isLdxName(name)) {
+        QString path;
+        qint32 track = 0;
+        LdxCapture::split(name, path, track);
+        LdxByteTrack probe;
+        QString error;
+        return probe.openFile(path, LdxByteTrack::Kind::Efm, error) ? path : QString();
+    }
+    const QFileInfo video(name);
+    const QString efm = video.absolutePath() + "/" + video.completeBaseName() + ".efm";
+    return QFileInfo::exists(efm) ? efm : QString();
+}
+
+// Decode the EFM with one of the two decoders (0: the efm-decoder suite, 1: ld-process-efm): its audio is a track as soon as it
+// comes, and the waveform and the sound follow it
+void MainWindow::startEfmDecoding(qint32 decoder, bool noTimecodes, bool conceal, bool pad)
+{
+    const QString source = efmSourceName();
+    if (source.isEmpty()) return;
+    const EfmDecoding::Backend backend = decoder == 0 ? EfmDecoding::Backend::Suite : EfmDecoding::Backend::ProcessEfm;
+    audioStop();
+    audio->removeDecoded(decoder);
+    delete efmDecoders[decoder];
+    efmDecoders[decoder] = new EfmDecoding(backend, this);
+    EfmDecoding *decoding = efmDecoders[decoder];
+    EfmDecoding::Options options;
+    options.noTimecodes = noTimecodes;
+    options.conceal = conceal;
+    options.pad = pad;
+    QString error;
+    if (!decoding->start(source, options, error)) {
+        audioConfig->setDecodeStatus(decoder, error, false);
+        return;
+    }
+    const qint32 index = audio->addDecoded(decoder, decoding->cacheFile(), tr("%1 (decoding...)").arg(EfmDecoding::backendName(backend)));
+    waveform->setTracks(audio->tracks(), index);
+    audio->selectTrack(index);
+    actionWaveform->setEnabled(true);
+    {
+        const QSignalBlocker blocker(actionWaveform);
+        actionWaveform->setChecked(true);
+    }
+    waveformWanted = true;
+    waveform->show();
+    audioConfig->setDecodeStatus(decoder, tr("Decoding..."), true);
+    connect(decoding, &EfmDecoding::grew, this, [this, decoder, decoding]() {
+        audio->extend();
+        audioConfig->setDecodeStatus(decoder, tr("Decoding: %1 seconds").arg(decoding->seconds(), 0, 'f', 1), true);
+    });
+    connect(decoding, &EfmDecoding::finished, this, [this, decoder](bool, const QString &message) {
+        audio->extend();
+        audioConfig->setDecodeStatus(decoder, message, false);
+        waveform->refresh();
+    });
 }
 
 // The imported audio goes into the LDX file of the capture as a pcm track
@@ -3062,6 +3142,7 @@ void MainWindow::saveImportedAudio(const QVector<qint16> &samples, double sample
 // A capture has been loaded: its audio, if it has any, is what the waveform shows
 void MainWindow::loadAudio()
 {
+    stopEfmDecoders();
     const bool usable = !tbcSource.getIsLive();
     const QVector<AudioTrackInfo> tracks = usable ? audio->setVideo(tbcSource.getCurrentSourceFilename()) : audio->setVideo(QString());
     if (tracks.isEmpty()) {
@@ -3085,6 +3166,7 @@ void MainWindow::loadAudio()
 // No capture, or one with no audio: nothing to show or to play
 void MainWindow::unloadAudio()
 {
+    stopEfmDecoders();
     audioStop();
     audio->setVideo(QString());
     waveform->hide();

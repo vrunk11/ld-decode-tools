@@ -23,6 +23,7 @@
 
 #include "audioengine.h"
 #include "audioconfigdialog.h"
+#include "efmdecoding.h"
 #include "waveformpanel.h"
 
 #define CHECK(condition) \
@@ -153,6 +154,32 @@ int main(int argc, char *argv[])
         CHECK(engine.samples() == 44100 && engine.tracks()[index].source == "import");
         engine.clearImported();
         CHECK(engine.currentTrack() < 0);
+    }
+
+    // EFM decoded by the programs, as it comes (when the EFM of a real capture is at hand)
+    const QString realCapture = "D:/decodde/test.ldx";
+    if (QFile::exists(realCapture)) {
+        for (EfmDecoding::Backend backend: { EfmDecoding::Backend::Suite, EfmDecoding::Backend::ProcessEfm }) {
+            EfmDecoding decoding(backend);
+            bool done = false, success = false;
+            qint32 growths = 0;
+            QObject::connect(&decoding, &EfmDecoding::finished, [&](bool ok, const QString &) { done = true; success = ok; });
+            QObject::connect(&decoding, &EfmDecoding::grew, [&]() { growths++; engine.extend(); });
+            QString error;
+            CHECK(decoding.start(realCapture, EfmDecoding::Options(), error));
+            const qint32 index = engine.addDecoded(backend == EfmDecoding::Backend::Suite ? 0 : 1, decoding.cacheFile(), "efm");
+            CHECK(engine.selectTrack(index));
+            QElapsedTimer decodeWait;
+            decodeWait.start();
+            while (!done && decodeWait.elapsed() < 120000) waitMs(50);
+            CHECK(done && success);
+            engine.extend();
+            CHECK(growths > 0 && decoding.seconds() > 10.0);
+            CHECK(engine.samples() > 10 * 44100 && engine.peaks().samples() == engine.samples());
+            engine.removeDecoded(backend == EfmDecoding::Backend::Suite ? 0 : 1);
+            CHECK(engine.currentTrack() < 0);
+            CHECK(engine.selectTrack(0));
+        }
     }
     // The channels and the volume
     bool left = true, right = true;

@@ -49,6 +49,7 @@
 #include "audioengine.h"
 #include "waveformpanel.h"
 #include "audioconfigdialog.h"
+#include "efmdecoding.h"
 #endif
 #include "videofilter.h"
 #include "videofilterdialog.h"
@@ -250,6 +251,10 @@ private:
     AudioConfigDialog *audioConfig = nullptr;
     QAction *actionAudioConfig = nullptr;
     void showAudioConfig();
+    QString efmSourceName();
+    void stopEfmDecoders();
+    void startEfmDecoding(qint32 decoder, bool noTimecodes, bool conceal, bool pad);
+    EfmDecoding *efmDecoders[2] = { nullptr, nullptr };
     void saveImportedAudio(const QVector<qint16> &samples, double sampleRate, const QString &name);
     void setupAudio();
     void loadAudio();

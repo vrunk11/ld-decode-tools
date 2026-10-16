@@ -43,6 +43,9 @@ public:
     bool open(const AudioTrackInfo &track, QString &error);
     // Samples held in memory (stereo, interleaved): imported audio
     void openMemory(const QVector<qint16> &samples, double sampleRate);
+    // A raw 16-bit stereo file that another program is still writing (audio being decoded): samples() grows with refresh()
+    bool openGrowing(const QString &fileName, double sampleRate, QString &error);
+    void refresh();
 
     qint64 samples() const;             // pairs of samples
     double sampleRate() const;

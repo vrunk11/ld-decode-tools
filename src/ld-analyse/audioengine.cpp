@@ -113,7 +113,9 @@ bool AudioEngine::selectTrack(qint32 index)
     std::unique_ptr<AudioReader> opened(new AudioReader);
     QString error;
     bool ok = true;
-    if (available[index].source == "import" && available[index].trackId < 0) opened->openMemory(importedSamples, importedRate);
+    const bool decoded = available[index].trackId <= -2;
+    if (decoded) ok = opened->openGrowing(available[index].where, 44100.0, error);
+    else if (available[index].source == "import" && available[index].trackId == -1) opened->openMemory(importedSamples, importedRate);
     else ok = opened->open(available[index], error);
     if (!ok) {
         reader.reset();
@@ -123,6 +125,10 @@ bool AudioEngine::selectTrack(qint32 index)
     }
     reader = std::move(opened);
     chosen = index;
+    if (decoded) {
+        extend();
+        return true;
+    }
 
     // The shape of the sound, for the waveform, made on a thread of its own: a capture's takes a while
     cancelPeaks = false;
@@ -261,4 +267,49 @@ void AudioEngine::clearImported()
         chosen = -1;
         audioPeaks.clear();
     }
+}
+
+qint32 AudioEngine::addDecoded(qint32 slot, const QString &cacheFile, const QString &label)
+{
+    removeDecoded(slot);
+    AudioTrackInfo info;
+    info.label = label;
+    info.source = "efm";
+    info.where = cacheFile;
+    info.trackId = -2 - slot;
+    info.sampleRate = 44100.0;
+    available.append(info);
+    return static_cast<qint32>(available.size()) - 1;
+}
+
+void AudioEngine::removeDecoded(qint32 slot)
+{
+    for (qint32 i = 0; i < available.size(); i++) {
+        if (available[i].trackId != -2 - slot) continue;
+        if (i == chosen) {
+            stop();
+            stopPeaks();
+            reader.reset();
+            chosen = -1;
+            audioPeaks.clear();
+        } else if (i < chosen) {
+            chosen--;
+        }
+        available.remove(i--);
+    }
+}
+
+void AudioEngine::extend()
+{
+    if (!reader || !isDecoded(chosen)) return;
+    reader->refresh();
+    const qint64 total = reader->samples();
+    qint64 done = audioPeaks.samples();
+    while (done < total) {
+        const QVector<qint16> block = reader->read(done, qMin<qint64>(65536, total - done));
+        if (block.isEmpty()) break;
+        audioPeaks.add(block.constData(), block.size() / 2);
+        done += block.size() / 2;
+    }
+    emit peaksProgress(0);
 }
