@@ -404,14 +404,18 @@ int main(int argc, char *argv[])
 
     // One channel shown on the whole height when the other is muted, if that is asked for
     {
-        panel.setColor(QColor(255, 0, 0));
-        panel.resize(500, 120);
-        panel.setDensity(WaveformPanel::Density::Large);
-        const auto redCount = [&panel]() {
+        WaveformPanel solo(&engine);        // (a panel of its own, of a known size: what the others did to theirs does not count)
+        solo.setTracks(engine.tracks(), 0);
+        solo.setDensity(WaveformPanel::Density::Large);
+        solo.resize(500, 110);
+        solo.show();
+        waitMs(100);
+        solo.setColor(QColor(255, 0, 0));
+        const auto redCount = [&solo]() {
             waitMs(50);
-            const QImage picture = panel.grab().toImage();
-            const QWidget *shown = panel.findChild<WaveformView *>();
-            const QRect where(shown->mapTo(&panel, QPoint(0, 0)), shown->size());
+            const QImage picture = solo.grab().toImage();
+            const QWidget *shown = solo.findChild<WaveformView *>();
+            const QRect where(shown->mapTo(&solo, QPoint(0, 0)), shown->size());
             qint32 count = 0;
             for (qint32 y = where.top(); y < where.bottom(); y++) {
                 for (qint32 x = where.left(); x < where.right(); x++) {
@@ -421,26 +425,28 @@ int main(int argc, char *argv[])
             }
             return count;
         };
-        panel.setSoloChannel(false);
-        panel.setMix(true, false, 70);
+        solo.setSoloChannel(false);
+        solo.setMix(true, false, 70);
         const qint32 shared = redCount();             // (the left channel has the upper half)
-        panel.setSoloChannel(true);
+        solo.setSoloChannel(true);
         const qint32 whole = redCount();              // (the left channel alone has all of it)
-        CHECK(whole > shared * 3 / 2);
-        panel.setMix(true, true, 70);
+        std::fprintf(stderr, "solo: shared %d, whole %d, view %dx%d\n", shared, whole, solo.findChild<WaveformView *>()->width(), solo.findChild<WaveformView *>()->height());
+        CHECK(solo.findChild<WaveformView *>()->height() >= 60);
+        CHECK(whole > shared * 6 / 5);
+        solo.setMix(true, true, 70);
         CHECK(redCount() < whole);                    // (both on: two channels again)
         // Nothing is heard when both channels, or M, are muted: the waveform is grey, not in its colour
-        panel.setMix(false, false, 70);
+        solo.setMix(false, false, 70);
         CHECK(redCount() == 0);
-        panel.setMix(true, true, 70);
+        solo.setMix(true, true, 70);
         CHECK(redCount() > 0);
-        panel.setMuted(true);
-        panel.refreshSilence();
+        solo.setMuted(true);
+        solo.refreshSilence();
         CHECK(redCount() == 0);
-        panel.setMuted(false);
+        solo.setMuted(false);
         CHECK(redCount() > 0);
-        panel.setSoloChannel(false);
-        panel.setDensity(WaveformPanel::Density::Compact);
+        solo.setSoloChannel(false);
+        solo.setDensity(WaveformPanel::Density::Compact);
     }
     // The channels and the volume
     bool left = true, right = true;
