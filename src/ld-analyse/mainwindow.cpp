@@ -705,6 +705,7 @@ void MainWindow::setupPlayback()
     connect(renderer, &PlaybackRenderer::imageReady, this, &MainWindow::showRenderedImage);
     connect(playback, &PlaybackController::positionDue, this, &MainWindow::playbackPositionDue);
     connect(playback, &PlaybackController::stateChanged, this, &MainWindow::updatePlaybackState);
+    connect(playback, &PlaybackController::looped, this, &MainWindow::playbackLooped);
 
     // The play button sits beside the frame stepping buttons
     playPushButton = new QPushButton(this);
@@ -860,6 +861,8 @@ void MainWindow::togglePlayback()
     const qint32 firstPosition = isLive ? (isFieldView || weaveActive ? 2 * tbcSource.getFirstAvailableFrame() - 1 : tbcSource.getFirstAvailableFrame()) : 1;
     playback->setLive(isLive, isLive && tbcSource.getIsLiveEnded());
     playback->setRange(firstPosition, lastPosition);
+    playbackFirstPosition = firstPosition;
+    playbackLastPosition = lastPosition;
 
     // Start decoding ahead; the clock starts once the first image is ready
     playbackStartPosition = isFieldView || weaveActive ? currentFieldNumber : currentFrameNumber;
@@ -877,6 +880,21 @@ void MainWindow::togglePlayback()
     audioStart(playbackStartPosition);
 #endif
     playback->play(playbackStartPosition);
+}
+
+// Looping: the clock went back to the first position. The decoders are told from there (they had gone to the end, and give the
+// positions that are due in order), and the sound begins again with the video.
+void MainWindow::playbackLooped()
+{
+    playbackDue = playbackFirstPosition;
+    renderer->start(tbcSource.getRenderSettings(), renderGeneration, playbackFirstPosition, playbackLastPosition, nullptr);
+    firstImageShown = false;
+#ifdef LDDECODE_HAVE_AUDIO
+    if (audio && audio->isPlaying()) {
+        audioStop();
+        audioStart(playbackFirstPosition);
+    }
+#endif
 }
 
 // Stop playing, as when the user takes over (does nothing if not playing)
@@ -3037,12 +3055,6 @@ void MainWindow::setupAudio()
     connect(audio, &AudioEngine::peaksProgress, this, [this](qint32) { waveform->refresh(); });
     connect(audio, &AudioEngine::peaksFinishedSignal, this, [this]() { waveform->refresh(); });
     connect(audio, &AudioEngine::problem, this, [this](const QString &message) { statusBar()->showMessage(message, 8000); waveform->setMessage(message); });
-    // Looping: the video goes back to its start, and so does the sound
-    connect(playback, &PlaybackController::looped, this, [this]() {
-        if (!audio->isPlaying()) return;
-        audioStop();
-        audioStart(playbackStartPosition);
-    });
 }
 
 

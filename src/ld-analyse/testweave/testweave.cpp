@@ -15,6 +15,7 @@
 #include <cstdlib>
 #include <cstring>
 
+#include "playbackrenderer.h"
 #include "tbcsource.h"
 
 #define CHECK(condition) \
@@ -115,6 +116,29 @@ int main(int argc, char *argv[])
     const QImage frame = source.getImage();
     CHECK(!frame.isNull());
     if (pictures) frame.save(QString("%1/frame300.png").arg(pictures));
+    // Looping: the decoders go to the end of the range; when the clock goes back to the first position they must be started again,
+    // or no image comes for the positions of the second round (they only go forward)
+    {
+        PlaybackRenderer renderer;
+        const quint32 generation = source.getSettingsGeneration();
+        const auto renderRound = [&](const char *name) {
+            renderer.start(source.getRenderSettings(), generation, 1, 6, nullptr);
+            QElapsedTimer roundWait;
+            roundWait.start();
+            qint32 seen = 0, position = 0;
+            for (qint32 due = 1; due <= 6 && roundWait.elapsed() < 60000; due++) {
+                renderer.setDue(due);
+                QImage image;
+                while (!renderer.take(due, position, image) && roundWait.elapsed() < 60000) QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+                if (!image.isNull()) seen++;
+            }
+            std::fprintf(stderr, "testweave: %s: %d images\n", name, seen);
+            CHECK(seen >= 3);
+        };
+        renderRound("first round");
+        renderRound("second round, the decoders started again");
+        renderer.stop();
+    }
     step("all tests passed");
     return 0;
 }
