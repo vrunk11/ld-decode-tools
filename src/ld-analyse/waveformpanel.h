@@ -98,6 +98,7 @@ private:
     void emitMix();
 
     QWidget *controls;
+    QFrame *separator = nullptr;
     WaveformView *view;
     QComboBox *sourceCombo;
     QComboBox *trackCombo;
