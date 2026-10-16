@@ -67,6 +67,11 @@ public:
     double durationSeconds() const;
     AudioPeaks &peaks() { return audioPeaks; }
     bool peaksComplete() const { return peaksFinished; }
+    // The audio samples of each field, from the metadata (the analogue audio of a capture is cut to the fields): then the place in
+    // the audio of a moment of the video is exact, not the time times the sample rate. cumulative[i] is the number of samples
+    // before field i (from 0), and has one more entry than there are fields. Empty: no map.
+    void setFieldSamples(const QVector<qint64> &cumulative, double fieldsPerSecond);
+    bool hasFieldSamples() const { return !fieldSamples.isEmpty(); }
     // The place in the audio of a moment of the video, in pairs of samples, and the other way
     qint64 sampleAt(double videoSeconds) const;
     double videoSecondsOf(qint64 sample) const;
@@ -106,6 +111,9 @@ private:
     double mixVolume = 1.0;
     bool mixMuted = false;
     qint32 offsetMs = 0;
+    QVector<qint64> fieldSamples;
+    double fieldRate = 0.0;
+    bool usesFieldSamples() const;
     QByteArray deviceId;
     QVector<qint16> importedSamples;
     double importedRate = 44100.0;

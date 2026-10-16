@@ -3212,6 +3212,11 @@ void MainWindow::loadAudio()
     for (qint32 i = 0; i < tracks.size(); i++) {
         if (tracks[i].source == "analogue") { first = i; break; }
     }
+    // The analogue audio is cut to the fields: the metadata say where each field begins in it
+    {
+        const double frameRate = tbcSource.getSystem() == PAL ? 25.0 : 30000.0 / 1001.0;
+        audio->setFieldSamples(tbcSource.getAudioSamplesBeforeFields(), 2.0 * frameRate);
+    }
     audio->selectTrack(first);
     waveform->setTracks(tracks, first);
     actionWaveform->setEnabled(true);
