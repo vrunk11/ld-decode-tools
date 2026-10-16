@@ -193,7 +193,7 @@ Config > Video filter... shows the picture through ffmpeg filters (libavfilter).
 
 * **Deinterlacing**: the Deinterlaced mode of the view button (after Frame, Split and Field) shows the frame through a deinterlacer, which is chosen in the dialogue: yadif, bwdif, w3fdif or estdif. A deinterlacer works on the frames either side of the one it deinterlaces, so a picture that is not playing (paused, or stepped to) is given the real frames before and after it, rendered for the purpose; stepping is a little slower for it. Where something moves between the two fields of a frame no deinterlacer has more than one field to go on, and the other is interpolated from it: that is what they do, and is more visible on a frozen picture than in motion.
 * **Scaling**: gives the picture the size it is shown at, with the algorithm chosen (bilinear, bicubic, lanczos, spline, gaussian, area averaging or nearest neighbour). The first choice, Default, leaves the scaling to the program (smooth, and the fastest).
-* **Other filters**: a text field for any ffmpeg filters, written as in ffmpeg's `-vf` option (`$W` and `$H` stand for the size the picture is shown at). The field can always be edited. What is in it is applied when the Filters button, beside the other options, is on (Config > Other filters on does the same), so the picture can be compared with and without it. Typing a new command line in the dialogue and applying it switches the button on.
+* **Other filters**: a text field for any ffmpeg filters, written as in ffmpeg's `-vf` option (`$W` and `$H` stand for the size the picture is shown at). The field can always be edited. What is in it is applied when the Filters button, beside the other options, is on, so the picture can be compared with and without it. Typing a new command line in the dialogue and applying it switches the button on.
 
 The settings are remembered between sessions, except that the Filters button always starts off, so that nothing alters the picture until it is asked for.
 
@@ -298,9 +298,7 @@ Lists every widget style available on the machine. **Auto** uses the classic Win
 
 The Window menu contains a number of options that open additional windows to assist with analysis.
 
-The windows that set things up are in the **Config** menu, beside it: Video parameters, Chroma decoder configuration, Video filter..., Other filters on, and Audio panel (their descriptions are below).
-
-The windows that set things up are in the **Config** menu: Video parameters, Chroma decoder configuration, Video filter..., Other filters on, and Audio panel.
+The windows that set things up are in the **Config** menu, beside it: Video parameters, Chroma decoder configuration, Video filter..., and Audio panel (their descriptions are below).
 
 ## Audio panel
 
