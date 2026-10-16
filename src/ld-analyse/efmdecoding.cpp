@@ -141,3 +141,15 @@ void EfmDecoding::stop()
     processes.clear();
     running = false;
 }
+
+void EfmDecoding::feed(const QByteArray &efm)
+{
+    if (!running || processes.empty() || efm.isEmpty()) return;
+    processes[0]->write(efm);
+}
+
+void EfmDecoding::finishInput()
+{
+    if (!running || processes.empty()) return;
+    processes[0]->closeWriteChannel();
+}

@@ -142,6 +142,10 @@ struct LdxStream::Private : public QThread
     FILE *read = nullptr;
     int writeFd = -1;
     bool started = false;
+    bool keepOthers = false;
+    std::mutex otherLock;
+    QVector<LdxStream::OtherBlock> others;
+    qint64 otherBytes = 0;
 
     ~Private() override
     {
@@ -168,7 +172,15 @@ struct LdxStream::Private : public QThread
         Ldx::Block block;
         while (reader.nextBlock(block)) {
             if (block.track == metadataTrack) keepField(block.data);
-            else if (block.track == video.number && !writeAll(writeFd, block.data)) break;
+            else if (block.track == video.number) {
+                if (!writeAll(writeFd, block.data)) break;
+            } else if (keepOthers) {
+                std::lock_guard<std::mutex> lock(otherLock);
+                if (otherBytes < (128 << 20)) {
+                    otherBytes += block.data.size();
+                    others.append({ block.track, block.timeNs, block.data });
+                }
+            }
         }
         finishPipe();
     }
@@ -300,6 +312,36 @@ void LdxStream::provideFields(LdDecodeMetaData &metadata)
     });
 }
 
+void LdxStream::keepOtherTracks()
+{
+    d->keepOthers = true;
+}
+
+QVector<LdxStream::OtherTrack> LdxStream::otherTracks() const
+{
+    QVector<OtherTrack> found;
+    for (const Ldx::Track &track: d->reader.tracks()) {
+        if (track.number == d->video.number || track.kind == Ldx::Kind::Metadata || track.kind == Ldx::Kind::Tbc || track.kind == Ldx::Kind::Cvbs) continue;
+        OtherTrack other;
+        other.number = track.number;
+        other.kind = Ldx::kindName(track.kind);
+        other.name = track.name;
+        other.parameters = track.parameters;
+        other.depth = track.depth;
+        found.append(other);
+    }
+    return found;
+}
+
+QVector<LdxStream::OtherBlock> LdxStream::takeOtherBlocks()
+{
+    std::lock_guard<std::mutex> lock(d->otherLock);
+    QVector<OtherBlock> taken;
+    taken.swap(d->others);
+    d->otherBytes = 0;
+    return taken;
+}
+
 FILE *LdxStream::videoPipe()
 {
     if (!d->started) {
@@ -328,6 +370,9 @@ QString LdxStream::videoName() const { return QString(); }
 QByteArray LdxStream::metadataJson() const { return QByteArray(); }
 bool LdxStream::readMetadata(LdDecodeMetaData &, QString &error) const { error = QObject::tr("No LDX support"); return false; }
 FILE *LdxStream::videoPipe() { return nullptr; }
+void LdxStream::keepOtherTracks() {}
+QVector<LdxStream::OtherTrack> LdxStream::otherTracks() const { return {}; }
+QVector<LdxStream::OtherBlock> LdxStream::takeOtherBlocks() { return {}; }
 void LdxStream::provideFields(LdDecodeMetaData &) {}
 
 #endif

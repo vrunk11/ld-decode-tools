@@ -17,6 +17,7 @@
 #include <QString>
 #include <cstdio>
 #include <memory>
+#include <QVector>
 
 #include "lddecodemetadata.h"
 
@@ -64,6 +65,24 @@ public:
     // The video as the raw stream the tools read (fields of 16-bit TBC, or frames of CVBS as 10-bit values in words), as
     // a FILE. The thread that fills it starts with the first call. The stream owns it.
     FILE *videoPipe();
+
+    // The other tracks of the stream (audio, EFM...) are dropped unless asked for: call keepOtherTracks before the video is read from
+    // (before videoPipe), and then take what came, in the order it came, now and then. The queue is held to about 128 MB.
+    struct OtherTrack {
+        quint32 number = 0;
+        QString kind;               // "pcm", "efm", "ac3"...
+        QString name;
+        QJsonObject parameters;
+        qint32 depth = 16;
+    };
+    struct OtherBlock {
+        quint32 track = 0;
+        qint64 timeNs = 0;
+        QByteArray data;
+    };
+    void keepOtherTracks();
+    QVector<OtherTrack> otherTracks() const;        // the tracks that are not the video or its metadata, as the stream declared them
+    QVector<OtherBlock> takeOtherBlocks();
 
 private:
     LdxStream();

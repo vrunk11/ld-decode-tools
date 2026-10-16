@@ -114,7 +114,7 @@ bool AudioEngine::selectTrack(qint32 index)
     QString error;
     bool ok = true;
     const bool decoded = available[index].trackId <= -2;
-    if (decoded) ok = opened->openGrowing(available[index].where, 44100.0, error);
+    if (decoded) ok = opened->openGrowing(available[index].where, available[index].sampleRate, error);
     else if (available[index].source == "import" && available[index].trackId == -1) opened->openMemory(importedSamples, importedRate);
     else ok = opened->open(available[index], error);
     if (!ok) {
@@ -280,15 +280,15 @@ void AudioEngine::clearImported()
     }
 }
 
-qint32 AudioEngine::addDecoded(qint32 slot, const QString &cacheFile, const QString &label)
+qint32 AudioEngine::addGrowing(qint32 slot, const QString &source, const QString &cacheFile, const QString &label, double sampleRate)
 {
     removeDecoded(slot);
     AudioTrackInfo info;
     info.label = label;
-    info.source = "efm";
+    info.source = source;
     info.where = cacheFile;
     info.trackId = -2 - slot;
-    info.sampleRate = 44100.0;
+    info.sampleRate = sampleRate;
     available.append(info);
     return static_cast<qint32>(available.size()) - 1;
 }
