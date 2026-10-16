@@ -254,6 +254,7 @@ private:
     QString efmSourceName();
     void stopEfmDecoders();
     void showWaveform(bool shown);
+    void applyWaveformDensity(qint32 density);
     void startEfmDecoding(qint32 decoder, bool noTimecodes, bool conceal, bool pad);
     EfmDecoding *efmDecoders[2] = { nullptr, nullptr };
     void saveImportedAudio(const QVector<qint16> &samples, double sampleRate, const QString &name);

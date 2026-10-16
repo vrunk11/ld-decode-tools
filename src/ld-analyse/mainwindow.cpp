@@ -2931,6 +2931,7 @@ void MainWindow::setupAudio()
     waveform->setMuted(muted);
     audio->setMuted(muted);
     waveform->setStyle(static_cast<WaveformView::Style>(configuration.audioValue("style", 0).toInt()));
+    waveform->setDensity(static_cast<WaveformPanel::Density>(configuration.audioValue("density", 1).toInt()));
     connect(waveform, &WaveformPanel::mutedChanged, this, [this](bool isMuted) {
         audio->setMuted(isMuted);
         configuration.setAudioValue("muted", isMuted);
@@ -2996,6 +2997,11 @@ void MainWindow::showAudioConfig()
         audioConfig->setMuted(waveform->muted());
         audioConfig->setWaveformShown(actionWaveform->isChecked());
         audioConfig->setStyle(configuration.audioValue("style", 0).toInt());
+        audioConfig->setDensity(configuration.audioValue("density", 1).toInt());
+        connect(audioConfig, &AudioConfigDialog::densityChosen, this, [this](qint32 density) {
+            applyWaveformDensity(density);
+            configuration.setAudioValue("density", density);
+        });
         connect(audioConfig, &AudioConfigDialog::sidePanelChanged, this, [this](bool shown) {
             waveform->setControlsVisible(shown);
             configuration.setAudioValue("sidePanel", shown);
@@ -3157,11 +3163,20 @@ void MainWindow::saveImportedAudio(const QVector<qint16> &samples, double sample
     if (added) loadAudio();
 }
 
+// A new height for the waveform panel: the window follows when the panel is shown
+void MainWindow::applyWaveformDensity(qint32 density)
+{
+    const qint32 before = waveform->maximumHeight();
+    waveform->setDensity(static_cast<WaveformPanel::Density>(density));
+    if (!waveform->isVisibleTo(this) || !isVisible() || isMaximized() || isFullScreen()) return;
+    resize(width(), qMax(minimumHeight(), height() + waveform->maximumHeight() - before));
+}
+
 // Show or hide the waveform: the window grows or shrinks by its height, so that the video keeps its room
 void MainWindow::showWaveform(bool shown)
 {
     if (waveform->isVisibleTo(this) == shown) return;
-    const qint32 height = waveform->sizeHint().height() + ui->verticalLayout->spacing();
+    const qint32 height = qMin(waveform->sizeHint().height(), waveform->maximumHeight()) + ui->verticalLayout->spacing();
     waveform->setVisible(shown);
     if (!isVisible() || isMaximized() || isFullScreen()) return;
     resize(width(), qMax(minimumHeight(), this->height() + (shown ? height : -height)));

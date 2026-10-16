@@ -118,6 +118,21 @@ int main(int argc, char *argv[])
     }
     CHECK(line);
 
+
+    // The heights of the panel (and, if asked, pictures of them to look at)
+    const char *pictures = std::getenv("WAVEFORM_PICTURES");
+    panel.setColor(QColor());
+    panel.resize(700, 120);
+    qint32 heights[3] = { 0, 0, 0 };
+    for (qint32 d = 0; d < 3; d++) {
+        panel.setDensity(static_cast<WaveformPanel::Density>(d));
+        panel.resize(700, panel.maximumHeight());
+        waitMs(50);
+        heights[d] = panel.height();
+        if (pictures) panel.grab().save(QString("%1/density%2.png").arg(pictures).arg(d));
+    }
+    CHECK(heights[0] > heights[1] && heights[1] > heights[2]);
+    panel.setDensity(WaveformPanel::Density::Compact);
     // A click asks to go to a place
     double asked = -1.0;
     QObject::connect(&panel, &WaveformPanel::seekRequested, [&asked](double seconds) { asked = seconds; });
