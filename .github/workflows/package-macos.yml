@@ -166,6 +166,36 @@ jobs:
           # the command-line tools to point there.
           macdeployqt "$APP_BUNDLE" -always-overwrite "${exe_args[@]}"
 
+      # The ffmpeg libraries of Qt Multimedia (libavcodec, libavformat...) come with their names and with the paths to each other
+      # as absolute paths of the machine that bundled them (here, inside the bundle on the runner), which would not be found on
+      # another one: they are made relative to the library, or to the program, that has them.
+      - name: Make the paths of the bundled libraries relative
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP_BUNDLE="$PWD/package-root/ld-analyse.app"
+          relink() {
+            local file="$1" prefix="$2" dep
+            while IFS= read -r dep; do
+              [[ "$dep" == "$APP_BUNDLE"/Contents/Frameworks/* && "$dep" != "$file" ]] || continue
+              install_name_tool -change "$dep" "$prefix/$(basename "$dep")" "$file"
+            done < <(otool -L "$file" | tail -n +2 | awk '{print $1}')
+          }
+          for lib in "$APP_BUNDLE"/Contents/Frameworks/*.dylib; do
+            [[ -f "$lib" ]] || continue
+            id="$(otool -D "$lib" | tail -n +2)"
+            if [[ "$id" == "$APP_BUNDLE"/* ]]; then
+              install_name_tool -id "@loader_path/$(basename "$lib")" "$lib"
+            fi
+            relink "$lib" "@loader_path"
+          done
+          while IFS= read -r plugin; do
+            relink "$plugin" "@loader_path/../../Frameworks"
+          done < <(find "$APP_BUNDLE/Contents/PlugIns" -type f -name "*.dylib" 2>/dev/null || true)
+          for exe in "$APP_BUNDLE"/Contents/MacOS/*; do
+            if [[ -f "$exe" ]]; then relink "$exe" "@executable_path/../Frameworks"; fi
+          done
+
       - name: Re-sign app bundle
         shell: bash
         run: |
