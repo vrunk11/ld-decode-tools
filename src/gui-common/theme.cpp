@@ -105,7 +105,7 @@ static void setDefaultWaveformColours(QPalette &palette)
 {
     const bool dark = isDarkPalette(palette);
     palette.setColor(QPalette::All, QPalette::LinkVisited, QColor(dark ? "#4aa3ff" : "#1f6fc9"));
-    palette.setColor(QPalette::Disabled, QPalette::LinkVisited, QColor(dark ? "#ffb347" : "#d9780a"));
+    palette.setColor(QPalette::Disabled, QPalette::LinkVisited, QColor(dark ? "#4cd964" : "#1e9e3a"));
 }
 
 // Build a palette from "key" -> colour pairs; roles not listed are left unset
@@ -500,5 +500,5 @@ QColor waveformColour(bool fromEfm)
 {
     const QVariant colour = QCoreApplication::instance() ? QCoreApplication::instance()->property(fromEfm ? "waveformEfmColour" : "waveformAnalogueColour") : QVariant();
     if (colour.isValid()) return colour.value<QColor>();
-    return fromEfm ? QColor("#ffb347") : QColor("#4aa3ff");
+    return fromEfm ? QColor("#4cd964") : QColor("#4aa3ff");
 }
