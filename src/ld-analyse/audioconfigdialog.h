@@ -50,6 +50,10 @@ public:
     // efm-decoder programs, 1: ld-process-efm) is doing
     void setEfmSource(const QString &description);
     void setDecodeStatus(qint32 decoder, const QString &text, bool running);
+    void setActiveDecoder(qint32 decoder);       // (the one that is chosen in the window follows what was started elsewhere)
+    bool efmWithoutTimecodes() const;
+    bool efmConceal() const;
+    bool efmPad() const;
     // The numbers of the sound and of the decoders, as text (kept up to date by the window while this is shown)
     void setStatistics(const QString &text);
 
@@ -92,9 +96,12 @@ private:
     QLabel *efmSource;
     bool hasEfm = false;
     QCheckBox *noTimecodesCheck, *concealCheck, *padCheck;
-    QPushButton *decodeButtons[2];
-    QPushButton *stopButtons[2];
-    QLabel *decodeStatus[2];
+    QComboBox *decoderCombo;
+    QPushButton *decodeButton, *stopButton;
+    QLabel *decodeStatusLabel;
+    QString statusText[2];
+    bool running[2] = { false, false };
+    void showDecoderState();
     QPlainTextEdit *statistics;
 
     double videoLength = 0.0;

@@ -335,8 +335,8 @@ int main(int argc, char *argv[])
         asking.setEfmPossible([]() { return true; });
         asking.setTracks(engine.tracks(), 0);
         QComboBox *sources = asking.findChildren<QComboBox *>().first();
-        const qint32 efmIndex = sources->findData("efm");
-        CHECK(efmIndex >= 0 && sources->itemText(efmIndex).contains("decode"));
+        const qint32 efmIndex = sources->findData("efm#1");
+        CHECK(efmIndex >= 0 && sources->itemText(efmIndex).contains("decode") && sources->findData("efm#0") >= 0);
         const qint32 before = sources->currentIndex();
         sources->setCurrentIndex(efmIndex);
         CHECK(asked && sources->currentIndex() == before);
@@ -372,6 +372,33 @@ int main(int argc, char *argv[])
                          static_cast<long long>(player.pairsGiven()));
             CHECK(loudest > 100 && player.pairsGiven() > 1000);
             player.stop();
+        }
+    }
+
+    // How the decoders give audio when the EFM comes at the pace of a live capture (about 0.9 MB a second of video)
+    if (std::getenv("WAVEFORM_BENCH") && QFile::exists(realCapture)) {
+        LdxByteTrack source;
+        QString sourceError;
+        CHECK(source.openFile(realCapture, LdxByteTrack::Kind::Efm, sourceError));
+        const QByteArray efmBytes = source.readAll();
+        for (qint32 i = 0; i < 2; i++) {
+            EfmDecoding decoding(i == 0 ? EfmDecoding::Backend::Suite : EfmDecoding::Backend::ProcessEfm);
+            QString error;
+            CHECK(decoding.start("-", EfmDecoding::Options(), error));
+            QElapsedTimer clock;
+            clock.start();
+            double fedSeconds = 0.0;
+            for (qint64 at = 0; at < efmBytes.size(); at += 90000) {
+                decoding.feed(efmBytes.mid(at, 90000));
+                fedSeconds += 90000.0 / efmBytes.size() * 24.2;
+                while (clock.elapsed() < (at / 90000 + 1) * 100) waitMs(5);       // (a tenth of a second for each piece: ten times real time)
+                if ((at / 90000) % 25 == 24) {
+                    std::fprintf(stderr, "bench: %s, %.1f s of EFM given, %.1f s of audio out\n", i == 0 ? "suite" : "ld-process-efm", fedSeconds, decoding.seconds());
+                }
+            }
+            decoding.finishInput();
+            waitMs(1500);
+            std::fprintf(stderr, "bench: %s, at the end %.1f s of audio out\n", i == 0 ? "suite" : "ld-process-efm", decoding.seconds());
         }
     }
     // The channels and the volume

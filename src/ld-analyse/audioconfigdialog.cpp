@@ -152,26 +152,29 @@ AudioConfigDialog::AudioConfigDialog(QWidget *parent) : QDialog(parent)
     efmLayout->addWidget(noTimecodesCheck);
     efmLayout->addWidget(concealCheck);
     efmLayout->addWidget(padCheck);
-    const QString names[2] = { tr("efm-decoder suite"), tr("ld-process-efm") };
-    for (qint32 i = 0; i < 2; i++) {
-        QHBoxLayout *row = new QHBoxLayout();
-        decodeButtons[i] = new QPushButton(tr("Decode with %1").arg(names[i]), efm);
-        decodeButtons[i]->setEnabled(false);
-        stopButtons[i] = new QPushButton(tr("Stop"), efm);
-        stopButtons[i]->setEnabled(false);
-        row->addWidget(decodeButtons[i]);
-        row->addWidget(stopButtons[i]);
-        row->addStretch(1);
-        efmLayout->addLayout(row);
-        decodeStatus[i] = new QLabel(efm);
-        decodeStatus[i]->setWordWrap(true);
-        efmLayout->addWidget(decodeStatus[i]);
-        connect(decodeButtons[i], &QPushButton::clicked, this, [this, i]() {
-            emit decodeRequested(i, noTimecodesCheck->isChecked(), concealCheck->isChecked(), padCheck->isChecked());
-        });
-        connect(stopButtons[i], &QPushButton::clicked, this, [this, i]() { emit decodeStopRequested(i); });
-    }
-    QLabel *efmHelp = new QLabel(tr("Both decoders can run: each gives a track of the EFM source, and the track menu of the waveform switches between them."), efm);
+    // One decoder at a time: the choice of the decoder, and its button
+    decoderCombo = new QComboBox(efm);
+    decoderCombo->addItem(tr("ld-process-efm"), 1);
+    decoderCombo->addItem(tr("efm-decoder (f2, d24, audio)"), 0);
+    QHBoxLayout *decoderRow = new QHBoxLayout();
+    decoderRow->addWidget(new QLabel(tr("Decoder"), efm));
+    decoderRow->addWidget(decoderCombo, 1);
+    decodeButton = new QPushButton(tr("Decode"), efm);
+    decodeButton->setEnabled(false);
+    stopButton = new QPushButton(tr("Stop"), efm);
+    stopButton->setEnabled(false);
+    decoderRow->addWidget(decodeButton);
+    decoderRow->addWidget(stopButton);
+    efmLayout->addLayout(decoderRow);
+    decodeStatusLabel = new QLabel(efm);
+    decodeStatusLabel->setWordWrap(true);
+    efmLayout->addWidget(decodeStatusLabel);
+    connect(decodeButton, &QPushButton::clicked, this, [this]() {
+        emit decodeRequested(decoderCombo->currentData().toInt(), noTimecodesCheck->isChecked(), concealCheck->isChecked(), padCheck->isChecked());
+    });
+    connect(stopButton, &QPushButton::clicked, this, [this]() { emit decodeStopRequested(decoderCombo->currentData().toInt()); });
+    connect(decoderCombo, &QComboBox::currentIndexChanged, this, [this]() { showDecoderState(); });
+    QLabel *efmHelp = new QLabel(tr("One decoder runs at a time: starting one stops the other. The same choice is in the source menu of the waveform."), efm);
     efmHelp->setWordWrap(true);
     efmLayout->addWidget(efmHelp);
     statistics = new QPlainTextEdit(efm);
@@ -323,16 +326,35 @@ void AudioConfigDialog::setEfmSource(const QString &description)
 {
     hasEfm = !description.isEmpty();
     efmSource->setText(description.isEmpty() ? tr("The capture has no EFM to decode") : tr("EFM of %1").arg(description));
-    for (qint32 i = 0; i < 2; i++) decodeButtons[i]->setEnabled(!description.isEmpty());
+    showDecoderState();
 }
 
-void AudioConfigDialog::setDecodeStatus(qint32 decoder, const QString &text, bool running)
+void AudioConfigDialog::setDecodeStatus(qint32 decoder, const QString &text, bool isRunning)
 {
     if (decoder < 0 || decoder > 1) return;
-    decodeStatus[decoder]->setText(text);
-    stopButtons[decoder]->setEnabled(running);
-    decodeButtons[decoder]->setEnabled(!running && hasEfm);
+    statusText[decoder] = text;
+    running[decoder] = isRunning;
+    showDecoderState();
 }
+
+void AudioConfigDialog::setActiveDecoder(qint32 decoder)
+{
+    const qint32 index = decoderCombo->findData(decoder);
+    if (index >= 0) decoderCombo->setCurrentIndex(index);
+}
+
+// The buttons and the line of the decoder that is chosen
+void AudioConfigDialog::showDecoderState()
+{
+    const qint32 decoder = decoderCombo->currentData().toInt();
+    decodeStatusLabel->setText(statusText[decoder]);
+    stopButton->setEnabled(running[decoder]);
+    decodeButton->setEnabled(!running[decoder] && hasEfm);
+}
+
+bool AudioConfigDialog::efmWithoutTimecodes() const { return noTimecodesCheck->isChecked(); }
+bool AudioConfigDialog::efmConceal() const { return concealCheck->isChecked(); }
+bool AudioConfigDialog::efmPad() const { return padCheck->isChecked(); }
 
 void AudioConfigDialog::setDensity(qint32 density)
 {
