@@ -198,6 +198,11 @@ WaveformPanel::WaveformPanel(AudioEngine *engine, QWidget *parent) : QFrame(pare
 
     view = new WaveformView(engine, this);
     layout->addWidget(controls);
+    // A line between the controls and the waveform: they are two parts of one block
+    separator = new QFrame(this);
+    separator->setFrameShape(QFrame::VLine);
+    separator->setFrameShadow(QFrame::Sunken);
+    layout->addWidget(separator);
     layout->addWidget(view, 1);
 
     connect(sourceCombo, &QComboBox::currentIndexChanged, this, [this]() { if (!filling) sourceChosen(); });
@@ -285,6 +290,7 @@ void WaveformPanel::sourceChosen()
 void WaveformPanel::setControlsVisible(bool visible)
 {
     controls->setVisible(visible);
+    separator->setVisible(visible);
 }
 
 bool WaveformPanel::leftOn() const { return !leftButton->isChecked(); }
