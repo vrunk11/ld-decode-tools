@@ -3242,6 +3242,7 @@ void MainWindow::loadLiveAudio()
     liveEfm->open();
 
     for (const LdxStream::OtherTrack &track: LdxStream::instance()->otherTracks()) {
+        qInfo().noquote() << "Live input: track" << track.number << track.kind << track.name;
         liveKinds.insert(track.number, track.kind);
         if (track.kind == "pcm" && livePcmTrack == 0 && track.parameters.value("source").toString() != "efm") {
             livePcmTrack = track.number;
@@ -3281,7 +3282,13 @@ void MainWindow::pollLiveTracks()
     LdxStream *stream = LdxStream::instance();
     if (!stream || !liveEfm) return;
     bool audioCame = false, efmCame = false;
-    for (const LdxStream::OtherBlock &block: stream->takeOtherBlocks()) {
+    static bool reported = false;
+    const QVector<LdxStream::OtherBlock> blocks = stream->takeOtherBlocks();
+    if (!blocks.isEmpty() && !reported) {
+        reported = true;
+        qInfo().noquote() << "Live input: other tracks began to arrive, first block of track" << blocks.first().track << "kind" << liveKinds.value(blocks.first().track) << "with" << blocks.first().data.size() << "bytes";
+    }
+    for (const LdxStream::OtherBlock &block: blocks) {
         const QString kind = liveKinds.value(block.track);
         if (kind == "pcm" && block.track == livePcmTrack && liveAnalogue) {
             QByteArray pairs = block.data;
