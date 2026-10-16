@@ -191,10 +191,11 @@ int main(int argc, char *argv[])
         CHECK(engine.samples() == 44100 && engine.tracks()[index].source == "import");
         engine.clearImported();
         CHECK(engine.currentTrack() < 0);
+        CHECK(engine.selectTrack(0));         // (the audio of the capture again)
     }
 
     // EFM decoded by the programs, as it comes (when the EFM of a real capture is at hand)
-    const QString realCapture = "D:/decodde/test.ldx";
+    const QString realCapture = qEnvironmentVariableIsSet("WAVEFORM_NO_CAPTURE") ? QString("nothing.ldx") : QString("D:/decodde/test.ldx");        // (WAVEFORM_NO_CAPTURE: as on a machine that has none)
     if (QFile::exists(realCapture)) {
         for (EfmDecoding::Backend backend: { EfmDecoding::Backend::Suite, EfmDecoding::Backend::ProcessEfm }) {
             EfmDecoding decoding(backend);
@@ -404,6 +405,12 @@ int main(int argc, char *argv[])
 
     // One channel shown on the whole height when the other is muted, if that is asked for
     {
+        // (the engine may have no track chosen: the test of the imported audio, which needs ffmpeg, leaves it with none)
+        CHECK(engine.selectTrack(0));
+        QElapsedTimer peaksWait;
+        peaksWait.start();
+        while (!engine.peaksComplete() && peaksWait.elapsed() < 10000) waitMs(20);
+        CHECK(engine.peaksComplete());
         WaveformPanel solo(&engine);        // (a panel of its own, of a known size: what the others did to theirs does not count)
         solo.setTracks(engine.tracks(), 0);
         solo.setDensity(WaveformPanel::Density::Large);
