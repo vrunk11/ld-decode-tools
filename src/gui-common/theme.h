@@ -59,6 +59,9 @@ bool isDarkPalette(const QPalette &palette);
 // The colour of the play button icon in the theme applied (set by applyAppearance)
 QColor playButtonColour();
 
+// The colour the audio waveform is drawn in, for the analogue audio of a capture or for audio decoded from EFM
+QColor waveformColour(bool fromEfm);
+
 // Widget styles are Qt style names (as listed by QStyleFactory), stored in the
 // configuration file. An empty name means Auto: on Windows the classic style
 // ("windowsvista", the Windows 10 look), except on Windows 11 with a dark theme

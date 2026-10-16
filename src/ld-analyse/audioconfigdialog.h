@@ -26,7 +26,7 @@ class QSpinBox;
 class QToolButton;
 class QLineEdit;
 
-// Audio config: the tab Output (sound device, colour of the waveform, the controls of the panel repeated, the panel's column
+// Audio panel: the tab Output (sound device, the waveform on or off, the controls of the panel repeated, the panel's column
 // of controls on or off) and the tab Import (a file that ffmpeg reads, cut to the length of the video, with an offset).
 class AudioConfigDialog : public QDialog
 {
@@ -35,7 +35,9 @@ public:
     explicit AudioConfigDialog(QWidget *parent = nullptr);
 
     void setDevice(const QByteArray &id);
-    void setColor(const QColor &colour);
+    void setMuted(bool muted);
+    void setWaveformShown(bool shown);
+    void setStyle(qint32 style);
     void setSidePanel(bool shown);
     void setMix(bool left, bool right, qint32 volume);
     void setOffsetMs(qint32 milliseconds);
@@ -49,7 +51,9 @@ public:
 
 signals:
     void deviceChosen(const QByteArray &id);
-    void colorChosen(const QColor &colour);
+    void mutedChanged(bool muted);
+    void waveformShownChanged(bool shown);
+    void styleChosen(qint32 style);
     void sidePanelChanged(bool shown);
     void mixChanged(bool left, bool right, qint32 volume);
     void offsetChanged(qint32 milliseconds);
@@ -64,11 +68,12 @@ signals:
 private:
     void browse();
     void importFile();
-    void chooseColor();
     void finishedReading(int exitCode);
 
     QComboBox *deviceCombo;
-    QPushButton *colourButton;
+    QToolButton *muteButton;
+    QCheckBox *waveformCheck;
+    QComboBox *styleCombo;
     QCheckBox *sideCheck;
     QToolButton *leftButton, *rightButton;
     QSlider *volumeSlider;
@@ -85,7 +90,6 @@ private:
     QPushButton *stopButtons[2];
     QLabel *decodeStatus[2];
 
-    QColor colour;
     double videoLength = 0.0;
     QString ldx;
     QString name;

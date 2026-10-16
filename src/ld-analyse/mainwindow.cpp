@@ -2692,6 +2692,8 @@ void MainWindow::customizeTheme()
     // The play button colour is kept apart from the system palette, which has none
     QPalette startPalette = QApplication::palette();
     startPalette.setColor(QPalette::All, QPalette::BrightText, playButtonColour());
+    startPalette.setColor(QPalette::All, QPalette::LinkVisited, waveformColour(false));
+    startPalette.setColor(QPalette::Disabled, QPalette::LinkVisited, waveformColour(true));
     ThemeEditorDialog editor(startPalette, this);
     connect(&editor, &ThemeEditorDialog::previewChanged, this, [this](const QString &palette) {
         const bool wasDark = isDarkTheme;
@@ -2907,15 +2909,14 @@ void MainWindow::setupAudio()
 {
     audio = new AudioEngine(this);
     waveform = new WaveformPanel(audio, this);
-    waveform->setMaximumHeight(72);
-    waveform->hide();
+    showWaveform(false);
     ui->verticalLayout->insertWidget(ui->verticalLayout->indexOf(ui->mediaControl_frame), waveform);
 
     ui->menuView->addSeparator();
     actionWaveform = ui->menuView->addAction(tr("&Waveform"));
     actionWaveform->setCheckable(true);
     actionWaveform->setEnabled(false);
-    actionAudioConfig = ui->menuView->addAction(tr("&Audio config..."));
+    actionAudioConfig = ui->menuWindow->addAction(tr("Audio &panel..."));
     connect(actionAudioConfig, &QAction::triggered, this, &MainWindow::showAudioConfig);
 
     // What was chosen the last time
@@ -2925,13 +2926,20 @@ void MainWindow::setupAudio()
     const qint32 volume = configuration.audioValue("volume", 70).toInt();
     waveform->setMix(left, right, volume);
     audio->setMix(left, right, volume / 100.0);
-    waveform->setColor(QColor(configuration.audioValue("waveformColour", "#2a82da").toString()));
     waveform->setControlsVisible(configuration.audioValue("sidePanel", true).toBool());
+    const bool muted = configuration.audioValue("muted", false).toBool();
+    waveform->setMuted(muted);
+    audio->setMuted(muted);
+    waveform->setStyle(static_cast<WaveformView::Style>(configuration.audioValue("style", 0).toInt()));
+    connect(waveform, &WaveformPanel::mutedChanged, this, [this](bool isMuted) {
+        audio->setMuted(isMuted);
+        configuration.setAudioValue("muted", isMuted);
+    });
 
     connect(actionWaveform, &QAction::toggled, this, [this](bool shown) {
         waveformWanted = shown;
         configuration.setAudioValue("waveformVisible", shown);
-        waveform->setVisible(shown && audio->hasAudio());
+        showWaveform(shown && audio->hasAudio());
     });
     connect(waveform, &WaveformPanel::trackSelected, this, [this](qint32 index) {
         const bool wasPlaying = audio->isPlaying();
@@ -2967,17 +2975,27 @@ void MainWindow::showAudioConfig()
         audioConfig = new AudioConfigDialog(this);
         audioConfig->setDevice(configuration.audioValue("device", QByteArray()).toByteArray());
         audio->setOutputDevice(configuration.audioValue("device", QByteArray()).toByteArray());
-        audioConfig->setColor(QColor(configuration.audioValue("waveformColour", "#2a82da").toString()));
         audioConfig->setSidePanel(configuration.audioValue("sidePanel", true).toBool());
         audioConfig->setMix(waveform->leftOn(), waveform->rightOn(), waveform->volume());
         connect(audioConfig, &AudioConfigDialog::deviceChosen, this, [this](const QByteArray &id) {
             audio->setOutputDevice(id);
             configuration.setAudioValue("device", id);
         });
-        connect(audioConfig, &AudioConfigDialog::colorChosen, this, [this](const QColor &colour) {
-            waveform->setColor(colour);
-            configuration.setAudioValue("waveformColour", colour.name());
+        connect(audioConfig, &AudioConfigDialog::mutedChanged, this, [this](bool muted) {
+            waveform->setMuted(muted);
+            audio->setMuted(muted);
+            configuration.setAudioValue("muted", muted);
         });
+        connect(waveform, &WaveformPanel::mutedChanged, audioConfig, &AudioConfigDialog::setMuted);
+        connect(audioConfig, &AudioConfigDialog::waveformShownChanged, actionWaveform, &QAction::setChecked);
+        connect(actionWaveform, &QAction::toggled, audioConfig, &AudioConfigDialog::setWaveformShown);
+        connect(audioConfig, &AudioConfigDialog::styleChosen, this, [this](qint32 style) {
+            waveform->setStyle(static_cast<WaveformView::Style>(style));
+            configuration.setAudioValue("style", style);
+        });
+        audioConfig->setMuted(waveform->muted());
+        audioConfig->setWaveformShown(actionWaveform->isChecked());
+        audioConfig->setStyle(configuration.audioValue("style", 0).toInt());
         connect(audioConfig, &AudioConfigDialog::sidePanelChanged, this, [this](bool shown) {
             waveform->setControlsVisible(shown);
             configuration.setAudioValue("sidePanel", shown);
@@ -3004,7 +3022,7 @@ void MainWindow::showAudioConfig()
             const QSignalBlocker blocker(actionWaveform);
             actionWaveform->setChecked(true);
             waveformWanted = true;
-            waveform->show();
+            showWaveform(true);
             updateAudioPlayhead();
         });
         connect(audioConfig, &AudioConfigDialog::importRemoved, this, [this]() {
@@ -3018,7 +3036,7 @@ void MainWindow::showAudioConfig()
                 audio->selectTrack(first);
                 waveform->setTracks(audio->tracks(), first);
             } else {
-                waveform->hide();
+                showWaveform(false);
             }
         });
         connect(audioConfig, &AudioConfigDialog::saveRequested, this, &MainWindow::saveImportedAudio);
@@ -3100,7 +3118,7 @@ void MainWindow::startEfmDecoding(qint32 decoder, bool noTimecodes, bool conceal
         actionWaveform->setChecked(true);
     }
     waveformWanted = true;
-    waveform->show();
+    showWaveform(true);
     audioConfig->setDecodeStatus(decoder, tr("Decoding..."), true);
     connect(decoding, &EfmDecoding::grew, this, [this, decoder, decoding]() {
         audio->extend();
@@ -3139,6 +3157,16 @@ void MainWindow::saveImportedAudio(const QVector<qint16> &samples, double sample
     if (added) loadAudio();
 }
 
+// Show or hide the waveform: the window grows or shrinks by its height, so that the video keeps its room
+void MainWindow::showWaveform(bool shown)
+{
+    if (waveform->isVisibleTo(this) == shown) return;
+    const qint32 height = waveform->sizeHint().height() + ui->verticalLayout->spacing();
+    waveform->setVisible(shown);
+    if (!isVisible() || isMaximized() || isFullScreen()) return;
+    resize(width(), qMax(minimumHeight(), this->height() + (shown ? height : -height)));
+}
+
 // A capture has been loaded: its audio, if it has any, is what the waveform shows
 void MainWindow::loadAudio()
 {
@@ -3159,7 +3187,7 @@ void MainWindow::loadAudio()
     actionWaveform->setEnabled(true);
     const QSignalBlocker blocker(actionWaveform);
     actionWaveform->setChecked(waveformWanted);
-    waveform->setVisible(waveformWanted);
+    showWaveform(waveformWanted);
     updateAudioPlayhead();
 }
 
@@ -3169,9 +3197,9 @@ void MainWindow::unloadAudio()
     stopEfmDecoders();
     audioStop();
     audio->setVideo(QString());
-    waveform->hide();
+    showWaveform(false);
     actionWaveform->setEnabled(false);
-    actionAudioConfig = ui->menuView->addAction(tr("&Audio config..."));
+    actionAudioConfig = ui->menuWindow->addAction(tr("Audio &panel..."));
     connect(actionAudioConfig, &QAction::triggered, this, &MainWindow::showAudioConfig);
 }
 

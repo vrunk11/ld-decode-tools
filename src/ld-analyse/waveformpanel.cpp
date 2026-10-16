@@ -20,8 +20,9 @@
 #include <QVBoxLayout>
 
 #include "audioengine.h"
+#include "theme.h"
 
-WaveformView::WaveformView(AudioEngine *engine, QWidget *parent) : QWidget(parent), engine(engine), colour(QColor(0x2a, 0x82, 0xda))
+WaveformView::WaveformView(AudioEngine *engine, QWidget *parent) : QWidget(parent), engine(engine), colour()
 {
     setMinimumHeight(48);
     setMouseTracking(false);
@@ -82,10 +83,16 @@ void WaveformView::paintEvent(QPaintEvent *)
     const AudioPeaks &peaks = engine->peaks();
     const qint64 available = peaks.samples();
     const double half = h / 4.0;
-    QColor faint = colour;
-    faint.setAlpha(150);
+    // (the colour of the theme, for the kind of audio that is played, unless one was given)
+    const qint32 chosen = engine->currentTrack();
+    const bool fromEfm = chosen >= 0 && chosen < engine->tracks().size() && engine->tracks()[chosen].source == "efm";
+    const QColor base = colour.isValid() ? colour : waveformColour(fromEfm);
+    QColor faint = base;
+    faint.setAlpha(style == Style::Filled ? 170 : 255);
     painter.setPen(faint);
-    for (qint32 x = 0; x < w; x++) {
+    const qint32 step = style == Style::Bars ? 3 : 1;
+    double previousTop[2] = { -1, -1 }, previousBottom[2] = { -1, -1 };
+    for (qint32 x = 0; x < w; x += step) {
         const qint64 first = total * x / w;
         const qint64 last = qMax(first + 1, total * (x + 1) / w);
         if (first >= available) break;
@@ -94,8 +101,22 @@ void WaveformView::paintEvent(QPaintEvent *)
         const double leftBottom = (h / 4.0) - (peak.minLeft / 32768.0) * half;
         const double rightTop = (3.0 * h / 4.0) - (peak.maxRight / 32768.0) * half;
         const double rightBottom = (3.0 * h / 4.0) - (peak.minRight / 32768.0) * half;
-        painter.drawLine(QPointF(x + 0.5, leftTop), QPointF(x + 0.5, qMax(leftBottom, leftTop + 1.0)));
-        painter.drawLine(QPointF(x + 0.5, rightTop), QPointF(x + 0.5, qMax(rightBottom, rightTop + 1.0)));
+        const double tops[2] = { leftTop, rightTop }, bottoms[2] = { qMax(leftBottom, leftTop + 1.0), qMax(rightBottom, rightTop + 1.0) };
+        for (qint32 c = 0; c < 2; c++) {
+            if (style == Style::Outline) {
+                // the edge of the shape only: a line along the highest and along the lowest values
+                if (previousTop[c] >= 0) {
+                    painter.drawLine(QPointF(x - 0.5, previousTop[c]), QPointF(x + 0.5, tops[c]));
+                    painter.drawLine(QPointF(x - 0.5, previousBottom[c]), QPointF(x + 0.5, bottoms[c]));
+                }
+                previousTop[c] = tops[c];
+                previousBottom[c] = bottoms[c];
+            } else if (style == Style::Bars) {
+                painter.fillRect(QRectF(x, tops[c], 2.0, bottoms[c] - tops[c]), faint);
+            } else {
+                painter.drawLine(QPointF(x + 0.5, tops[c]), QPointF(x + 0.5, bottoms[c]));
+            }
+        }
     }
 
     // Where the video is
@@ -109,12 +130,14 @@ void WaveformView::paintEvent(QPaintEvent *)
 
 // ---------------------------------------------------------------------------------------------------------------------
 
-WaveformPanel::WaveformPanel(AudioEngine *engine, QWidget *parent) : QWidget(parent)
+WaveformPanel::WaveformPanel(AudioEngine *engine, QWidget *parent) : QFrame(parent)
 {
+    setFrameShape(QFrame::StyledPanel);
+    setFrameShadow(QFrame::Sunken);
     QHBoxLayout *layout = new QHBoxLayout(this);
-    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setContentsMargins(4, 4, 4, 4);
     layout->setSpacing(6);
-    setMaximumHeight(72);
+    setMaximumHeight(80);
 
     controls = new QWidget(this);
     controls->setFixedWidth(170);
@@ -144,12 +167,18 @@ WaveformPanel::WaveformPanel(AudioEngine *engine, QWidget *parent) : QWidget(par
     rightButton->setChecked(true);
     rightButton->setAutoRaise(true);
     rightButton->setToolTip(tr("Play the right channel"));
+    muteButton = new QToolButton(controls);
+    muteButton->setText(tr("M"));
+    muteButton->setCheckable(true);
+    muteButton->setAutoRaise(true);
+    muteButton->setToolTip(tr("Mute"));
     volumeSlider = new QSlider(Qt::Horizontal, controls);
     volumeSlider->setRange(0, 100);
     volumeSlider->setValue(70);
     volumeSlider->setToolTip(tr("Volume"));
     mixRow->addWidget(leftButton);
     mixRow->addWidget(rightButton);
+    mixRow->addWidget(muteButton);
     mixRow->addWidget(volumeSlider, 1);
     column->addLayout(mixRow);
     column->addStretch(1);
@@ -165,6 +194,7 @@ WaveformPanel::WaveformPanel(AudioEngine *engine, QWidget *parent) : QWidget(par
     });
     connect(leftButton, &QToolButton::toggled, this, &WaveformPanel::emitMix);
     connect(rightButton, &QToolButton::toggled, this, &WaveformPanel::emitMix);
+    connect(muteButton, &QToolButton::toggled, this, &WaveformPanel::mutedChanged);
     connect(volumeSlider, &QSlider::valueChanged, this, &WaveformPanel::emitMix);
     connect(view, &WaveformView::seekRequested, this, &WaveformPanel::seekRequested);
 }
@@ -240,4 +270,12 @@ void WaveformPanel::setMix(bool left, bool right, qint32 volume)
 void WaveformPanel::emitMix()
 {
     emit mixChanged(leftButton->isChecked(), rightButton->isChecked(), volumeSlider->value());
+}
+
+bool WaveformPanel::muted() const { return muteButton->isChecked(); }
+
+void WaveformPanel::setMuted(bool muted)
+{
+    const QSignalBlocker blocker(muteButton);
+    muteButton->setChecked(muted);
 }

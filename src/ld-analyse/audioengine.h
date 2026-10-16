@@ -44,6 +44,7 @@ public:
 
     // The channels that are played and the volume (0 to 1)
     void setMix(bool left, bool right, double volume);
+    void setMuted(bool muted);
     // Audio brought in by the person (stereo, interleaved), kept in memory, as one more choice of tracks(): the index of it
     qint32 setImported(const QVector<qint16> &samples, double sampleRate, const QString &label);
     void clearImported();
@@ -84,6 +85,7 @@ signals:
 
 private:
     void stopPeaks();
+    void applyMix();
 
     QVector<AudioTrackInfo> available;
     qint32 chosen = -1;
@@ -100,6 +102,7 @@ private:
 
     bool mixLeft = true, mixRight = true;
     double mixVolume = 1.0;
+    bool mixMuted = false;
     qint32 offsetMs = 0;
     QByteArray deviceId;
     QVector<qint16> importedSamples;
