@@ -181,6 +181,7 @@ MainWindow::MainWindow(QString inputFilenameParam, const TbcSource::StreamInput 
         });
     }
     setupVideoFilter();
+    buildConfigMenu();
 
     // Field order: the button is left out when the window is narrow, so the menu has it too
     actionFieldOrder = new QAction(tr("Reverse field order"), this);
@@ -235,6 +236,26 @@ MainWindow::~MainWindow()
     }
 
     delete ui;
+}
+
+// The Config menu: what is set up (rather than a window of analysis, which is in the Window menu)
+void MainWindow::buildConfigMenu()
+{
+    QMenu *menu = new QMenu(tr("&Config"), this);
+    ui->menuBar->insertMenu(ui->menuHelp->menuAction(), menu);
+    for (QAction *action: { ui->actionVideo_parameters, ui->actionChroma_decoder_configuration }) {
+        ui->menuWindow->removeAction(action);
+        menu->addAction(action);
+    }
+    if (actionVideoFilter) menu->addAction(actionVideoFilter);
+    if (actionFilters) menu->addAction(actionFilters);
+#ifdef LDDECODE_HAVE_AUDIO
+    menu->addSeparator();
+    if (actionAudioConfig) menu->addAction(actionAudioConfig);
+#endif
+    // (the separator that was before them is of no use at the end of the Window menu)
+    const QList<QAction *> left = ui->menuWindow->actions();
+    if (!left.isEmpty() && left.last()->isSeparator()) ui->menuWindow->removeAction(left.last());
 }
 
 // The ffmpeg video filters: Window > Video filter...
@@ -313,8 +334,7 @@ void MainWindow::setupVideoFilter()
     actionFilters = new QAction(tr("Other filters on"), this);
     actionFilters->setCheckable(true);
     // With the other windows and configuration dialogues
-    ui->menuWindow->addAction(action);
-    ui->menuWindow->addAction(actionFilters);
+    actionVideoFilter = action;        // (it is in the Config menu: buildConfigMenu)
 
     // The button beside the other options
     filtersPushButton = new QPushButton(this);
@@ -715,6 +735,9 @@ void MainWindow::setupPlayback()
     actionWeave = menu->addAction(tr("Frame view at field rate (weave)"));
     actionWeave->setCheckable(true);
     actionWeave->setToolTip(tr("While playing, show a frame made of each field and the next, at the field rate. Not for sources with 2:2 pulldown."));
+    // (kept from one session to the next)
+    actionWeave->setChecked(configuration.playbackValue("weave", false).toBool());
+    connect(actionWeave, &QAction::toggled, this, [this](bool on) { configuration.setPlaybackValue("weave", on); configuration.writeConfiguration(); });
 
     // Speed relative to the real speed of the video
     speedSeparator = menu->addSeparator();
@@ -2970,7 +2993,7 @@ void MainWindow::setupAudio()
     actionWaveform = ui->menuView->addAction(tr("&Waveform"));
     actionWaveform->setCheckable(true);
     actionWaveform->setEnabled(false);
-    actionAudioConfig = ui->menuWindow->addAction(tr("Audio &panel..."));
+    actionAudioConfig = new QAction(tr("Audio &panel..."), this);        // (in the Config menu: buildConfigMenu)
     connect(actionAudioConfig, &QAction::triggered, this, &MainWindow::showAudioConfig);
 
     // What was chosen the last time

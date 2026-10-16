@@ -234,6 +234,8 @@ private:
     QTimer *liveTimer = nullptr;
     // The frame view at field rate while playing (a trick of the playback, see actionWeave)
     bool weaveActive = false;
+    QAction *actionVideoFilter = nullptr;
+    void buildConfigMenu();
     QAction *actionWeave = nullptr;
     void updateLive();
     void updateLiveControls();

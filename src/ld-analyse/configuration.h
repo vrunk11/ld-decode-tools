@@ -83,6 +83,9 @@ public:
     // The settings of the audio (volume, channels, waveform...), kept in their own group of the file
     QVariant audioValue(const QString &key, const QVariant &defaultValue = QVariant());
     void setAudioValue(const QString &key, const QVariant &value);
+    // The same for the playback (the weave at field rate...)
+    QVariant playbackValue(const QString &key, const QVariant &defaultValue = QVariant());
+    void setPlaybackValue(const QString &key, const QVariant &value);
 
 signals:
 

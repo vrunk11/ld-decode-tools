@@ -379,3 +379,13 @@ void Configuration::setAudioValue(const QString &key, const QVariant &value)
 {
     configuration->setValue("audio/" + key, value);
 }
+
+QVariant Configuration::playbackValue(const QString &key, const QVariant &defaultValue)
+{
+    return configuration->value("playback/" + key, defaultValue);
+}
+
+void Configuration::setPlaybackValue(const QString &key, const QVariant &value)
+{
+    configuration->setValue("playback/" + key, value);
+}
