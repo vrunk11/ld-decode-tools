@@ -174,7 +174,7 @@ Sound plays only while the video plays (Play, at normal speed; at the other spee
 
 ## The panel
 
-The left part of the panel has, from the top: **the source** (Analogue, EFM digital, Imported; a source the capture has not is shown greyed), the track of the file when it has several, then **L**, **R** and **M** and the volume. L, R and M are all mute buttons: pressed means silenced (a channel that is on is also played on both sides when the other is muted), and the volume is the global one. The column can be hidden (Config > Audio panel > Output). The waveform has the application's background with a faint grid, as the SNR graphs have; its colour is the one of the theme for the audio that is played, one for the analogue audio and one for audio from EFM (the last two entries of View > Theme > Customize...).
+The left part of the panel has, from the top: **the source** (Analogue, EFM digital, Imported; a source the capture has not is shown greyed), the track of the file when it has several, then **L**, **R** and **M** and the volume. L, R and M are all mute buttons: pressed means silenced (a channel that is on is also played on both sides when the other is muted), and the volume is the global one. When nothing is heard (M, or both L and R, pressed) the waveform is drawn grey. The column can be hidden (Config > Audio panel > Output). The waveform has the application's background with a faint grid, as the SNR graphs have; its colour is the one of the theme for the audio that is played, one for the analogue audio and one for audio from EFM (the last two entries of View > Theme > Customize...).
 
 ## Config > Audio panel
 

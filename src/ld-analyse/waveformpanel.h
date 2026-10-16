@@ -39,6 +39,8 @@ public:
     // The channels that are on (not muted), and whether, when one of the two is muted, only the other is drawn, on the whole height
     void setChannels(bool left, bool right) { channelLeft = left; channelRight = right; update(); }
     void setSolo(bool on) { soloOn = on; update(); }
+    // Nothing is heard (L and R, or M, are muted): the waveform is drawn grey
+    void setSilenced(bool on) { silenced = on; update(); }
     void setMessage(const QString &text) { message = text; update(); }
 
 signals:
@@ -56,6 +58,7 @@ private:
     QColor colour;
     Style style = Style::Filled;
     bool channelLeft = true, channelRight = true, soloOn = false;
+    bool silenced = false;
     QString message;
 };
 
@@ -74,6 +77,7 @@ public:
     void setStyle(WaveformView::Style style) { view->setStyle(style); }
     void setWell(bool on);
     void setSoloChannel(bool on) { view->setSolo(on); }
+    void refreshSilence();
     // How much height the panel takes: Large, Compact (the default, a little more than the buttons of the playback bar) and Ultra
     // (one line of buttons: the controls beside the waveform in a single row)
     enum class Density { Large = 0, Compact = 1, Ultra = 2 };

@@ -429,6 +429,16 @@ int main(int argc, char *argv[])
         CHECK(whole > shared * 3 / 2);
         panel.setMix(true, true, 70);
         CHECK(redCount() < whole);                    // (both on: two channels again)
+        // Nothing is heard when both channels, or M, are muted: the waveform is grey, not in its colour
+        panel.setMix(false, false, 70);
+        CHECK(redCount() == 0);
+        panel.setMix(true, true, 70);
+        CHECK(redCount() > 0);
+        panel.setMuted(true);
+        panel.refreshSilence();
+        CHECK(redCount() == 0);
+        panel.setMuted(false);
+        CHECK(redCount() > 0);
         panel.setSoloChannel(false);
         panel.setDensity(WaveformPanel::Density::Compact);
     }
