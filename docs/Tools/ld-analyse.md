@@ -168,15 +168,15 @@ The **field view** is a bob: the lines of each field are doubled to the height o
 
 # Audio
 
-ld-analyse plays the sound of a capture with its video, and shows it as a waveform under the picture. It needs Qt Multimedia (the program is built without audio if that is not there). The waveform is shown when the capture has audio: a pcm track of its LDX file (the analogue audio, audio decoded from EFM, audio that was imported), the `.pcm` beside a `.tbc`, or the `_audio_0.wav` of a CVBS capture. View > Waveform and Window > Audio panel > Output switch it on and off; the window grows or shrinks by the height of the panel, so the picture keeps its room.
+ld-analyse plays the sound of a capture with its video, and shows it as a waveform under the picture. It needs Qt Multimedia (the program is built without audio if that is not there). The waveform is shown when the capture has audio: a pcm track of its LDX file (the analogue audio, audio decoded from EFM, audio that was imported), the `.pcm` beside a `.tbc`, or the `_audio_0.wav` of a CVBS capture. View > Waveform and Config > Audio panel > Output switch it on and off; the window grows or shrinks by the height of the panel, so the picture keeps its room.
 
 Sound plays only while the video plays (Play, at normal speed; at the other speeds it is off). On a file the sound is the clock: the picture keeps to what the sound card has played, so picture and sound stay together. For the analogue audio of a capture, where each field of the metadata says how many audio samples it holds (`audioSamples`), a moment of the video is placed in the audio exactly by them. A click on the waveform goes to that place of the video.
 
 ## The panel
 
-The left part of the panel has, from the top: **the source** (Analogue, EFM digital, Imported; a source the capture has not is shown greyed), the track of the file when it has several, then **L**, **R** and **M** and the volume. L, R and M are all mute buttons: pressed means silenced (a channel that is on is also played on both sides when the other is muted), and the volume is the global one. The column can be hidden (Window > Audio panel > Output). The waveform has the application's background with a faint grid, as the SNR graphs have; its colour is the one of the theme for the audio that is played, one for the analogue audio and one for audio from EFM (the last two entries of View > Theme > Customize...).
+The left part of the panel has, from the top: **the source** (Analogue, EFM digital, Imported; a source the capture has not is shown greyed), the track of the file when it has several, then **L**, **R** and **M** and the volume. L, R and M are all mute buttons: pressed means silenced (a channel that is on is also played on both sides when the other is muted), and the volume is the global one. The column can be hidden (Config > Audio panel > Output). The waveform has the application's background with a faint grid, as the SNR graphs have; its colour is the one of the theme for the audio that is played, one for the analogue audio and one for audio from EFM (the last two entries of View > Theme > Customize...).
 
-## Window > Audio panel
+## Config > Audio panel
 
 * **Output**: the sound device, the waveform on or off, the column of controls on or off, and the same L, R, M and volume as the panel.
 * **Style**: the **height** of the panel (Compact by default, a little more than the buttons of the playback bar; Large; Ultra compact, which is one line of buttons high, with the controls beside the waveform) and the **design** of the waveform (Filled, Outline, Bars).
@@ -189,11 +189,11 @@ On `... | ld-analyse -` with an LDX stream (see below), the audio and the EFM of
 
 # Video filters
 
-Window > Video filter... shows the picture through ffmpeg filters (libavfilter). There are three kinds, which are independent of each other and run in this order:
+Config > Video filter... shows the picture through ffmpeg filters (libavfilter). There are three kinds, which are independent of each other and run in this order:
 
 * **Deinterlacing**: the Deinterlaced mode of the view button (after Frame, Split and Field) shows the frame through a deinterlacer, which is chosen in the dialogue: yadif, bwdif, w3fdif or estdif. A deinterlacer works on the frames either side of the one it deinterlaces, so a picture that is not playing (paused, or stepped to) is given the real frames before and after it, rendered for the purpose; stepping is a little slower for it. Where something moves between the two fields of a frame no deinterlacer has more than one field to go on, and the other is interpolated from it: that is what they do, and is more visible on a frozen picture than in motion.
 * **Scaling**: gives the picture the size it is shown at, with the algorithm chosen (bilinear, bicubic, lanczos, spline, gaussian, area averaging or nearest neighbour). The first choice, Default, leaves the scaling to the program (smooth, and the fastest).
-* **Other filters**: a text field for any ffmpeg filters, written as in ffmpeg's `-vf` option (`$W` and `$H` stand for the size the picture is shown at). The field can always be edited. What is in it is applied when the Filters button, beside the other options, is on (Window > Other filters on does the same), so the picture can be compared with and without it. Typing a new command line in the dialogue and applying it switches the button on.
+* **Other filters**: a text field for any ffmpeg filters, written as in ffmpeg's `-vf` option (`$W` and `$H` stand for the size the picture is shown at). The field can always be edited. What is in it is applied when the Filters button, beside the other options, is on (Config > Other filters on does the same), so the picture can be compared with and without it. Typing a new command line in the dialogue and applying it switches the button on.
 
 The settings are remembered between sessions, except that the Filters button always starts off, so that nothing alters the picture until it is asked for.
 
@@ -218,7 +218,7 @@ Pause it (the play button or the space bar) to freeze the last few seconds and g
 
 A video that arrives faster than it plays, such as a file, would be overwritten before it was seen: use `--throttle` for those, which holds the producer back to the pace of the viewer instead (pausing then holds the input up too). When the stream ends, playback stops at its last frame.
 
-A pipe has no ld-decode metadata, so ld-analyse works out what it can from the video itself, for the frames that are shown: the VBI (CLV time code or CAV picture number, chapter, VITC, the NTSC video ID and closed captions) and the black and white SNR, with the same code as ld-process-vbi and ld-process-vits. The VBI is of the frames shown. The SNR is measured for every frame received, on a thread of its own, whether or not it was shown, so the SNR graphs of the Window menu are the history of what has been received, and grow as the video comes in. Above each graph a line says where its values come from (the metadata of the capture, or measured live), and for a live input there are two check boxes: Measure live switches the measuring on and off (what arrives while it is off is not measured), Follow keeps the whole history in view (zooming or panning the graph unticks it, so the part looked at stays put), and Clear forgets the history so far, which starts again from then. The history is kept for up to two hours of video (216000 frames); beyond that the oldest tenth is let go. With `--throttle` only the frames shown are measured. Dropouts are not detected, so the dropout windows stay empty. The SNR is measured against the black and white levels the capture has when it is opened: those of its metadata, or for a pipe the standard ones unless `--black-level` and `--white-level` say otherwise. Adjusting the levels in Window > Video parameters, which is for the picture (and can be done while the video plays), does not move the SNR.
+A pipe has no ld-decode metadata, so ld-analyse works out what it can from the video itself, for the frames that are shown: the VBI (CLV time code or CAV picture number, chapter, VITC, the NTSC video ID and closed captions) and the black and white SNR, with the same code as ld-process-vbi and ld-process-vits. The VBI is of the frames shown. The SNR is measured for every frame received, on a thread of its own, whether or not it was shown, so the SNR graphs of the Window menu are the history of what has been received, and grow as the video comes in. Above each graph a line says where its values come from (the metadata of the capture, or measured live), and for a live input there are two check boxes: Measure live switches the measuring on and off (what arrives while it is off is not measured), Follow keeps the whole history in view (zooming or panning the graph unticks it, so the part looked at stays put), and Clear forgets the history so far, which starts again from then. The history is kept for up to two hours of video (216000 frames); beyond that the oldest tenth is let go. With `--throttle` only the frames shown are measured. Dropouts are not detected, so the dropout windows stay empty. The SNR is measured against the black and white levels the capture has when it is opened: those of its metadata, or for a pipe the standard ones unless `--black-level` and `--white-level` say otherwise. Adjusting the levels in Config > Video parameters, which is for the picture (and can be done while the video plays), does not move the SNR.
 
 # The File menu
 
@@ -297,6 +297,10 @@ Lists every widget style available on the machine. **Auto** uses the classic Win
 # The Window Menu
 
 The Window menu contains a number of options that open additional windows to assist with analysis.
+
+The windows that set things up are in the **Config** menu, beside it: Video parameters, Chroma decoder configuration, Video filter..., Other filters on, and Audio panel (their descriptions are below).
+
+The windows that set things up are in the **Config** menu: Video parameters, Chroma decoder configuration, Video filter..., Other filters on, and Audio panel.
 
 ## Audio panel
 
