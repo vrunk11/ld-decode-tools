@@ -705,6 +705,20 @@ void MainWindow::setupPlayback()
     actionLoop->setCheckable(true);
     connect(actionLoop, &QAction::toggled, playback, &PlaybackController::setLoop);
 
+    // A trick of the playback: in the frame view the images go at the rate of the fields, each the weave of a field and the next
+    // (fields 1 and 2, then 2 and 3, then 3 and 4...). Off by default: a source with 2:2 pulldown (film) shows two fields of
+    // different times in such a weave.
+    actionWeave = menu->addAction(tr("Frame view at field rate (weave)"));
+    actionWeave->setCheckable(true);
+    actionWeave->setToolTip(tr("While playing, show a frame made of each field and the next, at the field rate. Not for sources with 2:2 pulldown."));
+
+    // A trick of the playback: in the frame view the images go at the rate of the fields, each the weave of a field and the next
+    // (fields 1 and 2, then 2 and 3, then 3 and 4...). Off by default: a source with 2:2 pulldown (film) shows two fields of
+    // different times in such a weave.
+    actionWeave = menu->addAction(tr("Frame view at field rate (weave)"));
+    actionWeave->setCheckable(true);
+    actionWeave->setToolTip(tr("While playing, show a frame made of each field and the next, at the field rate. Not for sources with 2:2 pulldown."));
+
     // Speed relative to the real speed of the video
     speedSeparator = menu->addSeparator();
     speedActions = new QActionGroup(this);
@@ -761,6 +775,15 @@ void MainWindow::updatePlayButtonIcon()
 void MainWindow::updatePlaybackState(bool playing)
 {
     playbackShowsPause = playing;
+    if (!playing && weaveActive) {
+        // The weaves were a trick of the playback: what stays on show is the real frame
+        weaveActive = false;
+        tbcSource.setWeavePlayback(false);
+        if (tbcSource.getIsSourceLoaded()) {
+            tbcSource.clearPrerendered();
+            showImage();
+        }
+    }
 #ifdef LDDECODE_HAVE_AUDIO
     if (!playing) audioStop();
 #endif
@@ -794,8 +817,12 @@ void MainWindow::togglePlayback()
 
     // The clock counts frames, or fields in field view, where it has twice as many
     const bool isFieldView = tbcSource.getFieldViewEnabled();
+    // (the weave of fields: the frame view, no deinterlacer, a file: the clock counts fields, and the images are pairs of them)
+    weaveActive = actionWeave->isChecked() && tbcSource.getViewMode() == TbcSource::ViewMode::FRAME_VIEW && !deinterlacedView
+                  && !tbcSource.getIsLive() && tbcSource.getNumberOfFields() > 2;
+    tbcSource.setWeavePlayback(weaveActive);
     const double frameRate = tbcSource.getSystem() == PAL ? 25.0 : 30000.0 / 1001.0;
-    playback->setRate(isFieldView ? 2.0 * frameRate : frameRate);
+    playback->setRate(isFieldView || weaveActive ? 2.0 * frameRate : frameRate);
     const bool isLive = tbcSource.getIsLive();
     if (isLive) tbcSource.unfreezeLive();
     if (isLive) updateLive();
@@ -810,13 +837,13 @@ void MainWindow::togglePlayback()
         ui->posNumberSpinBox->setValue(shown);
         ui->posHorizontalSlider->setValue(shown);
     }
-    const qint32 lastPosition = isFieldView ? tbcSource.getNumberOfFields() : tbcSource.getNumberOfFrames();
+    const qint32 lastPosition = weaveActive ? tbcSource.getNumberOfFields() - 1 : (isFieldView ? tbcSource.getNumberOfFields() : tbcSource.getNumberOfFrames());
     const qint32 firstPosition = isLive ? (isFieldView ? 2 * tbcSource.getFirstAvailableFrame() - 1 : tbcSource.getFirstAvailableFrame()) : 1;
     playback->setLive(isLive, isLive && tbcSource.getIsLiveEnded());
     playback->setRange(firstPosition, lastPosition);
 
     // Start decoding ahead; the clock starts once the first image is ready
-    playbackStartPosition = isFieldView ? currentFieldNumber : currentFrameNumber;
+    playbackStartPosition = isFieldView || weaveActive ? currentFieldNumber : currentFrameNumber;
     // (a live stream plays on at its end: there is more to come)
     if (playbackStartPosition >= lastPosition && !isLive) playbackStartPosition = 1;
     playbackStartPosition = qMax(playbackStartPosition, firstPosition);
@@ -879,6 +906,24 @@ void MainWindow::showRenderedImage()
         playback->clearSkipped();
     }
 
+    if (weaveActive) {
+        // A weave of the fields position and position + 1: shown for the frame they are in, which two of them share
+        const qint32 frame = (position + 1) / 2;
+        tbcSource.setPrerenderedImage(frame, image);
+        currentFrameNumber = frame;
+        currentFieldNumber = position;
+        sanitizeCurrentPosition();
+        showImage();
+        fieldNumberStatus.setText(QString(" - Fields: %1/%2 (weave)").arg(position).arg(position + 1));
+#ifdef LDDECODE_HAVE_AUDIO
+        updateAudioPlayhead();
+#endif
+        const QSignalBlocker spinBlocker(ui->posNumberSpinBox);
+        const QSignalBlocker sliderBlocker(ui->posHorizontalSlider);
+        ui->posNumberSpinBox->setValue(frame);
+        ui->posHorizontalSlider->setValue(frame);
+        return;
+    }
     tbcSource.setPrerenderedImage(position, image);
     const bool isFieldView = tbcSource.getFieldViewEnabled();
     if (isFieldView) setCurrentField(position); else setCurrentFrame(position);
@@ -3367,7 +3412,7 @@ void MainWindow::unloadAudio()
 double MainWindow::positionSeconds(qint32 position)
 {
     const double frameRate = tbcSource.getSystem() == PAL ? 25.0 : 30000.0 / 1001.0;
-    const double rate = tbcSource.getFieldViewEnabled() ? 2.0 * frameRate : frameRate;
+    const double rate = tbcSource.getFieldViewEnabled() || weaveActive ? 2.0 * frameRate : frameRate;
     return (position - 1) / rate;
 }
 

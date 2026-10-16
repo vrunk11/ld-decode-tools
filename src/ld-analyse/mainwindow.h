@@ -232,6 +232,9 @@ private:
     void showRenderedImage();
     // A stream (live input): count what has arrived, and keep the controls and playback to it
     QTimer *liveTimer = nullptr;
+    // The frame view at field rate while playing (a trick of the playback, see actionWeave)
+    bool weaveActive = false;
+    QAction *actionWeave = nullptr;
     void updateLive();
     void updateLiveControls();
     void updateLiveGraphs();

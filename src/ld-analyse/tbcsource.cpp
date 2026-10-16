@@ -170,6 +170,7 @@ TbcSource::RenderSettings TbcSource::getRenderSettings()
     settings.isLive = isLive;
     settings.streamInput = streamInput;
     settings.sourceMode = sourceMode;
+    settings.weave = weaveOn;
     return settings;
 }
 
@@ -229,6 +230,7 @@ void TbcSource::applyRenderSettings(const RenderSettings &settings)
     combine = settings.combine;
     viewMode = settings.viewMode;
     sourceMode = settings.sourceMode;
+    weaveOn = settings.weave;
 
     ldDecodeMetaData.setVideoParameters(settings.videoParameters);
     applyFieldOrder();
@@ -374,6 +376,12 @@ void TbcSource::setSourceMode(TbcSource::SourceMode _sourceMode)
 // Load the metadata for a field/frame
 void TbcSource::load(qint32 frameNumber, qint32 fieldNumber)
 {
+    if (weaveStart > 0) {
+        // (what was loaded was a weave: no frame is)
+        weaveStart = 0;
+        loadedFrameNumber = -1;
+        invalidateImageCache();
+    }
     loadedFieldNumber = fieldNumber;
 
     // If there's no source, or we've already loaded that frame, nothing to do
@@ -1018,6 +1026,29 @@ void TbcSource::loadInputFields()
     } else {
         lookBehind = ntscConfiguration.getLookBehind();
         lookAhead = ntscConfiguration.getLookAhead();
+    }
+
+    if (weaveStart > 0) {
+        // The fields of a weave: a pair from any field, with the pairs round it (the decoders look at them)
+        SourceVideo &luma = sourceMode == CHROMA_SOURCE ? chromaSourceVideo : sourceVideo;
+        SourceField::loadFieldRun(luma, ldDecodeMetaData, weaveStart, lookBehind, lookAhead, inputFields, inputStartIndex, inputEndIndex);
+        if (sourceMode == BOTH_SOURCES) {
+            SourceField::loadFieldRun(chromaSourceVideo, ldDecodeMetaData, weaveStart, lookBehind, lookAhead, chromaInputFields,
+                                      inputStartIndex, inputEndIndex);
+            if (combine) {
+                static constexpr qint32 CHROMA_OFFSET_WEAVE = 32767;
+                for (qint32 fieldIndex = inputStartIndex; fieldIndex < inputEndIndex; fieldIndex++) {
+                    auto &sourceData = inputFields[fieldIndex].data;
+                    const auto &chromaData = chromaInputFields[fieldIndex].data;
+                    for (qint32 i = 0; i < sourceData.size(); i++) {
+                        const qint32 sum = static_cast<qint32>(sourceData[i]) + static_cast<qint32>(chromaData[i]) - CHROMA_OFFSET_WEAVE;
+                        sourceData[i] = static_cast<quint16>(qBound(0, sum, 65535));
+                    }
+                }
+            }
+        }
+        inputFieldsValid = true;
+        return;
     }
 
     if (sourceMode == CHROMA_SOURCE) {
@@ -1973,4 +2004,26 @@ QVector<qint64> TbcSource::getAudioSamplesBeforeFields()
         cumulative.append(total);
     }
     return total > 0 ? cumulative : QVector<qint64>();
+}
+
+void TbcSource::loadWeave(qint32 p)
+{
+    if (!sourceReady || p < 1 || p + 1 > ldDecodeMetaData.getNumberOfFields()) return;
+    qint32 a = p, b = p + 1;
+    if (!ldDecodeMetaData.getField(a).isFirstField) std::swap(a, b);       // (the top field first)
+    weaveStart = p;
+    loadedFieldNumber = p;
+    loadedFrameNumber = (p + 1) / 2;
+    firstFieldNumber = a;
+    secondFieldNumber = b;
+    firstField = ldDecodeMetaData.getField(a);
+    secondField = ldDecodeMetaData.getField(b);
+    invalidateImageCache();
+}
+
+void TbcSource::clearPrerendered()
+{
+    prerenderedPosition = -1;
+    prerenderedImage = QImage();
+    invalidateImageCache();
 }

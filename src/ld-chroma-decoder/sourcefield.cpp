@@ -164,3 +164,51 @@ void SourceField::loadFields(SourceVideo &sourceVideo, LdDecodeMetaData &ldDecod
         }
     }
 }
+
+void SourceField::loadFieldRun(SourceVideo &sourceVideo, LdDecodeMetaData &ldDecodeMetaData,
+                               qint32 firstFieldNumber, qint32 lookBehindPairs, qint32 lookAheadPairs,
+                               QVector<SourceField> &fields, qint32 &startIndex, qint32 &endIndex)
+{
+    const LdDecodeMetaData::VideoParameters &videoParameters = ldDecodeMetaData.getVideoParameters();
+    startIndex = 2 * lookBehindPairs;
+    endIndex = startIndex + 2;
+    fields.resize(endIndex + (2 * lookAheadPairs));
+    const qint32 numberOfFields = ldDecodeMetaData.getNumberOfFields();
+    const quint16 black = videoParameters.black16bIre;
+
+    for (qint32 slot = 0; slot < fields.size(); slot += 2) {
+        qint32 a = firstFieldNumber + (slot - startIndex);
+        qint32 b = a + 1;
+        const bool useBlank = a < 1 || b > numberOfFields;
+        if (useBlank) {
+            a = ldDecodeMetaData.getFirstFieldNumber(1);
+            b = ldDecodeMetaData.getSecondFieldNumber(1);
+        } else if (!ldDecodeMetaData.getField(a).isFirstField) {
+            std::swap(a, b);        // (the top field first)
+        }
+
+        fields[slot].field = ldDecodeMetaData.getField(a);
+        fields[slot + 1].field = ldDecodeMetaData.getField(b);
+        if (useBlank) {
+            fields[slot].data.fill(black, sourceVideo.getFieldLength());
+            fields[slot + 1].data.fill(black, sourceVideo.getFieldLength());
+            continue;
+        }
+        fields[slot].data = sourceVideo.getVideoField(a);
+        fields[slot + 1].data = sourceVideo.getVideoField(b);
+
+        if (videoParameters.system == NTSC) {
+            for (SourceField *sourceField: {&fields[slot], &fields[slot + 1]}) {
+                if (sourceField->field.fieldPhaseID < 1) {
+                    sourceField->field.fieldPhaseID = Cvbs::measureFieldPhaseID(sourceField->data.constData(), NTSC,
+                                                                                sourceField->field.isFirstField);
+                }
+            }
+        }
+        if ((videoParameters.system == PAL || videoParameters.system == PAL_M) && videoParameters.isSubcarrierLocked) {
+            // (as for frames: the second field is shifted two samples to the left)
+            fields[slot + 1].data.remove(0, 2);
+            for (int j = 0; j < 2; j++) fields[slot + 1].data.append(black);
+        }
+    }
+}
