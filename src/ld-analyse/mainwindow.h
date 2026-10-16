@@ -266,6 +266,7 @@ private:
     qint32 livePcmBits = 16;
     double livePcmRate = 44100.0;
     qint64 liveEfmFed[2] = { 0, 0 };
+    QString audioLoadedKey;      // what loadAudio loaded: a source (a file, or the live input) is loaded once
     void loadLiveAudio();
     void pollLiveTracks();
     void feedLiveEfm();
