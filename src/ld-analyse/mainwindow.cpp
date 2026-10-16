@@ -569,7 +569,7 @@ void MainWindow::setPlaybackOptionsVisible(bool visible)
         playback->setSpeed(1.0);
     }
     actionLoop->setVisible(visible);
-    if (actionWeave) actionWeave->setVisible(visible);        // (it is for files: a live input plays as it arrives)
+    if (actionWeave) actionWeave->setEnabled(visible);        // (it is for files: a live input plays as it arrives; greyed, not hidden)
     speedSeparator->setVisible(visible);
     for (QAction *action: speedActions->actions()) action->setVisible(visible);
 }
@@ -2949,6 +2949,11 @@ void MainWindow::setupAudio()
 {
     audio = new AudioEngine(this);
     waveform = new WaveformPanel(audio, this);
+    waveform->setEfmPossible([this]() { return !efmSourceName().isEmpty(); });
+    connect(waveform, &WaveformPanel::efmDecodeRequested, this, [this]() {
+        if (efmSourceName().isEmpty()) return;
+        startEfmDecoding(0, true, true, false);
+    });
     showWaveform(false);
     ui->verticalLayout->insertWidget(ui->verticalLayout->indexOf(ui->mediaControl_frame), waveform);
 
@@ -3157,7 +3162,8 @@ void MainWindow::startEfmDecoding(qint32 decoder, bool noTimecodes, bool conceal
     options.pad = pad;
     QString error;
     if (!decoding->start(source, options, error)) {
-        audioConfig->setDecodeStatus(decoder, error, false);
+        if (audioConfig) audioConfig->setDecodeStatus(decoder, error, false);
+        statusBar()->showMessage(error, 8000);
         return;
     }
     const qint32 index = audio->addDecoded(decoder, decoding->cacheFile(), tr("%1 (decoding...)").arg(EfmDecoding::backendName(backend)));
@@ -3175,14 +3181,15 @@ void MainWindow::startEfmDecoding(qint32 decoder, bool noTimecodes, bool conceal
         liveEfmFed[decoder] = 0;
         feedLiveEfm();
     }
-    audioConfig->setDecodeStatus(decoder, live && liveEfm && liveEfm->size() == 0 ? tr("Waiting for EFM...") : tr("Decoding..."), true);
+    if (audioConfig) audioConfig->setDecodeStatus(decoder, live && liveEfm && liveEfm->size() == 0 ? tr("Waiting for EFM...") : tr("Decoding..."), true);
     connect(decoding, &EfmDecoding::grew, this, [this, decoder, decoding]() {
         audio->extend();
-        audioConfig->setDecodeStatus(decoder, tr("Decoding: %1 seconds").arg(decoding->seconds(), 0, 'f', 1), true);
+        if (audioConfig) audioConfig->setDecodeStatus(decoder, tr("Decoding: %1 seconds").arg(decoding->seconds(), 0, 'f', 1), true);
     });
     connect(decoding, &EfmDecoding::finished, this, [this, decoder](bool, const QString &message) {
         audio->extend();
-        audioConfig->setDecodeStatus(decoder, message, false);
+        if (audioConfig) audioConfig->setDecodeStatus(decoder, message, false);
+        statusBar()->showMessage(message, 8000);
         waveform->refresh();
     });
 }
