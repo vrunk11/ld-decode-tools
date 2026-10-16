@@ -25,6 +25,7 @@ class QSlider;
 class QSpinBox;
 class QToolButton;
 class QLineEdit;
+class QPlainTextEdit;
 
 // Audio panel: the tab Output (sound device, the waveform on or off, the controls of the panel repeated, the panel's column
 // of controls on or off) and the tab Import (a file that ffmpeg reads, cut to the length of the video, with an offset).
@@ -49,6 +50,8 @@ public:
     // efm-decoder programs, 1: ld-process-efm) is doing
     void setEfmSource(const QString &description);
     void setDecodeStatus(qint32 decoder, const QString &text, bool running);
+    // The numbers of the sound and of the decoders, as text (kept up to date by the window while this is shown)
+    void setStatistics(const QString &text);
 
 signals:
     void deviceChosen(const QByteArray &id);
@@ -92,6 +95,7 @@ private:
     QPushButton *decodeButtons[2];
     QPushButton *stopButtons[2];
     QLabel *decodeStatus[2];
+    QPlainTextEdit *statistics;
 
     double videoLength = 0.0;
     QString ldx;

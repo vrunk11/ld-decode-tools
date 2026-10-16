@@ -12,6 +12,7 @@
 
 #include <QCoreApplication>
 #include <QFileInfo>
+#include <QRegularExpression>
 
 EfmDecoding::EfmDecoding(Backend backend, QObject *parent) : QObject(parent), which(backend) {}
 
@@ -54,6 +55,9 @@ bool EfmDecoding::start(const QString &efmFile, const Options &options, QString 
         return false;
     }
     written = 0;
+    fedBytes = 0;
+    messageLines.clear();
+    wall.start();
     stopping = false;
     lastError.clear();
 
@@ -79,7 +83,16 @@ bool EfmDecoding::start(const QString &efmFile, const Options &options, QString 
 
     for (size_t i = 0; i < names.size(); i++) {
         auto process = std::make_unique<QProcess>();
-        process->setStandardErrorFile(QProcess::nullDevice());
+        QProcess *raw = process.get();
+        const QString stage = names[i];
+        // What the programs say about their work (they count what they decode): kept, the last of it
+        connect(raw, &QProcess::readyReadStandardError, this, [this, raw, stage]() {
+            const QString text = QString::fromLocal8Bit(raw->readAllStandardError());
+            for (const QString &line: text.split(QRegularExpression("[\r\n]+"), Qt::SkipEmptyParts)) {
+                messageLines.append(QString("[%1] %2").arg(stage, line));
+            }
+            while (messageLines.size() > 400) messageLines.removeFirst();
+        });
         processes.push_back(std::move(process));
     }
     for (size_t i = 0; i + 1 < processes.size(); i++) processes[i]->setStandardOutputProcess(processes[i + 1].get());
@@ -146,6 +159,7 @@ void EfmDecoding::feed(const QByteArray &efm)
 {
     if (!running || processes.empty() || efm.isEmpty()) return;
     processes[0]->write(efm);
+    fedBytes += efm.size();
 }
 
 void EfmDecoding::finishInput()

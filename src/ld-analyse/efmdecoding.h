@@ -11,7 +11,9 @@
 #ifndef EFMDECODING_H
 #define EFMDECODING_H
 
+#include <QElapsedTimer>
 #include <QObject>
+#include <QStringList>
 #include <QProcess>
 #include <QString>
 #include <QTemporaryFile>
@@ -51,6 +53,10 @@ public:
     QString cacheFile() const { return cache ? cache->fileName() : QString(); }
     // Seconds of audio decoded so far
     double seconds() const { return static_cast<double>(written) / 4.0 / 44100.0; }
+    // What was given to the decoder (a live input), how long it has run, and the last things the programs said
+    qint64 efmBytesFed() const { return fedBytes; }
+    double runSeconds() const { return wall.isValid() ? wall.elapsed() / 1000.0 : 0.0; }
+    QStringList messages() const { return messageLines; }
 
 signals:
     void grew();                                    // more audio is in the file
@@ -65,6 +71,9 @@ private:
     std::vector<std::unique_ptr<QProcess>> processes;
     std::unique_ptr<QTemporaryFile> cache;
     qint64 written = 0;
+    qint64 fedBytes = 0;
+    QElapsedTimer wall;
+    QStringList messageLines;
     bool running = false;
     bool stopping = false;
     QString lastError;

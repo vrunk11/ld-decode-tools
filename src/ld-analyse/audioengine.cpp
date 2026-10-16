@@ -42,6 +42,9 @@ public:
     // The loudest sample given to the card since this was asked last (0 if none, or silence)
     qint32 takeLevel() { return level.exchange(0); }
     qint64 givenPairs() const { return given.load(); }
+    qint64 waitedPairs() const { return waited.load(); }
+    qint64 waits() const { return waitEvents.load(); }
+    qint64 positionNow() const { return position.load(); }
 
     bool isSequential() const override { return true; }
     qint64 bytesAvailable() const override { return 1 << 20; }
@@ -73,7 +76,11 @@ protected:
             }
             // Audio that is still coming (a live input, audio being decoded): when it has not come yet, the sound waits for it, with
             // silence, rather than going on past it and never meeting it
-            if (reader->isGrowing() && position >= 0 && got < pairs - skip) advance = skip + got;
+            if (reader->isGrowing() && position >= 0 && got < pairs - skip) {
+                advance = skip + got;
+                waited += pairs - skip - got;
+                waitEvents++;
+            }
         }
         // (before the start of the audio nothing is played, and the position goes on, so the sound keeps its place)
         position += advance;
@@ -83,9 +90,11 @@ protected:
 
 private:
     AudioReader *reader;
-    qint64 position;                // the next pair to give, which may be before the start of the audio
+    std::atomic<qint64> position;   // the next pair to give, which may be before the start of the audio
     std::atomic<qint32> level{0};
     std::atomic<qint64> given{0};
+    std::atomic<qint64> waited{0};          // (pairs of silence given while the audio had not come yet)
+    std::atomic<qint64> waitEvents{0};
     QMutex lock;
     AudioMix mix;
 };
@@ -415,5 +424,8 @@ bool AudioEngine::usesFieldSamples() const
            && available[chosen].trackId > -2;
 }
 
+qint64 AudioEngine::pairsWaited() const { return feeder ? feeder->waitedPairs() : 0; }
+qint64 AudioEngine::waitsForAudio() const { return feeder ? feeder->waits() : 0; }
+qint64 AudioEngine::samplePlaying() const { return feeder ? feeder->positionNow() : 0; }
 qint32 AudioEngine::takeOutputLevel() { return feeder ? feeder->takeLevel() : 0; }
 qint64 AudioEngine::pairsGiven() const { return feeder ? feeder->givenPairs() : 0; }
