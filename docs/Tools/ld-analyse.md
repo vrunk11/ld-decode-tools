@@ -162,6 +162,31 @@ The play button (between the previous and next frame buttons), the Playback menu
 
 Playback follows the wall clock, and the frames are decoded ahead by several threads, so the chroma decoder does not hold the window up. If the machine cannot decode as fast as the video plays, the frames in between are skipped, so that the video keeps its speed, and the status bar says how many were skipped. The line scope, vectorscope and the other tools follow the frame shown. Stepping, seeking, changing the view or opening a file stops playback.
 
+The **field view** is a bob: the lines of each field are doubled to the height of a frame, and the bottom field is drawn one line lower than the top one, where it is in the frame, so that the picture does not jump up and down from one field to the next when it plays at the field rate (this is with the 2:1 stretch, which is on by default).
+
+**Playback > Frame view at field rate (weave)** (off by default) is a trick of the playback for the frame view: while the video plays, the images go at the rate of the fields, each the weave of a field and the next (fields 1 and 2, then 2 and 3, then 3 and 4...), decoded in colour as the frames are, with the top field always on the even lines. Nothing else changes: the slider, the frame number and the frame count are still those of frames (the frame shown is the one the fields belong to), and paused, the real frame is shown. It is for sources whose two fields are two moments of time; for a source with 2:2 pulldown (film), where two fields are one picture, a weave of fields from two pictures shows the difference between them as combing, so it stays off. It is not for the deinterlaced view or a live input. It asks for the decoder to keep up with twice the frames; the status bar says if frames were skipped.
+
+# Audio
+
+ld-analyse plays the sound of a capture with its video, and shows it as a waveform under the picture. It needs Qt Multimedia (the program is built without audio if that is not there). The waveform is shown when the capture has audio: a pcm track of its LDX file (the analogue audio, audio decoded from EFM, audio that was imported), the `.pcm` beside a `.tbc`, or the `_audio_0.wav` of a CVBS capture. View > Waveform and Window > Audio panel > Output switch it on and off; the window grows or shrinks by the height of the panel, so the picture keeps its room.
+
+Sound plays only while the video plays (Play, at normal speed; at the other speeds it is off). On a file the sound is the clock: the picture keeps to what the sound card has played, so picture and sound stay together. For the analogue audio of a capture, where each field of the metadata says how many audio samples it holds (`audioSamples`), a moment of the video is placed in the audio exactly by them. A click on the waveform goes to that place of the video.
+
+## The panel
+
+The left part of the panel has, from the top: **the source** (Analogue, EFM digital, Imported; a source the capture has not is shown greyed), the track of the file when it has several, then **L**, **R** and **M** and the volume. L, R and M are all mute buttons: pressed means silenced (a channel that is on is also played on both sides when the other is muted), and the volume is the global one. The column can be hidden (Window > Audio panel > Output). The waveform has the application's background with a faint grid, as the SNR graphs have; its colour is the one of the theme for the audio that is played, one for the analogue audio and one for audio from EFM (the last two entries of View > Theme > Customize...).
+
+## Window > Audio panel
+
+* **Output**: the sound device, the waveform on or off, the column of controls on or off, and the same L, R, M and volume as the panel.
+* **Style**: the **height** of the panel (Compact by default, a little more than the buttons of the playback bar; Large; Ultra compact, which is one line of buttons high, with the controls beside the waveform) and the **design** of the waveform (Filled, Outline, Bars).
+* **Import**: any file ffmpeg reads (ffmpeg must be installed and in the PATH). It is made 16-bit stereo at 44.1 kHz and cut to the length of the video; the offset is in milliseconds (positive: the audio is later than the video). **Use** plays it for the session. **Save in the file as a track** puts it in the LDX file as a pcm track (`"source": "import"`); the file is written again, so close other programs that have it open.
+* **EFM**: decodes the EFM of the capture (the EFM track of an LDX file, or the `.efm` beside a `.tbc`) from the program, with either of the two decoders the project has: the **efm-decoder suite** (`efm-decoder-f2 | efm-decoder-d24 | efm-decoder-audio`, run as piped programs) or **ld-process-efm**. Options: EFM without timecodes (the usual one of a LaserDisc), conceal the errors, begin the audio at disc time 00:00. The audio is decoded as it goes: the waveform and the sound follow the decoder, and you can go on with what is decoded already. Both decoders can run, each gives a track of the source EFM digital, and the track menu of the panel switches between them, which compares them while the video plays. The programs are those beside ld-analyse. The audio of EFM begins where the decoding begins: use the offset to line it up with the video.
+
+## Live input
+
+On `... | ld-analyse -` with an LDX stream (see below), the audio and the EFM of the stream are taken too. The analogue audio is added to a growing track, so the waveform builds up as the stream comes, and the sound can be played from the position shown (a live input keeps the clock of the video: the sound waits for audio that has not arrived yet, and goes on when it has). The EFM is kept, and given as it comes to the decoders of the EFM tab; they can be started before any EFM has arrived (they wait for it, and the tab says so) or when it has. A stream says which tracks it holds at its start, so a producer should declare its EFM track from the beginning, even if it holds nothing for a while (see the specification, section 15).
+
 # Video filters
 
 Window > Video filter... shows the picture through ffmpeg filters (libavfilter). There are three kinds, which are independent of each other and run in this order:
@@ -263,7 +288,7 @@ When checked, chroma decoding is switched off while the next/previous frame butt
 * **Light** and **Dark** - the system's own light and dark colours (where the system has no dark colours to offer, such as Linux, Dark uses the Dark grey palette)
 * **Soft light**, **Dim** and **Dark grey** - fixed neutral-grey palettes: a calmer light, a softer dark, and the dark palette earlier versions of ld-analyse used
 * **Custom** - your own palette, made with Customize...
-* **Customize...** - edit the colours (window, fields, buttons, selection, tooltips, links, disabled text...), starting from the current colours or one of the fixed palettes. Every change is applied to the whole application as you make it, including while dragging in the colour picker; OK keeps it as the Custom theme, Cancel restores the previous theme
+* **Customize...** - edit the colours (window, fields, buttons, selection, tooltips, links, disabled text...), starting from the current colours or one of the fixed palettes. Every change is applied to the whole application as you make it, including while dragging in the colour picker; OK keeps it as the Custom theme, Cancel restores the previous theme. The last two entries are the colours of the audio waveform (analogue audio, and audio decoded from EFM)
 
 ## Style
 
@@ -272,6 +297,10 @@ Lists every widget style available on the machine. **Auto** uses the classic Win
 # The Window Menu
 
 The Window menu contains a number of options that open additional windows to assist with analysis.
+
+## Audio panel
+
+The sound device, the waveform, the imported audio and the decoding of EFM. See [Audio](#audio).
 
 ## Dropout analysis
 
@@ -524,4 +553,4 @@ An LDX file (see [the container format](../Specifications/container-format.md)) 
 
 ## LDX stream
 
-With `-`, an input that begins as a Matroska file does is an LDX stream, whatever `--system` says (it is looked at, not assumed) (`ld-container pack capture.tbc -o - | ld-analyse -`): the video system and TBC or CVBS come from it, and its video is shown as the video of any pipe is, as it arrives. `--input-format ldx` says so.
+With `-`, an input that begins as a Matroska file does is an LDX stream, whatever `--system` says (it is looked at, not assumed) (`ld-container pack capture.tbc -o - | ld-analyse -`): the video system and TBC or CVBS come from it, and its video is shown as the video of any pipe is, as it arrives. `--input-format ldx` says so. Its audio and EFM tracks are used too (see Audio, above).
