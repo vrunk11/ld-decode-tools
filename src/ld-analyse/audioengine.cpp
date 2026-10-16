@@ -18,6 +18,7 @@
 #include <QMutex>
 #include <QMutexLocker>
 #include <QThread>
+#include <QTimer>
 
 #include <cstring>
 #include <algorithm>
@@ -79,6 +80,12 @@ AudioEngine::~AudioEngine()
 {
     stop();
     stopPeaks();
+    if (audioThread) {
+        host->deleteLater();        // (it is deleted in its thread, when the thread ends)
+        host = nullptr;
+        audioThread->quit();
+        audioThread->wait();
+    }
 }
 
 void AudioEngine::stopPeaks()
@@ -236,9 +243,24 @@ bool AudioEngine::start(double videoSeconds)
     mix.right = mixRight;
     mix.volume = mixMuted ? 0.0 : mixVolume;
     feeder.reset(new AudioFeeder(reader.get(), sampleAt(videoSeconds), mix));
-    sink = new QAudioSink(device, format, this);
-    sink->setBufferSize(static_cast<qsizetype>(format.sampleRate() * 4 * 0.12));       // (about 120 ms)
-    sink->start(feeder.get());
+    // The sound card is fed from a thread of its own: the window is busy at times (a deinterlaced picture takes long), and the sound
+    // must not stop for it
+    if (!audioThread) {
+        audioThread = new QThread(this);
+        host = new QObject;
+        host->moveToThread(audioThread);
+        audioThread->start(QThread::HighPriority);
+    }
+    processedUs = 0;
+    AudioFeeder *source = feeder.get();
+    QMetaObject::invokeMethod(host, [this, device, format, source]() {
+        sink = new QAudioSink(device, format);
+        sink->setBufferSize(static_cast<qsizetype>(format.sampleRate() * 4 * 0.3));       // (about 300 ms)
+        sink->start(source);
+        clock = new QTimer;
+        QObject::connect(clock, &QTimer::timeout, [this]() { if (sink) processedUs = sink->processedUSecs(); });
+        clock->start(10);
+    }, Qt::BlockingQueuedConnection);
     startedAt = videoSeconds;
     playing = true;
     return true;
@@ -246,10 +268,14 @@ bool AudioEngine::start(double videoSeconds)
 
 void AudioEngine::stop()
 {
-    if (sink) {
-        sink->stop();
-        delete sink;
-        sink = nullptr;
+    if (sink && host) {
+        QMetaObject::invokeMethod(host, [this]() {
+            delete clock;
+            clock = nullptr;
+            sink->stop();
+            delete sink;
+            sink = nullptr;
+        }, Qt::BlockingQueuedConnection);
     }
     feeder.reset();
     playing = false;
@@ -257,7 +283,7 @@ void AudioEngine::stop()
 
 double AudioEngine::playedSeconds() const
 {
-    return sink ? static_cast<double>(sink->processedUSecs()) / 1.0e6 : 0.0;
+    return sink ? static_cast<double>(processedUs.load()) / 1.0e6 : 0.0;
 }
 
 double AudioEngine::videoSecondsNow() const

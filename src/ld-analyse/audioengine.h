@@ -21,6 +21,7 @@
 
 class QAudioSink;
 class QThread;
+class QTimer;
 class AudioFeeder;
 
 // The audio of the capture being shown: which tracks it has, the one that is chosen with its peaks (for the waveform), and
@@ -103,6 +104,10 @@ private:
     QThread *peaksThread = nullptr;
 
     QAudioSink *sink = nullptr;
+    QThread *audioThread = nullptr;     // the sink lives in it
+    QObject *host = nullptr;            // (what runs in that thread)
+    QTimer *clock = nullptr;            // (in that thread: reads how much the sink has played)
+    std::atomic<qint64> processedUs{0};
     std::unique_ptr<AudioFeeder> feeder;
     bool playing = false;
     double startedAt = 0.0;        // the video second the sound started at
