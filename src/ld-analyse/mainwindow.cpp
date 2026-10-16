@@ -13,6 +13,7 @@
 #include "mainwindow.h"
 #include <QJsonObject>
 #include <QTemporaryFile>
+#include <QTextStream>
 #include "ldxcapture.h"
 #include "ldxbytetrack.h"
 #include "ldxstream.h"
@@ -2949,6 +2950,10 @@ void MainWindow::resizeEvent(QResizeEvent *event)
 void MainWindow::setupAudio()
 {
     audio = new AudioEngine(this);
+    audioStatsTimer = new QTimer(this);
+    audioStatsTimer->setInterval(500);
+    connect(audioStatsTimer, &QTimer::timeout, this, &MainWindow::updateAudioStatistics);
+    audioStatsTimer->start();
     waveform = new WaveformPanel(audio, this);
     waveform->setEfmPossible([this]() { return !efmSourceName().isEmpty(); });
     connect(waveform, &WaveformPanel::efmDecodeRequested, this, [this]() {
@@ -3013,6 +3018,60 @@ void MainWindow::setupAudio()
     });
 }
 
+
+// The numbers of the sound and of the EFM decoders, for the Audio panel: where the sound is against the picture, how long it had
+// to wait for audio, and what each decoder has done and said
+void MainWindow::updateAudioStatistics()
+{
+    if (!audioConfig || !audioConfig->isVisible()) return;
+    QString text;
+    QTextStream out(&text);
+    out.setRealNumberNotation(QTextStream::FixedNotation);
+    out.setRealNumberPrecision(2);
+
+    out << tr("Sound") << "\n";
+    const qint32 current = audio->currentTrack();
+    if (current >= 0 && current < audio->tracks().size()) out << "  " << tr("Track played: %1").arg(audio->tracks()[current].label) << "\n";
+    if (audio->isPlaying()) {
+        const double unitsPerSecond = (tbcSource.getSystem() == PAL ? 25.0 : 30000.0 / 1001.0) * (tbcSource.getFieldViewEnabled() || weaveActive ? 2.0 : 1.0);
+        const double picture = positionSeconds(tbcSource.getFieldViewEnabled() || weaveActive ? currentFieldNumber : currentFrameNumber);
+        const double lagMs = (picture - audio->videoSecondsNow()) * 1000.0;
+        Q_UNUSED(unitsPerSecond);
+        out << "  " << tr("Sound against picture: %1 ms (%2)").arg(lagMs, 0, 'f', 0).arg(lagMs > 0 ? tr("the sound is behind") : tr("the sound is ahead")) << "\n";
+        out << "  " << tr("Silence while the audio had not come: %1 s in %2 waits")
+                           .arg(static_cast<double>(audio->pairsWaited()) / qMax(1.0, audio->sampleRate()), 0, 'f', 2).arg(audio->waitsForAudio()) << "\n";
+    } else {
+        out << "  " << tr("Not playing") << "\n";
+    }
+
+    const QString names[2] = { EfmDecoding::backendName(EfmDecoding::Backend::Suite), EfmDecoding::backendName(EfmDecoding::Backend::ProcessEfm) };
+    for (qint32 i = 0; i < 2; i++) {
+        EfmDecoding *decoder = efmDecoders[i];
+        out << "\n" << names[i] << "\n";
+        if (!decoder) {
+            out << "  " << tr("Not started") << "\n";
+            continue;
+        }
+        const double seconds = decoder->seconds();
+        const double run = decoder->runSeconds();
+        out << "  " << (decoder->isRunning() ? tr("Running") : tr("Finished")) << tr(", audio decoded: %1 s in %2 s of work").arg(seconds, 0, 'f', 1).arg(run, 0, 'f', 1);
+        if (run > 0.5) out << tr(" (%1 times the speed of the video)").arg(seconds / run, 0, 'f', 1);
+        out << "\n";
+        if (decoder->efmBytesFed() > 0) out << "  " << tr("EFM given: %1 MB").arg(decoder->efmBytesFed() / 1048576.0, 0, 'f', 2) << "\n";
+        // (the sound against what is decoded: the decoder must be ahead of the picture, or the sound waits)
+        const qint32 track = audio->currentTrack();
+        if (audio->isPlaying() && track >= 0 && audio->isDecoded(track) && audio->tracks()[track].trackId == -2 - i) {
+            const double ahead = seconds - static_cast<double>(audio->samplePlaying()) / 44100.0;
+            out << "  " << tr("Decoded ahead of the sound: %1 s%2").arg(ahead, 0, 'f', 1).arg(ahead < 0.3 ? tr(" (the sound waits for the decoder)") : QString()) << "\n";
+        }
+        const QStringList lines = decoder->messages();
+        if (!lines.isEmpty()) {
+            out << "  " << tr("What it says:") << "\n";
+            for (qint32 line = qMax<qint32>(0, lines.size() - 12); line < lines.size(); line++) out << "    " << lines[line] << "\n";
+        }
+    }
+    audioConfig->setStatistics(text);
+}
 
 // The Audio config window: made when first wanted, with what is set now
 void MainWindow::showAudioConfig()
@@ -3408,8 +3467,6 @@ void MainWindow::unloadAudio()
     audio->setVideo(QString());
     showWaveform(false);
     actionWaveform->setEnabled(false);
-    actionAudioConfig = ui->menuWindow->addAction(tr("Audio &panel..."));
-    connect(actionAudioConfig, &QAction::triggered, this, &MainWindow::showAudioConfig);
 }
 
 double MainWindow::positionSeconds(qint32 position)

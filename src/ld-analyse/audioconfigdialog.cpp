@@ -22,7 +22,10 @@
 #include <QMediaDevices>
 #include <QAudioDevice>
 #include <QProcess>
+#include <QPlainTextEdit>
+#include <QFontDatabase>
 #include <QPushButton>
+#include <QScrollBar>
 #include <QSlider>
 #include <QSpinBox>
 #include <QTabWidget>
@@ -171,7 +174,14 @@ AudioConfigDialog::AudioConfigDialog(QWidget *parent) : QDialog(parent)
     QLabel *efmHelp = new QLabel(tr("Both decoders can run: each gives a track of the EFM source, and the track menu of the waveform switches between them."), efm);
     efmHelp->setWordWrap(true);
     efmLayout->addWidget(efmHelp);
-    efmLayout->addStretch(1);
+    statistics = new QPlainTextEdit(efm);
+    statistics->setReadOnly(true);
+    statistics->setLineWrapMode(QPlainTextEdit::NoWrap);
+    QFont mono = QFontDatabase::systemFont(QFontDatabase::FixedFont);
+    statistics->setFont(mono);
+    statistics->setMinimumHeight(200);
+    statistics->setPlaceholderText(tr("Statistics of the sound and of the decoders"));
+    efmLayout->addWidget(statistics, 1);
     tabs->addTab(efm, tr("EFM"));
 
     QDialogButtonBox *close = new QDialogButtonBox(QDialogButtonBox::Close, this);
@@ -328,4 +338,15 @@ void AudioConfigDialog::setDensity(qint32 density)
 {
     const QSignalBlocker blocker(densityCombo);
     densityCombo->setCurrentIndex(qMax(0, densityCombo->findData(density)));
+}
+
+void AudioConfigDialog::setStatistics(const QString &text)
+{
+    if (statistics->toPlainText() == text) return;
+    // (the view stays where it is: the last lines are followed only if it was at the end)
+    QScrollBar *bar = statistics->verticalScrollBar();
+    const bool atEnd = bar->value() >= bar->maximum() - 2;
+    const qint32 value = bar->value();
+    statistics->setPlainText(text);
+    bar->setValue(atEnd ? bar->maximum() : value);
 }

@@ -210,6 +210,7 @@ int main(int argc, char *argv[])
             decodeWait.start();
             while (!done && decodeWait.elapsed() < 120000) waitMs(50);
             CHECK(done && success);
+            CHECK(!decoding.messages().isEmpty() && decoding.runSeconds() > 0.0);        // (the programs count what they decode: the statistics)
             engine.extend();
             CHECK(growths > 0 && decoding.seconds() > 10.0);
             CHECK(engine.samples() > 10 * 44100 && engine.peaks().samples() == engine.samples());
@@ -281,6 +282,8 @@ int main(int argc, char *argv[])
                 stillMax = qMax(stillMax, run.elapsed() - lastChange);
                 waitMs(1);
             }
+            std::fprintf(stderr, "bench: given to the card %.3f s ahead of the clock\n",
+                         static_cast<double>(player.samplePlaying()) / 44100.0 - (1.0 + round) - lastMoved);
             std::fprintf(stderr, "bench: round %d, clock %.3f s after %lld ms, %d steps, biggest step %.1f ms, longest still %lld ms\n",
                          round, lastMoved, static_cast<long long>(run.elapsed()), steps, biggestStep * 1000.0, static_cast<long long>(stillMax));
             player.stop();

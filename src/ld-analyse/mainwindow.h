@@ -257,6 +257,8 @@ private:
     AudioConfigDialog *audioConfig = nullptr;
     QAction *actionAudioConfig = nullptr;
     void showAudioConfig();
+    void updateAudioStatistics();
+    QTimer *audioStatsTimer = nullptr;
     QString efmSourceName();
     void stopEfmDecoders();
     void showWaveform(bool shown);

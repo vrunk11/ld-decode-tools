@@ -89,6 +89,9 @@ public:
     // What the player gave the card since this was asked last: the loudest sample, and since start() how many pairs were real audio
     qint32 takeOutputLevel();
     qint64 pairsGiven() const;
+    qint64 pairsWaited() const;       // pairs of silence given while the audio had not come yet (audio that grows: live, or being decoded)
+    qint64 waitsForAudio() const;     // how many times it had to wait
+    qint64 samplePlaying() const;     // the sample of the track the card is being given now
 
 signals:
     void peaksProgress(qint32 percent);
