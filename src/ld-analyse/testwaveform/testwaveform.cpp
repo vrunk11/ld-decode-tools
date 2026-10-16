@@ -25,6 +25,7 @@
 #include "audioconfigdialog.h"
 #include "efmdecoding.h"
 #include "theme.h"
+#include "ldxbytetrack.h"
 #include "waveformpanel.h"
 
 #define CHECK(condition) \
@@ -199,6 +200,43 @@ int main(int argc, char *argv[])
             engine.removeDecoded(backend == EfmDecoding::Backend::Suite ? 0 : 1);
             CHECK(engine.currentTrack() < 0);
             CHECK(engine.selectTrack(0));
+        }
+    }
+
+    // A live input: the EFM is given as it comes, a piece at a time, and the audio is the same as from the file
+    if (QFile::exists(realCapture)) {
+        LdxByteTrack source;
+        QString sourceError;
+        CHECK(source.openFile(realCapture, LdxByteTrack::Kind::Efm, sourceError));
+        const QByteArray efmBytes = source.readAll();
+        CHECK(efmBytes.size() > 1000000);
+        qint64 sizes[2] = { 0, 0 };
+        for (qint32 i = 0; i < 2; i++) {
+            for (qint32 mode = 0; mode < 2; mode++) {
+                const EfmDecoding::Backend backend = i == 0 ? EfmDecoding::Backend::Suite : EfmDecoding::Backend::ProcessEfm;
+                EfmDecoding decoding(backend);
+                bool done = false;
+                QObject::connect(&decoding, &EfmDecoding::finished, [&](bool, const QString &) { done = true; });
+                QString error;
+                CHECK(decoding.start(mode == 0 ? realCapture : QStringLiteral("-"), EfmDecoding::Options(), error));
+                if (mode == 1) {
+                    // (nothing for a moment, as when the EFM comes late)
+                    waitMs(200);
+                    for (qint64 at = 0; at < efmBytes.size(); at += 300000) {
+                        decoding.feed(efmBytes.mid(at, 300000));
+                        waitMs(5);
+                    }
+                    decoding.finishInput();
+                }
+                QElapsedTimer decodeWait;
+                decodeWait.start();
+                while (!done && decodeWait.elapsed() < 120000) waitMs(50);
+                CHECK(done);
+                QFile result(decoding.cacheFile());
+                CHECK(result.open(QIODevice::ReadOnly));
+                if (mode == 0) sizes[i] = result.size();
+                else CHECK(result.size() == sizes[i] && sizes[i] > 0);
+            }
         }
     }
     // The channels and the volume

@@ -50,7 +50,9 @@ public:
     void clearImported();
     // Audio being decoded from EFM by a program, in a raw file that grows (slot 0 or 1: the two decoders): one more choice of tracks(),
     // the index of it. extend() is called when the file has grown: the waveform is made as the audio comes.
-    qint32 addDecoded(qint32 slot, const QString &cacheFile, const QString &label);
+    qint32 addDecoded(qint32 slot, const QString &cacheFile, const QString &label) { return addGrowing(slot, "efm", cacheFile, label, 44100.0); }
+    // The same for any raw 16-bit stereo file that grows (the analogue audio of a live input is slot 2)
+    qint32 addGrowing(qint32 slot, const QString &source, const QString &cacheFile, const QString &label, double sampleRate);
     void removeDecoded(qint32 slot);
     void extend();
     bool isDecoded(qint32 index) const { return index >= 0 && index < available.size() && available[index].trackId <= -2; }

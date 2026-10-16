@@ -42,6 +42,9 @@ public:
     // Start on the EFM of a file: an LDX file (capture.ldx, or capture.ldx#4) or an .efm file. False, with the reason, if a
     // program is not there.
     bool start(const QString &efmFile, const Options &options, QString &error);
+    // A live input: start on "-" (the EFM is given with feed, as it comes) and call finishInput when it has ended
+    void feed(const QByteArray &efm);
+    void finishInput();
     void stop();
     bool isRunning() const { return running; }
 

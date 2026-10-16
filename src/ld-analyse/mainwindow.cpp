@@ -15,6 +15,7 @@
 #include <QTemporaryFile>
 #include "ldxcapture.h"
 #include "ldxbytetrack.h"
+#include "ldxstream.h"
 #include "ui_mainwindow.h"
 #include "tbc/logging.h"
 #include "cvbs.h"
@@ -3059,7 +3060,10 @@ void MainWindow::showAudioConfig()
     const qint32 last = tbcSource.getIsSourceLoaded() ? (tbcSource.getFieldViewEnabled() ? tbcSource.getNumberOfFields() : tbcSource.getNumberOfFrames()) : 0;
     const double frameRate = tbcSource.getSystem() == PAL ? 25.0 : 30000.0 / 1001.0;
     audioConfig->setVideo(last > 0 ? last / (tbcSource.getFieldViewEnabled() ? 2.0 * frameRate : frameRate) : 0.0, path);
-    audioConfig->setEfmSource(efmSourceName());
+    {
+        const QString source = efmSourceName();
+        audioConfig->setEfmSource(source == "-" ? tr("the live input (the decoders wait for its EFM, which may come later)") : source);
+    }
     audioConfig->show();
     audioConfig->raise();
 }
@@ -3079,6 +3083,8 @@ void MainWindow::stopEfmDecoders()
 // The EFM of the capture that can be decoded: an LDX file that has some, or the .efm beside a .tbc; empty if there is none
 QString MainWindow::efmSourceName()
 {
+    // (a live input: "-", whatever it has sent yet -- its EFM may come later, and the decoders wait for it)
+    if (tbcSource.getIsSourceLoaded() && tbcSource.getIsLive() && LdxStream::instance() && liveEfm) return QStringLiteral("-");
     if (!tbcSource.getIsSourceLoaded() || tbcSource.getIsLive()) return QString();
     const QString name = tbcSource.getCurrentSourceFilename();
     if (LdxCapture::isLdxName(name)) {
@@ -3125,7 +3131,12 @@ void MainWindow::startEfmDecoding(qint32 decoder, bool noTimecodes, bool conceal
     }
     waveformWanted = true;
     showWaveform(true);
-    audioConfig->setDecodeStatus(decoder, tr("Decoding..."), true);
+    const bool live = (source == "-");
+    if (live) {
+        liveEfmFed[decoder] = 0;
+        feedLiveEfm();
+    }
+    audioConfig->setDecodeStatus(decoder, live && liveEfm && liveEfm->size() == 0 ? tr("Waiting for EFM...") : tr("Decoding..."), true);
     connect(decoding, &EfmDecoding::grew, this, [this, decoder, decoding]() {
         audio->extend();
         audioConfig->setDecodeStatus(decoder, tr("Decoding: %1 seconds").arg(decoding->seconds(), 0, 'f', 1), true);
@@ -3186,6 +3197,10 @@ void MainWindow::showWaveform(bool shown)
 void MainWindow::loadAudio()
 {
     stopEfmDecoders();
+    if (tbcSource.getIsLive() && LdxStream::instance()) {
+        loadLiveAudio();
+        return;
+    }
     const bool usable = !tbcSource.getIsLive();
     const QVector<AudioTrackInfo> tracks = usable ? audio->setVideo(tbcSource.getCurrentSourceFilename()) : audio->setVideo(QString());
     if (tracks.isEmpty()) {
@@ -3206,10 +3221,119 @@ void MainWindow::loadAudio()
     updateAudioPlayhead();
 }
 
+// A live LDX input: what its tracks other than the video carry. Its audio is written, as it comes, to a file that the player and the
+// waveform read while it grows, and its EFM is kept for the decoders. The EFM may come late, or not at all: the decoders can be started
+// at any time, and read what came and what comes.
+void MainWindow::loadLiveAudio()
+{
+    liveAnalogue.reset();
+    liveEfm.reset();
+    liveKinds.clear();
+    livePcmTrack = 0;
+    liveEfmFed[0] = liveEfmFed[1] = 0;
+    audio->setVideo(QString());
+
+    liveEfm = std::make_unique<QTemporaryFile>();
+    liveEfm->open();
+
+    for (const LdxStream::OtherTrack &track: LdxStream::instance()->otherTracks()) {
+        liveKinds.insert(track.number, track.kind);
+        if (track.kind == "pcm" && livePcmTrack == 0 && track.parameters.value("source").toString() != "efm") {
+            livePcmTrack = track.number;
+            livePcmBits = track.depth;
+            livePcmRate = track.parameters.value("sampleRate").toDouble(44100.0);
+        }
+
+    }
+
+
+    if (livePcmTrack != 0) {
+        liveAnalogue = std::make_unique<QTemporaryFile>();
+        liveAnalogue->open();
+        const qint32 index = audio->addGrowing(2, "analogue", liveAnalogue->fileName(), tr("Analogue (live)"), livePcmRate);
+        waveform->setTracks(audio->tracks(), index);
+        audio->selectTrack(index);
+        actionWaveform->setEnabled(true);
+        const QSignalBlocker blocker(actionWaveform);
+        actionWaveform->setChecked(waveformWanted);
+        showWaveform(waveformWanted);
+        waveform->setMessage(tr("Waiting for audio..."));
+    } else {
+        showWaveform(false);
+        actionWaveform->setEnabled(false);
+    }
+
+    if (!liveAudioTimer) {
+        liveAudioTimer = new QTimer(this);
+        liveAudioTimer->setInterval(100);
+        connect(liveAudioTimer, &QTimer::timeout, this, &MainWindow::pollLiveTracks);
+    }
+    liveAudioTimer->start();
+}
+
+void MainWindow::pollLiveTracks()
+{
+    LdxStream *stream = LdxStream::instance();
+    if (!stream || !liveEfm) return;
+    bool audioCame = false, efmCame = false;
+    for (const LdxStream::OtherBlock &block: stream->takeOtherBlocks()) {
+        const QString kind = liveKinds.value(block.track);
+        if (kind == "pcm" && block.track == livePcmTrack && liveAnalogue) {
+            QByteArray pairs = block.data;
+            if (livePcmBits == 24) {
+                // (the top 16 bits of each 24-bit sample)
+                QByteArray narrow;
+                narrow.resize(block.data.size() / 3 * 2);
+                for (qint32 i = 0; i < narrow.size() / 2; i++) {
+                    narrow[2 * i] = block.data[3 * i + 1];
+                    narrow[2 * i + 1] = block.data[3 * i + 2];
+                }
+                pairs = narrow;
+            }
+            liveAnalogue->write(pairs);
+            audioCame = true;
+        } else if (kind == "efm") {
+            liveEfm->write(block.data);
+            efmCame = true;
+        }
+    }
+    if (audioCame) {
+        liveAnalogue->flush();
+        waveform->setMessage(QString());
+        audio->extend();
+    }
+    if (efmCame) liveEfm->flush();
+    feedLiveEfm();
+    // The end of the stream: the decoders are told there is no more
+    if (tbcSource.getIsLiveEnded() && liveEfm) {
+        feedLiveEfm();
+        for (EfmDecoding *decoder: efmDecoders) {
+            if (decoder && decoder->isRunning() && liveEfmFed[decoder == efmDecoders[0] ? 0 : 1] >= liveEfm->size()) decoder->finishInput();
+        }
+    }
+}
+
+// The EFM that came and was not yet given to a decoder that runs on the live input
+void MainWindow::feedLiveEfm()
+{
+    if (!liveEfm) return;
+    for (qint32 i = 0; i < 2; i++) {
+        if (!efmDecoders[i] || !efmDecoders[i]->isRunning() || liveEfmFed[i] >= liveEfm->size()) continue;
+        QFile reader(liveEfm->fileName());
+        if (!reader.open(QIODevice::ReadOnly) || !reader.seek(liveEfmFed[i])) continue;
+        const QByteArray data = reader.read(4 << 20);
+        efmDecoders[i]->feed(data);
+        liveEfmFed[i] += data.size();
+    }
+}
+
 // No capture, or one with no audio: nothing to show or to play
 void MainWindow::unloadAudio()
 {
     stopEfmDecoders();
+    if (liveAudioTimer) liveAudioTimer->stop();
+    liveAnalogue.reset();
+    liveEfm.reset();
     audioStop();
     audio->setVideo(QString());
     showWaveform(false);

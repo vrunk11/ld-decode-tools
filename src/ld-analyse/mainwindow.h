@@ -27,6 +27,9 @@
 #include <QPushButton>
 #include <QSignalBlocker>
 #include <QPainter>
+#include <QMap>
+#include <QTemporaryFile>
+#include <memory>
 #include <QIcon>
 
 #include "oscilloscopedialog.h"
@@ -254,6 +257,18 @@ private:
     QString efmSourceName();
     void stopEfmDecoders();
     void showWaveform(bool shown);
+    // A live input's other tracks: its audio (a growing file read as the waveform and the sound) and its EFM (kept, and given to the decoders)
+    std::unique_ptr<QTemporaryFile> liveAnalogue;
+    std::unique_ptr<QTemporaryFile> liveEfm;
+    QTimer *liveAudioTimer = nullptr;
+    QMap<quint32, QString> liveKinds;
+    quint32 livePcmTrack = 0;
+    qint32 livePcmBits = 16;
+    double livePcmRate = 44100.0;
+    qint64 liveEfmFed[2] = { 0, 0 };
+    void loadLiveAudio();
+    void pollLiveTracks();
+    void feedLiveEfm();
     void applyWaveformDensity(qint32 density);
     void startEfmDecoding(qint32 decoder, bool noTimecodes, bool conceal, bool pad);
     EfmDecoding *efmDecoders[2] = { nullptr, nullptr };
