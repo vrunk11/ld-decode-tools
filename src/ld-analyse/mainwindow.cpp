@@ -3171,6 +3171,7 @@ void MainWindow::saveImportedAudio(const QVector<qint16> &samples, double sample
                                                     LdxCapture::historyEntry("ld-analyse", tr("audio imported from %1").arg(name)), error);
     statusBar()->showMessage(added ? tr("The audio is saved in %1; open the file again to use it from there").arg(path)
                                    : tr("The audio could not be saved: %1").arg(error), 10000);
+    audioLoadedKey.clear();
     if (added) loadAudio();
 }
 
@@ -3196,9 +3197,16 @@ void MainWindow::showWaveform(bool shown)
 // A capture has been loaded: its audio, if it has any, is what the waveform shows
 void MainWindow::loadAudio()
 {
+    // (the view changes (frame, field, deinterlaced) call this too: what is loaded for this source stays, with its decoders)
+    const QString key = QString(tbcSource.getIsLive() ? "live:" : "file:") + tbcSource.getCurrentSourceFilename();
+    if (key == audioLoadedKey) {
+        updateAudioPlayhead();
+        return;
+    }
     stopEfmDecoders();
     if (tbcSource.getIsLive() && LdxStream::instance()) {
         loadLiveAudio();
+        audioLoadedKey = key;
         return;
     }
     const bool usable = !tbcSource.getIsLive();
@@ -3219,6 +3227,7 @@ void MainWindow::loadAudio()
     }
     audio->selectTrack(first);
     waveform->setTracks(tracks, first);
+    audioLoadedKey = key;
     actionWaveform->setEnabled(true);
     const QSignalBlocker blocker(actionWaveform);
     actionWaveform->setChecked(waveformWanted);
@@ -3342,6 +3351,7 @@ void MainWindow::feedLiveEfm()
 // No capture, or one with no audio: nothing to show or to play
 void MainWindow::unloadAudio()
 {
+    audioLoadedKey.clear();
     stopEfmDecoders();
     if (liveAudioTimer) liveAudioTimer->stop();
     liveAnalogue.reset();
