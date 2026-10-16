@@ -12,6 +12,7 @@
 #define WAVEFORMPANEL_H
 
 #include <QColor>
+#include <QFrame>
 #include <QWidget>
 
 #include "audioreader.h"
@@ -28,7 +29,10 @@ class WaveformView : public QWidget
 public:
     explicit WaveformView(AudioEngine *engine, QWidget *parent = nullptr);
     void setPlayheadSeconds(double videoSeconds);
+    // A colour of its own, or none (an invalid colour): then the theme's, for the analogue audio or for the audio from EFM
     void setColor(const QColor &colour);
+    enum class Style { Filled = 0, Outline = 1, Bars = 2 };
+    void setStyle(Style newStyle) { style = newStyle; update(); }
     void setMessage(const QString &text) { message = text; update(); }
     QSize minimumSizeHint() const override { return QSize(120, 60); }
 
@@ -45,12 +49,13 @@ private:
     AudioEngine *engine;
     double playhead = 0.0;
     QColor colour;
+    Style style = Style::Filled;
     QString message;
 };
 
 // The waveform with, on its left, what is played: which audio (analogue, decoded from EFM...), which track of the file, the
 // channels that are on and the volume. The controls can be hidden: the same are in the audio configuration.
-class WaveformPanel : public QWidget
+class WaveformPanel : public QFrame
 {
     Q_OBJECT
 public:
@@ -60,6 +65,9 @@ public:
     void setTracks(const QVector<AudioTrackInfo> &tracks, qint32 chosen);
     void setPlayheadSeconds(double videoSeconds) { view->setPlayheadSeconds(videoSeconds); }
     void setColor(const QColor &colour) { view->setColor(colour); }
+    void setStyle(WaveformView::Style style) { view->setStyle(style); }
+    bool muted() const;
+    void setMuted(bool muted);
     void setMessage(const QString &text) { view->setMessage(text); }
     void setControlsVisible(bool visible);
     bool controlsVisible() const { return controls->isVisible(); }
@@ -73,6 +81,7 @@ public:
 signals:
     void trackSelected(qint32 index);
     void mixChanged(bool left, bool right, qint32 volume);
+    void mutedChanged(bool muted);
     void seekRequested(double videoSeconds);
 
 private:
@@ -85,6 +94,7 @@ private:
     QComboBox *trackCombo;
     QToolButton *leftButton;
     QToolButton *rightButton;
+    QToolButton *muteButton;
     QSlider *volumeSlider;
     QVector<AudioTrackInfo> allTracks;
     bool filling = false;

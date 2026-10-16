@@ -11,7 +11,6 @@
 #include "audioconfigdialog.h"
 
 #include <QCheckBox>
-#include <QColorDialog>
 #include <QComboBox>
 #include <QDialogButtonBox>
 #include <QFileDialog>
@@ -32,9 +31,9 @@
 
 static const double ImportRate = 44100.0;
 
-AudioConfigDialog::AudioConfigDialog(QWidget *parent) : QDialog(parent), colour(QColor(0x2a, 0x82, 0xda))
+AudioConfigDialog::AudioConfigDialog(QWidget *parent) : QDialog(parent)
 {
-    setWindowTitle(tr("Audio config"));
+    setWindowTitle(tr("Audio panel"));
     QVBoxLayout *top = new QVBoxLayout(this);
     QTabWidget *tabs = new QTabWidget(this);
     top->addWidget(tabs);
@@ -47,8 +46,9 @@ AudioConfigDialog::AudioConfigDialog(QWidget *parent) : QDialog(parent), colour(
     for (const QAudioDevice &device: QMediaDevices::audioOutputs()) deviceCombo->addItem(device.description(), device.id());
     form->addRow(tr("Sound device"), deviceCombo);
 
-    colourButton = new QPushButton(output);
-    form->addRow(tr("Waveform colour"), colourButton);
+    waveformCheck = new QCheckBox(tr("Show the waveform under the video"), output);
+    waveformCheck->setChecked(true);
+    form->addRow(QString(), waveformCheck);
 
     sideCheck = new QCheckBox(tr("Show the controls beside the waveform"), output);
     sideCheck->setChecked(true);
@@ -63,14 +63,32 @@ AudioConfigDialog::AudioConfigDialog(QWidget *parent) : QDialog(parent), colour(
     rightButton->setText(tr("R"));
     rightButton->setCheckable(true);
     rightButton->setChecked(true);
+    muteButton = new QToolButton(output);
+    muteButton->setText(tr("M"));
+    muteButton->setCheckable(true);
+    muteButton->setToolTip(tr("Mute"));
     volumeSlider = new QSlider(Qt::Horizontal, output);
     volumeSlider->setRange(0, 100);
     volumeSlider->setValue(70);
     mix->addWidget(leftButton);
     mix->addWidget(rightButton);
+    mix->addWidget(muteButton);
     mix->addWidget(volumeSlider, 1);
     form->addRow(tr("Channels and volume"), mix);
     tabs->addTab(output, tr("Output"));
+
+    // Style -------------------------------------------------------------------------------------------------------
+    QWidget *style = new QWidget(this);
+    QFormLayout *styleForm = new QFormLayout(style);
+    styleCombo = new QComboBox(style);
+    styleCombo->addItem(tr("Filled"), 0);
+    styleCombo->addItem(tr("Outline"), 1);
+    styleCombo->addItem(tr("Bars"), 2);
+    styleForm->addRow(tr("Waveform design"), styleCombo);
+    QLabel *colourHelp = new QLabel(tr("The colours of the waveform (analogue audio, audio from EFM) are in the theme: View > Theme > Customize."), style);
+    colourHelp->setWordWrap(true);
+    styleForm->addRow(colourHelp);
+    tabs->addTab(style, tr("Style"));
 
     // Import ------------------------------------------------------------------------------------------------------
     QWidget *import = new QWidget(this);
@@ -154,7 +172,9 @@ AudioConfigDialog::AudioConfigDialog(QWidget *parent) : QDialog(parent), colour(
     connect(close, &QDialogButtonBox::rejected, this, &QDialog::close);
 
     connect(deviceCombo, &QComboBox::currentIndexChanged, this, [this]() { emit deviceChosen(deviceCombo->currentData().toByteArray()); });
-    connect(colourButton, &QPushButton::clicked, this, &AudioConfigDialog::chooseColor);
+    connect(waveformCheck, &QCheckBox::toggled, this, &AudioConfigDialog::waveformShownChanged);
+    connect(muteButton, &QToolButton::toggled, this, &AudioConfigDialog::mutedChanged);
+    connect(styleCombo, &QComboBox::currentIndexChanged, this, [this]() { emit styleChosen(styleCombo->currentData().toInt()); });
     connect(sideCheck, &QCheckBox::toggled, this, &AudioConfigDialog::sidePanelChanged);
     const auto mixed = [this]() { emit mixChanged(leftButton->isChecked(), rightButton->isChecked(), volumeSlider->value()); };
     connect(leftButton, &QToolButton::toggled, this, mixed);
@@ -172,7 +192,6 @@ AudioConfigDialog::AudioConfigDialog(QWidget *parent) : QDialog(parent), colour(
         status->setText(tr("The imported audio is removed"));
         emit importRemoved();
     });
-    setColor(colour);
 }
 
 void AudioConfigDialog::setDevice(const QByteArray &id)
@@ -182,12 +201,22 @@ void AudioConfigDialog::setDevice(const QByteArray &id)
     deviceCombo->setCurrentIndex(index >= 0 ? index : 0);
 }
 
-void AudioConfigDialog::setColor(const QColor &newColour)
+void AudioConfigDialog::setMuted(bool muted)
 {
-    colour = newColour;
-    colourButton->setText(colour.name());
-    colourButton->setStyleSheet(QString("QPushButton { background-color: %1; color: %2; }")
-                                    .arg(colour.name(), colour.lightness() > 128 ? "black" : "white"));
+    const QSignalBlocker blocker(muteButton);
+    muteButton->setChecked(muted);
+}
+
+void AudioConfigDialog::setWaveformShown(bool shown)
+{
+    const QSignalBlocker blocker(waveformCheck);
+    waveformCheck->setChecked(shown);
+}
+
+void AudioConfigDialog::setStyle(qint32 style)
+{
+    const QSignalBlocker blocker(styleCombo);
+    styleCombo->setCurrentIndex(qMax(0, styleCombo->findData(style)));
 }
 
 void AudioConfigDialog::setSidePanel(bool shown)
@@ -220,14 +249,6 @@ void AudioConfigDialog::setVideo(double videoSeconds, const QString &ldxFile)
 void AudioConfigDialog::setImportedName(const QString &importedName)
 {
     if (!importedName.isEmpty()) status->setText(tr("In use: %1").arg(importedName));
-}
-
-void AudioConfigDialog::chooseColor()
-{
-    const QColor chosen = QColorDialog::getColor(colour, this, tr("Waveform colour"));
-    if (!chosen.isValid()) return;
-    setColor(chosen);
-    emit colorChosen(chosen);
 }
 
 void AudioConfigDialog::browse()

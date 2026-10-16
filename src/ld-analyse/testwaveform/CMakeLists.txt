@@ -6,7 +6,7 @@ add_executable(testwaveform
     ../efmdecoding.cpp
 )
 
-target_link_libraries(testwaveform PRIVATE Qt::Core Qt::Gui Qt::Widgets Qt6::Multimedia lddecode-library)
+target_link_libraries(testwaveform PRIVATE Qt::Core Qt::Gui Qt::Widgets Qt6::Multimedia lddecode-library lddecode-gui)
 target_include_directories(testwaveform PRIVATE ..)
 
 add_test(NAME testwaveform COMMAND testwaveform)

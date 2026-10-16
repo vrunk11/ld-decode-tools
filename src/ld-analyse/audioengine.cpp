@@ -151,11 +151,22 @@ void AudioEngine::setMix(bool left, bool right, double volume)
     mixLeft = left;
     mixRight = right;
     mixVolume = qBound(0.0, volume, 1.0);
+    applyMix();
+}
+
+void AudioEngine::setMuted(bool muted)
+{
+    mixMuted = muted;
+    applyMix();
+}
+
+void AudioEngine::applyMix()
+{
     if (feeder) {
         AudioMix mix;
         mix.left = mixLeft;
         mix.right = mixRight;
-        mix.volume = mixVolume;
+        mix.volume = mixMuted ? 0.0 : mixVolume;
         feeder->setMix(mix);
     }
 }
@@ -206,7 +217,7 @@ bool AudioEngine::start(double videoSeconds)
     AudioMix mix;
     mix.left = mixLeft;
     mix.right = mixRight;
-    mix.volume = mixVolume;
+    mix.volume = mixMuted ? 0.0 : mixVolume;
     feeder.reset(new AudioFeeder(reader.get(), sampleAt(videoSeconds), mix));
     sink = new QAudioSink(device, format, this);
     sink->setBufferSize(static_cast<qsizetype>(format.sampleRate() * 4 * 0.12));       // (about 120 ms)

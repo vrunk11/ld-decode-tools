@@ -39,3 +39,7 @@ Step 1 (commit 663a742, plus d97acd2 for the pipe detection):
 4. Live input: waveform accumulated as the audio arrives, audio of a stream (the pcm track of the LDX stream).
 5. Sync: use the `audioSamples` of the metadata for the analogue audio of a capture (exact) instead of time times rate.
 6. Docs: `docs/Tools/ld-analyse.md` (waveform, Audio config, EFM tab), the how-to guide, the README line.
+
+## Second round of feedback (author)
+
+Done: mute button `M` (panel and window); waveform colours are in the theme (two more entries of the theme editor, "Waveform: analogue audio" and "Waveform: audio from EFM", kept in the palette as the visited-link colour, with defaults for light and dark; `waveformColour()` in `gui-common/theme.h`), the panel picks one by the source of the track played; the window is `Window > Audio panel...` (was `View > Audio config`), with a `Show the waveform` switch that follows `View > Waveform`; the waveform sits in a frame, and the main window grows or shrinks by its height when it is shown or hidden; tab `Style` with three designs (filled, outline, bars). To adjust after the author's test: more designs, spacing and look of the frame and of the left column.

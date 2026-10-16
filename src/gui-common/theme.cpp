@@ -97,6 +97,14 @@ static QColor themeColour(const QPalette &palette, const ThemeColourRole &entry)
     return palette.color(entry.group == QPalette::All ? QPalette::Active : entry.group, entry.role);
 }
 
+// The waveform colours a theme has unless it says them: light on dark, dark on light
+static void setDefaultWaveformColours(QPalette &palette)
+{
+    const bool dark = isDarkPalette(palette);
+    palette.setColor(QPalette::All, QPalette::LinkVisited, QColor(dark ? "#4aa3ff" : "#1f6fc9"));
+    palette.setColor(QPalette::Disabled, QPalette::LinkVisited, QColor(dark ? "#ffb347" : "#d9780a"));
+}
+
 // Build a palette from "key" -> colour pairs; roles not listed are left unset
 // and so come from the system palette when applied
 static QPalette makePalette(std::initializer_list<std::pair<const char *, const char *>> colours)
@@ -108,6 +116,9 @@ static QPalette makePalette(std::initializer_list<std::pair<const char *, const 
         }
     }
     // The play button is drawn in the button text colour unless the theme sets one
+    bool hasWaveform = false;
+    for (const auto &colour : colours) hasWaveform |= qstrcmp(colour.first, "WaveformAnalogue") == 0;
+    if (!hasWaveform) setDefaultWaveformColours(palette);
     bool hasPlayButton = false;
     for (const auto &colour : colours) hasPlayButton |= qstrcmp(colour.first, "PlayButton") == 0;
     if (!hasPlayButton) palette.setColor(QPalette::All, QPalette::BrightText, palette.color(QPalette::Active, QPalette::ButtonText));
@@ -202,6 +213,7 @@ QPalette deserializePalette(const QString &text)
     }
     // A palette saved before the play button had a colour: use the button text colour
     if (!text.contains("PlayButton=")) palette.setColor(QPalette::All, QPalette::BrightText, palette.color(QPalette::Active, QPalette::ButtonText));
+    if (!text.contains("WaveformAnalogue=")) setDefaultWaveformColours(palette);
     return palette;
 }
 
@@ -453,6 +465,14 @@ bool applyAppearance(const QString &styleName, ThemeMode mode, const QString &cu
     app->setProperty("playButtonColour", hasPalette ? palette.color(QPalette::Active, QPalette::BrightText)
                                                    : app->palette().color(QPalette::Active, QPalette::ButtonText));
 
+    // The colours of the waveform: the theme's own, or the defaults for a light or a dark system
+    {
+        QPalette waveformSource = hasPalette ? palette : QPalette();
+        if (!hasPalette) setDefaultWaveformColours(waveformSource = app->palette());
+        app->setProperty("waveformAnalogueColour", waveformSource.color(QPalette::Active, QPalette::LinkVisited));
+        app->setProperty("waveformEfmColour", waveformSource.color(QPalette::Disabled, QPalette::LinkVisited));
+    }
+
     // The classic style's dark look is built from the colours just set, so its
     // style sheet comes last; it is removed again for any other style
     static bool styleSheetSet = false;
@@ -471,4 +491,11 @@ QColor playButtonColour()
 {
     const QVariant colour = QCoreApplication::instance() ? QCoreApplication::instance()->property("playButtonColour") : QVariant();
     return colour.isValid() ? colour.value<QColor>() : QApplication::palette().color(QPalette::ButtonText);
+}
+
+QColor waveformColour(bool fromEfm)
+{
+    const QVariant colour = QCoreApplication::instance() ? QCoreApplication::instance()->property(fromEfm ? "waveformEfmColour" : "waveformAnalogueColour") : QVariant();
+    if (colour.isValid()) return colour.value<QColor>();
+    return fromEfm ? QColor("#ffb347") : QColor("#4aa3ff");
 }
