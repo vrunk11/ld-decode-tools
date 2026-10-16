@@ -230,9 +230,13 @@ void WaveformPanel::setTracks(const QVector<AudioTrackInfo> &tracks, qint32 chos
     // The sources that are not there are shown, out of reach, so that the way to get them is in sight
     for (const auto &known: sources) {
         if (known.first == "import" || seen.contains(known.first)) continue;
-        sourceCombo->addItem(tr("%1 (none)").arg(known.second), known.first);
-        if (auto *model = qobject_cast<QStandardItemModel *>(sourceCombo->model())) {
-            model->item(sourceCombo->count() - 1)->setEnabled(false);
+        // (the EFM can be asked for from here, when the capture has some, or may have: a decoder that finds nothing says so)
+        const bool askable = known.first == "efm" && efmPossible && efmPossible();
+        sourceCombo->addItem(askable ? tr("%1 (decode...)").arg(known.second) : tr("%1 (none)").arg(known.second), known.first);
+        if (!askable) {
+            if (auto *model = qobject_cast<QStandardItemModel *>(sourceCombo->model())) {
+                model->item(sourceCombo->count() - 1)->setEnabled(false);
+            }
         }
     }
     // The source of the track that is chosen, and the tracks of that source
@@ -240,6 +244,7 @@ void WaveformPanel::setTracks(const QVector<AudioTrackInfo> &tracks, qint32 chos
     const qint32 sourceIndex = sourceCombo->findData(wanted);
     if (sourceIndex >= 0) sourceCombo->setCurrentIndex(sourceIndex);
     filling = false;
+    shownSource = sourceCombo->currentIndex();
     sourceChosen();
     if (chosen >= 0) {
         filling = true;
@@ -260,6 +265,14 @@ void WaveformPanel::sourceChosen()
     }
     filling = wasFilling;
     // One choice only is not a choice: it is not shown
+    if (!filling && trackCombo->count() == 0 && source == "efm") {
+        // The EFM that is not decoded yet: asking for it starts a decoder, and the choice stays where it was
+        const QSignalBlocker blocker(sourceCombo);
+        if (shownSource >= 0) sourceCombo->setCurrentIndex(shownSource);
+        emit efmDecodeRequested();
+        return;
+    }
+    if (!filling) shownSource = sourceCombo->currentIndex();
     trackCombo->setVisible(trackCombo->count() > 1);
     if (!filling && trackCombo->count() > 0) emit trackSelected(trackCombo->itemData(0).toInt());
 }

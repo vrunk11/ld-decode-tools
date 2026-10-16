@@ -13,6 +13,7 @@
 #include <QProcess>
 #include <QThread>
 #include <QPushButton>
+#include <QComboBox>
 #include <QElapsedTimer>
 #include <QFile>
 #include <QImage>
@@ -292,6 +293,7 @@ int main(int argc, char *argv[])
         CHECK(source.openFile(realCapture, LdxByteTrack::Kind::Efm, sourceError));
         const QByteArray efmBytes = source.readAll();
         CHECK(efmBytes.size() > 1000000);
+        CHECK(source.size() == efmBytes.size());       // (efmSourceName tells EFM from none by the size)
         qint64 sizes[2] = { 0, 0 };
         for (qint32 i = 0; i < 2; i++) {
             for (qint32 mode = 0; mode < 2; mode++) {
@@ -320,6 +322,26 @@ int main(int argc, char *argv[])
                 else CHECK(result.size() == sizes[i] && sizes[i] > 0);
             }
         }
+    }
+
+    // The EFM source can be asked for when the EFM may be decoded: it is there to choose, and choosing it asks for a decoder
+    {
+        WaveformPanel asking(&engine);
+        bool asked = false;
+        QObject::connect(&asking, &WaveformPanel::efmDecodeRequested, [&asked]() { asked = true; });
+        asking.setEfmPossible([]() { return true; });
+        asking.setTracks(engine.tracks(), 0);
+        QComboBox *sources = asking.findChildren<QComboBox *>().first();
+        const qint32 efmIndex = sources->findData("efm");
+        CHECK(efmIndex >= 0 && sources->itemText(efmIndex).contains("decode"));
+        const qint32 before = sources->currentIndex();
+        sources->setCurrentIndex(efmIndex);
+        CHECK(asked && sources->currentIndex() == before);
+        WaveformPanel refusing(&engine);
+        refusing.setEfmPossible([]() { return false; });
+        refusing.setTracks(engine.tracks(), 0);
+        QComboBox *refusedSources = refusing.findChildren<QComboBox *>().first();
+        CHECK(refusedSources->itemText(refusedSources->findData("efm")).contains("none"));
     }
     // The channels and the volume
     bool left = true, right = true;

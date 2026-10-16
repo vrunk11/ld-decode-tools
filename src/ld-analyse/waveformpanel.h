@@ -13,6 +13,7 @@
 
 #include <QColor>
 #include <QFrame>
+#include <functional>
 #include <QWidget>
 
 #include "audioreader.h"
@@ -74,6 +75,8 @@ public:
     bool muted() const;
     void setMuted(bool muted);
     void setMessage(const QString &text) { view->setMessage(text); }
+    // Whether the EFM may be decoded (asked when the source list is made): the source EFM digital is then there to be chosen
+    void setEfmPossible(std::function<bool()> possible) { efmPossible = std::move(possible); }
     void setControlsVisible(bool visible);
     bool controlsVisible() const { return controls->isVisible(); }
 
@@ -87,6 +90,7 @@ signals:
     void trackSelected(qint32 index);
     void mixChanged(bool left, bool right, qint32 volume);
     void mutedChanged(bool muted);
+    void efmDecodeRequested();
     void seekRequested(double videoSeconds);
 
 private:
@@ -105,6 +109,8 @@ private:
     QSlider *volumeSlider;
     QVector<AudioTrackInfo> allTracks;
     bool filling = false;
+    qint32 shownSource = -1;
+    std::function<bool()> efmPossible;
 };
 
 #endif // WAVEFORMPANEL_H
