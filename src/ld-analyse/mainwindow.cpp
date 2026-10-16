@@ -506,8 +506,9 @@ void MainWindow::updateLive()
 
     const bool isFieldView = tbcSource.getFieldViewEnabled();
     const qint32 firstFrame = tbcSource.getFirstAvailableFrame();
-    const qint32 first = isFieldView ? 2 * firstFrame - 1 : firstFrame;
-    const qint32 last = isFieldView ? tbcSource.getNumberOfFields() : tbcSource.getNumberOfFrames();
+    const bool fieldUnits = isFieldView || weaveActive;      // (the weave of fields counts fields)
+    const qint32 first = fieldUnits ? 2 * firstFrame - 1 : firstFrame;
+    const qint32 last = weaveActive ? tbcSource.getNumberOfFields() - 1 : (isFieldView ? tbcSource.getNumberOfFields() : tbcSource.getNumberOfFrames());
     const bool ended = tbcSource.getIsLiveEnded();
 
     updateLiveControls();
@@ -569,7 +570,7 @@ void MainWindow::setPlaybackOptionsVisible(bool visible)
         playback->setSpeed(1.0);
     }
     actionLoop->setVisible(visible);
-    if (actionWeave) actionWeave->setEnabled(visible);        // (it is for files: a live input plays as it arrives; greyed, not hidden)
+    // (the weave is for a live input too)
     speedSeparator->setVisible(visible);
     for (QAction *action: speedActions->actions()) action->setVisible(visible);
 }
@@ -813,7 +814,7 @@ void MainWindow::togglePlayback()
     const bool isFieldView = tbcSource.getFieldViewEnabled();
     // (the weave of fields: the frame view, no deinterlacer, a file: the clock counts fields, and the images are pairs of them)
     weaveActive = actionWeave->isChecked() && tbcSource.getViewMode() == TbcSource::ViewMode::FRAME_VIEW && !deinterlacedView
-                  && !tbcSource.getIsLive() && tbcSource.getNumberOfFields() > 2;
+                  && tbcSource.getNumberOfFields() > 2;
     tbcSource.setWeavePlayback(weaveActive);
     const double frameRate = tbcSource.getSystem() == PAL ? 25.0 : 30000.0 / 1001.0;
     playback->setRate(isFieldView || weaveActive ? 2.0 * frameRate : frameRate);
@@ -832,7 +833,7 @@ void MainWindow::togglePlayback()
         ui->posHorizontalSlider->setValue(shown);
     }
     const qint32 lastPosition = weaveActive ? tbcSource.getNumberOfFields() - 1 : (isFieldView ? tbcSource.getNumberOfFields() : tbcSource.getNumberOfFrames());
-    const qint32 firstPosition = isLive ? (isFieldView ? 2 * tbcSource.getFirstAvailableFrame() - 1 : tbcSource.getFirstAvailableFrame()) : 1;
+    const qint32 firstPosition = isLive ? (isFieldView || weaveActive ? 2 * tbcSource.getFirstAvailableFrame() - 1 : tbcSource.getFirstAvailableFrame()) : 1;
     playback->setLive(isLive, isLive && tbcSource.getIsLiveEnded());
     playback->setRange(firstPosition, lastPosition);
 

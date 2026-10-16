@@ -179,7 +179,8 @@ void SourceField::loadFieldRun(SourceVideo &sourceVideo, LdDecodeMetaData &ldDec
     for (qint32 slot = 0; slot < fields.size(); slot += 2) {
         qint32 a = firstFieldNumber + (slot - startIndex);
         qint32 b = a + 1;
-        const bool useBlank = a < 1 || b > numberOfFields;
+        // (a stream may not have the fields yet, or no more)
+        const bool useBlank = a < 1 || b > numberOfFields || (sourceVideo.isStream() && !sourceVideo.hasField(b));
         if (useBlank) {
             a = ldDecodeMetaData.getFirstFieldNumber(1);
             b = ldDecodeMetaData.getSecondFieldNumber(1);

@@ -2014,6 +2014,8 @@ QVector<qint64> TbcSource::getAudioSamplesBeforeFields()
 
 void TbcSource::loadWeave(qint32 p)
 {
+    // (a stream has fields made up for the frames it holds: those of the pair and of the pairs round it)
+    if (isLive && sourceReady) ldDecodeMetaData.ensureFields(p + 1 + 8);
     if (!sourceReady || p < 1 || p + 1 > ldDecodeMetaData.getNumberOfFields()) return;
     qint32 a = p, b = p + 1;
     if (!ldDecodeMetaData.getField(a).isFirstField) std::swap(a, b);       // (the top field first)
