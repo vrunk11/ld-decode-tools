@@ -495,10 +495,12 @@ QImage TbcSource::getImage()
                     case ViewMode::FIELD_VIEW: {
                         // Draw line off-center if 1:1, else double lines
                         if (getStretchField()) {
+                            // (the bottom field is one line lower: see generateQImage)
                             qint32 lineY = fieldLine - 1;
+                            const qint32 down = isFirstField ? 0 : 1;
 
-                            imagePainter.drawLine(startx, lineY * 2, endx, lineY * 2);
-                            imagePainter.drawLine(startx, lineY * 2 + 1, endx, lineY * 2 + 1);
+                            imagePainter.drawLine(startx, lineY * 2 + down, endx, lineY * 2 + down);
+                            imagePainter.drawLine(startx, lineY * 2 + 1 + down, endx, lineY * 2 + 1 + down);
                         } else {
                             qint32 lineY = fieldLine - 1 + (frameHeight / 4);
 
@@ -697,7 +699,7 @@ TbcSource::ScanLineData TbcSource::getScanLineData(qint32 scanLine)
 
             // Ensure frameLine accounts for fields and duplicated lines
             if (getStretchField()) {
-                frameLine = (scanLine + 1) / 2;
+                frameLine = isFirstField ? (scanLine + 1) / 2 : qMax(1, scanLine / 2);       // (the bottom field is one line lower)
 
                 // Offset for LineNumber
                 if (scanLine % 2 == 0 && isFirstField && scanLine > 1) scanLine--;
@@ -1260,8 +1262,12 @@ QImage TbcSource::generateQImage()
             auto startOffset = getStretchField() ? inputOffset : (frameHeight / 4) + (inputOffset / 2);
             auto height = getStretchField() ? inputHeight : fieldHeight;
             auto fieldY = loadedFieldNumber % 2 ? 0 : 1;
+            // A bob: each line of the field is doubled, and the bottom field is put one line lower, where its lines are in the frame, so that
+            // the fields do not jump up and down one after the other
+            const bool bottomField = loadedFieldNumber % 2 == 0;
 
             for (auto y = 0; y < height; y++) {
+                if (getStretchField()) fieldY = 2 * (bottomField ? (y > 0 ? (y - 1) / 2 : 0) : y / 2) + (bottomField ? 1 : 0);
                 auto *outputLine = reinterpret_cast<QRgb*>(outputImage.scanLine(y + startOffset));
                 std::copy_n(&rgbData[fieldY * inputWidth], inputWidth, &outputLine[outputOffset]);
 

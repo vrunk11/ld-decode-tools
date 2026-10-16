@@ -13,6 +13,7 @@
 #include <QFile>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 
 #include "tbcsource.h"
 
@@ -88,6 +89,27 @@ int main(int argc, char *argv[])
     step("weaves in colour done");
     source.setChromaDecoder(false);
 
+    // The field view is a bob: the lines of the top field are doubled on the rows 2k and 2k+1, those of the bottom field on the rows
+    // 2k+1 and 2k+2
+    source.setViewMode(TbcSource::ViewMode::FIELD_VIEW);
+    source.setStretchField(true);
+    source.load(300, 599);
+    const QImage top = source.getImage();
+    source.load(301, 602);
+    const QImage bottom = source.getImage();
+    CHECK(!top.isNull() && !bottom.isNull());
+    if (pictures) {
+        top.save(QString("%1/field-top.png").arg(pictures));
+        bottom.save(QString("%1/field-bottom.png").arg(pictures));
+    }
+    const auto sameRows = [](const QImage &image, qint32 a, qint32 b) {
+        return std::memcmp(image.constScanLine(a), image.constScanLine(b), static_cast<size_t>(image.width()) * 4) == 0;
+    };
+    CHECK(sameRows(top, 100, 101) && !sameRows(top, 101, 102));
+    CHECK(sameRows(bottom, 101, 102) && !sameRows(bottom, 100, 101));
+    step("the field view bobs");
+    source.setViewMode(TbcSource::ViewMode::FRAME_VIEW);
+
     // A real frame after the weaves is a real frame again
     source.load(300, 599);
     const QImage frame = source.getImage();
@@ -96,3 +118,4 @@ int main(int argc, char *argv[])
     step("all tests passed");
     return 0;
 }
+
