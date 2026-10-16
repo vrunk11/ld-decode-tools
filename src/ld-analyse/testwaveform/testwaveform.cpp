@@ -77,6 +77,20 @@ int main(int argc, char *argv[])
     CHECK(engine.sampleAt(1.1) == rate);            // (the audio is 100 ms later than the video)
     engine.setOffsetMs(0);
 
+    // With the samples of each field from the metadata the place in the audio is exact (here 700 samples a field, the first 100 longer)
+    {
+        QVector<qint64> cumulative { 0 };
+        for (qint32 field = 0; field < 100; field++) cumulative.append(cumulative.last() + (field == 0 ? 800 : 700));
+        engine.setFieldSamples(cumulative, 60.0);
+        CHECK(engine.sampleAt(0.0) == 0);
+        CHECK(engine.sampleAt(1.0 / 60.0) == 800);
+        CHECK(engine.sampleAt(11.0 / 60.0) == 800 + 10 * 700);
+        CHECK(engine.sampleAt(10.5 / 60.0) == 800 + 9 * 700 + 350);
+        CHECK(std::fabs(engine.videoSecondsOf(800 + 10 * 700) - 11.0 / 60.0) < 1e-9);
+        engine.setFieldSamples(QVector<qint64>(), 0.0);
+        CHECK(engine.sampleAt(1.0) == rate);
+    }
+
     // The peaks are made on a thread of their own
     QElapsedTimer timer;
     timer.start();

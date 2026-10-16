@@ -78,6 +78,8 @@ public:
     void loadSource(QString inputFileName);
     void loadStream(const StreamInput &input);
     bool getIsLive();
+    // The audio samples before each field (one more entry than there are fields), from the metadata; empty if it does not say
+    QVector<qint64> getAudioSamplesBeforeFields();
     // For a stream: take count of what has arrived. Call from the thread of the window.
     void updateLive();
     // The first frame that can be shown (the earlier ones have left the buffer of a stream)

@@ -20,6 +20,8 @@
 #include <QThread>
 
 #include <cstring>
+#include <algorithm>
+#include <cmath>
 
 // What the sound card is given: the audio from a place on, mixed, and silence after its end
 class AudioFeeder : public QIODevice
@@ -91,6 +93,7 @@ void AudioEngine::stopPeaks()
 
 QVector<AudioTrackInfo> AudioEngine::setVideo(const QString &videoName)
 {
+    fieldSamples.clear();
     stop();
     stopPeaks();
     reader.reset();
@@ -182,11 +185,25 @@ double AudioEngine::durationSeconds() const { return reader ? static_cast<double
 
 qint64 AudioEngine::sampleAt(double videoSeconds) const
 {
+    if (usesFieldSamples()) {
+        const double position = (videoSeconds - offsetMs / 1000.0) * fieldRate;
+        const qint64 last = fieldSamples.size() - 1;
+        const qint64 field = qBound<qint64>(0, static_cast<qint64>(std::floor(position)), last - 1);
+        const double fraction = qBound(0.0, position - static_cast<double>(field), 1.0);
+        return fieldSamples[field] + static_cast<qint64>(fraction * static_cast<double>(fieldSamples[field + 1] - fieldSamples[field]));
+    }
     return static_cast<qint64>((videoSeconds - offsetMs / 1000.0) * sampleRate());
 }
 
 double AudioEngine::videoSecondsOf(qint64 sample) const
 {
+    if (usesFieldSamples()) {
+        const auto above = std::upper_bound(fieldSamples.constBegin(), fieldSamples.constEnd(), sample);
+        const qint64 field = qBound<qint64>(0, static_cast<qint64>(above - fieldSamples.constBegin()) - 1, fieldSamples.size() - 2);
+        const qint64 span = fieldSamples[field + 1] - fieldSamples[field];
+        const double fraction = span > 0 ? static_cast<double>(sample - fieldSamples[field]) / static_cast<double>(span) : 0.0;
+        return (static_cast<double>(field) + fraction) / fieldRate + offsetMs / 1000.0;
+    }
     return static_cast<double>(sample) / sampleRate() + offsetMs / 1000.0;
 }
 
@@ -323,4 +340,17 @@ void AudioEngine::extend()
         done += block.size() / 2;
     }
     emit peaksProgress(0);
+}
+
+void AudioEngine::setFieldSamples(const QVector<qint64> &cumulative, double fieldsPerSecond)
+{
+    fieldSamples = cumulative.size() >= 2 && fieldsPerSecond > 0.0 ? cumulative : QVector<qint64>();
+    fieldRate = fieldsPerSecond;
+}
+
+// (only the analogue audio of the capture is cut to the fields: audio decoded from EFM or imported is not)
+bool AudioEngine::usesFieldSamples() const
+{
+    return !fieldSamples.isEmpty() && chosen >= 0 && chosen < available.size() && available[chosen].source == "analogue"
+           && available[chosen].trackId > -2;
 }

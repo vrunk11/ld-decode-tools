@@ -1957,3 +1957,20 @@ QVector<QPointF> TbcSource::getFileSnrHistory(bool black, qint32 maxPoints)
 {
     return fileSnr ? fileSnr->history(black, maxPoints) : QVector<QPointF>();
 }
+
+QVector<qint64> TbcSource::getAudioSamplesBeforeFields()
+{
+    QVector<qint64> cumulative;
+    if (!sourceReady || isLive) return cumulative;
+    const qint32 fields = ldDecodeMetaData.getNumberOfFields();
+    cumulative.reserve(fields + 1);
+    qint64 total = 0;
+    cumulative.append(0);
+    for (qint32 field = 1; field <= fields; field++) {
+        const qint32 samples = ldDecodeMetaData.getField(field).audioSamples;
+        if (samples < 0) return QVector<qint64>();      // (the metadata does not say)
+        total += samples;
+        cumulative.append(total);
+    }
+    return total > 0 ? cumulative : QVector<qint64>();
+}
