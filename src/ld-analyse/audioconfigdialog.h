@@ -40,6 +40,7 @@ public:
     void setWaveformShown(bool shown);
     void setStyle(qint32 style);
     void setWell(bool on);
+    void setSoloChannel(bool on);
     void setDensity(qint32 density);
     void setSidePanel(bool shown);
     void setMix(bool left, bool right, qint32 volume);
@@ -65,6 +66,7 @@ signals:
     void waveformShownChanged(bool shown);
     void styleChosen(qint32 style);
     void wellChanged(bool on);
+    void soloChannelChanged(bool on);
     void densityChosen(qint32 density);
     void sidePanelChanged(bool shown);
     void mixChanged(bool left, bool right, qint32 volume);
@@ -88,6 +90,7 @@ private:
     QCheckBox *waveformCheck;
     QComboBox *styleCombo;
     QCheckBox *wellCheck;
+    QCheckBox *soloCheck;
     QComboBox *densityCombo;
     QCheckBox *sideCheck;
     QToolButton *leftButton, *rightButton;

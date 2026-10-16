@@ -72,7 +72,9 @@ void WaveformView::paintEvent(QPaintEvent *)
     grid.setAlpha(70);
     painter.setPen(QPen(grid, 1));
     painter.drawLine(0, middle, w, middle);
-    {
+    // (with only one channel shown it has the whole height: no line between two channels)
+    const bool single = soloOn && (channelLeft != channelRight);
+    if (!single) {
         painter.drawLine(0, h / 4, w, h / 4);
         painter.drawLine(0, 3 * h / 4, w, 3 * h / 4);
     }
@@ -88,8 +90,7 @@ void WaveformView::paintEvent(QPaintEvent *)
     // middle and the right below, so that each has a half of the height
     const AudioPeaks &peaks = engine->peaks();
     const qint64 available = peaks.samples();
-    // (in a low view the channels are drawn as one shape: each would have a few pixels)
-    const bool merged = false;      // (both channels are always shown: one above the other, the left first)
+    const bool merged = single;      // (one channel, on the whole height: the one that is not muted)
     const qint32 channels = merged ? 1 : 2;
     const double half = merged ? (h / 2.0 - 1.0) : h / 4.0;
     // (the colour of the theme, for the kind of audio that is played, unless one was given)
@@ -112,8 +113,10 @@ void WaveformView::paintEvent(QPaintEvent *)
         const double rightBottom = (3.0 * h / 4.0) - (peak.minRight / 32768.0) * half;
         double tops[2] = { leftTop, rightTop }, bottoms[2] = { qMax(leftBottom, leftTop + 1.0), qMax(rightBottom, rightTop + 1.0) };
         if (merged) {
-            tops[0] = h / 2.0 - (qMax(peak.maxLeft, peak.maxRight) / 32768.0) * half;
-            bottoms[0] = qMax(h / 2.0 - (qMin(peak.minLeft, peak.minRight) / 32768.0) * half, tops[0] + 1.0);
+            const qint16 highest = channelLeft ? peak.maxLeft : peak.maxRight;
+            const qint16 lowest = channelLeft ? peak.minLeft : peak.minRight;
+            tops[0] = h / 2.0 - (highest / 32768.0) * half;
+            bottoms[0] = qMax(h / 2.0 - (lowest / 32768.0) * half, tops[0] + 1.0);
         }
         for (qint32 c = 0; c < channels; c++) {
             if (style == Style::Outline) {
@@ -307,6 +310,7 @@ qint32 WaveformPanel::volume() const { return volumeSlider->value(); }
 
 void WaveformPanel::setMix(bool left, bool right, qint32 volume)
 {
+    view->setChannels(left, right);
     const QSignalBlocker a(leftButton), b(rightButton), c(volumeSlider);
     leftButton->setChecked(!left);
     rightButton->setChecked(!right);
@@ -315,6 +319,7 @@ void WaveformPanel::setMix(bool left, bool right, qint32 volume)
 
 void WaveformPanel::emitMix()
 {
+    view->setChannels(!leftButton->isChecked(), !rightButton->isChecked());
     emit mixChanged(!leftButton->isChecked(), !rightButton->isChecked(), volumeSlider->value());
 }
 
