@@ -3008,6 +3008,7 @@ void MainWindow::setupAudio()
     audio->setMuted(muted);
     waveform->setStyle(static_cast<WaveformView::Style>(configuration.audioValue("style", 0).toInt()));
     waveform->setWell(configuration.audioValue("well", true).toBool());
+    waveform->setSoloChannel(configuration.audioValue("soloChannel", false).toBool());
     waveform->setDensity(static_cast<WaveformPanel::Density>(configuration.audioValue("density", 1).toInt()));
     connect(waveform, &WaveformPanel::mutedChanged, this, [this](bool isMuted) {
         audio->setMuted(isMuted);
@@ -3156,6 +3157,11 @@ void MainWindow::showAudioConfig()
         audioConfig->setWaveformShown(actionWaveform->isChecked());
         audioConfig->setStyle(configuration.audioValue("style", 0).toInt());
         audioConfig->setWell(configuration.audioValue("well", true).toBool());
+        audioConfig->setSoloChannel(configuration.audioValue("soloChannel", false).toBool());
+        connect(audioConfig, &AudioConfigDialog::soloChannelChanged, this, [this](bool on) {
+            waveform->setSoloChannel(on);
+            configuration.setAudioValue("soloChannel", on);
+        });
         connect(audioConfig, &AudioConfigDialog::wellChanged, this, [this](bool on) {
             waveform->setWell(on);
             configuration.setAudioValue("well", on);

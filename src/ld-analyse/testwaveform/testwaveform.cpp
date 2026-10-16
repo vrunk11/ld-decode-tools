@@ -401,6 +401,37 @@ int main(int argc, char *argv[])
             std::fprintf(stderr, "bench: %s, at the end %.1f s of audio out\n", i == 0 ? "suite" : "ld-process-efm", decoding.seconds());
         }
     }
+
+    // One channel shown on the whole height when the other is muted, if that is asked for
+    {
+        panel.setColor(QColor(255, 0, 0));
+        panel.resize(500, 120);
+        panel.setDensity(WaveformPanel::Density::Large);
+        const auto redCount = [&panel]() {
+            waitMs(50);
+            const QImage picture = panel.grab().toImage();
+            const QWidget *shown = panel.findChild<WaveformView *>();
+            const QRect where(shown->mapTo(&panel, QPoint(0, 0)), shown->size());
+            qint32 count = 0;
+            for (qint32 y = where.top(); y < where.bottom(); y++) {
+                for (qint32 x = where.left(); x < where.right(); x++) {
+                    const QColor pixel = picture.pixelColor(x, y);
+                    if (pixel.red() > 150 && pixel.green() < 120 && pixel.blue() < 120) count++;
+                }
+            }
+            return count;
+        };
+        panel.setSoloChannel(false);
+        panel.setMix(true, false, 70);
+        const qint32 shared = redCount();             // (the left channel has the upper half)
+        panel.setSoloChannel(true);
+        const qint32 whole = redCount();              // (the left channel alone has all of it)
+        CHECK(whole > shared * 3 / 2);
+        panel.setMix(true, true, 70);
+        CHECK(redCount() < whole);                    // (both on: two channels again)
+        panel.setSoloChannel(false);
+        panel.setDensity(WaveformPanel::Density::Compact);
+    }
     // The channels and the volume
     bool left = true, right = true;
     qint32 volume = 0;

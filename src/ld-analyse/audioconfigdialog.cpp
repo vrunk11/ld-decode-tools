@@ -98,6 +98,8 @@ AudioConfigDialog::AudioConfigDialog(QWidget *parent) : QDialog(parent)
     wellCheck = new QCheckBox(tr("Waveform in a box, set into the panel"), style);
     wellCheck->setChecked(true);
     styleForm->addRow(QString(), wellCheck);
+    soloCheck = new QCheckBox(tr("When one channel is muted, show only the other"), style);
+    styleForm->addRow(QString(), soloCheck);
     QLabel *colourHelp = new QLabel(tr("The colours of the waveform (analogue audio, audio from EFM) are in the theme: View > Theme > Customize."), style);
     colourHelp->setWordWrap(true);
     styleForm->addRow(colourHelp);
@@ -199,6 +201,7 @@ AudioConfigDialog::AudioConfigDialog(QWidget *parent) : QDialog(parent)
     connect(muteButton, &QToolButton::toggled, this, &AudioConfigDialog::mutedChanged);
     connect(densityCombo, &QComboBox::currentIndexChanged, this, [this]() { emit densityChosen(densityCombo->currentData().toInt()); });
     connect(wellCheck, &QCheckBox::toggled, this, &AudioConfigDialog::wellChanged);
+    connect(soloCheck, &QCheckBox::toggled, this, &AudioConfigDialog::soloChannelChanged);
     connect(styleCombo, &QComboBox::currentIndexChanged, this, [this]() { emit styleChosen(styleCombo->currentData().toInt()); });
     connect(sideCheck, &QCheckBox::toggled, this, &AudioConfigDialog::sidePanelChanged);
     const auto mixed = [this]() { emit mixChanged(!leftButton->isChecked(), !rightButton->isChecked(), volumeSlider->value()); };
@@ -385,4 +388,10 @@ void AudioConfigDialog::setWell(bool on)
 {
     const QSignalBlocker blocker(wellCheck);
     wellCheck->setChecked(on);
+}
+
+void AudioConfigDialog::setSoloChannel(bool on)
+{
+    const QSignalBlocker blocker(soloCheck);
+    soloCheck->setChecked(on);
 }
