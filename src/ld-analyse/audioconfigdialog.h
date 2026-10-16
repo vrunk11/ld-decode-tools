@@ -41,6 +41,7 @@ public:
     void setStyle(qint32 style);
     void setWell(bool on);
     void setSoloChannel(bool on);
+    void setSidecars(bool on);
     void setDensity(qint32 density);
     void setSidePanel(bool shown);
     void setMix(bool left, bool right, qint32 volume);
@@ -67,6 +68,7 @@ signals:
     void styleChosen(qint32 style);
     void wellChanged(bool on);
     void soloChannelChanged(bool on);
+    void sidecarsChanged(bool on);
     void densityChosen(qint32 density);
     void sidePanelChanged(bool shown);
     void mixChanged(bool left, bool right, qint32 volume);
@@ -91,6 +93,7 @@ private:
     QComboBox *styleCombo;
     QCheckBox *wellCheck;
     QCheckBox *soloCheck;
+    QCheckBox *sidecarsCheck;
     QComboBox *densityCombo;
     QCheckBox *sideCheck;
     QToolButton *leftButton, *rightButton;

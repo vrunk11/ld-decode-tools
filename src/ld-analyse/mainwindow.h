@@ -53,6 +53,7 @@
 #include "waveformpanel.h"
 #include "audioconfigdialog.h"
 #include "efmdecoding.h"
+#include "sidecaraudio.h"
 #endif
 #include "videofilter.h"
 #include "videofilterdialog.h"
@@ -280,7 +281,10 @@ private:
     void pollLiveTracks();
     void feedLiveEfm();
     void applyWaveformDensity(qint32 density);
-    void startEfmDecoding(qint32 decoder, bool noTimecodes, bool conceal, bool pad);
+    void startEfmDecoding(qint32 decoder, bool noTimecodes, bool conceal, bool pad, bool select = true);
+    void startSidecars(const QStringList &files);
+    void stopSidecars();
+    QList<AudioFileDecoding *> sidecarDecodings;
     EfmDecoding *efmDecoders[2] = { nullptr, nullptr };
     void saveImportedAudio(const QVector<qint16> &samples, double sampleRate, const QString &name);
     void setupAudio();

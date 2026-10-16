@@ -3064,7 +3064,7 @@ static QStringList efmFindings(const QStringList &lines)
 {
     static const QRegularExpression interesting("invalid|corrupt|missing|conceal|silenc|uncorrect|error|corrected|fixed|loss|lost|discard|interrupt|overshoot|undershoot|out of order",
                                                 QRegularExpression::CaseInsensitiveOption);
-    static const QRegularExpression value(":\s*([0-9]+(?:\.[0-9]+)?)\s*(%|MBytes)?\s*(?:\(.*\))?\s*$");
+    static const QRegularExpression value(QStringLiteral(":\\s*([0-9]+(?:\\.[0-9]+)?)\\s*(%|MBytes)?\\s*(?:\\(.*\\))?\\s*$"));
     QStringList found;
     for (const QString &line: lines) {
         // ("[stage] Info:   Invalid C1s: 853")
@@ -3169,6 +3169,8 @@ void MainWindow::showAudioConfig()
         audioConfig->setWaveformShown(actionWaveform->isChecked());
         audioConfig->setStyle(configuration.audioValue("style", 0).toInt());
         audioConfig->setWell(configuration.audioValue("well", true).toBool());
+        audioConfig->setSidecars(configuration.audioValue("sidecars", true).toBool());
+        connect(audioConfig, &AudioConfigDialog::sidecarsChanged, this, [this](bool on) { configuration.setAudioValue("sidecars", on); });
         audioConfig->setSoloChannel(configuration.audioValue("soloChannel", false).toBool());
         connect(audioConfig, &AudioConfigDialog::soloChannelChanged, this, [this](bool on) {
             waveform->setSoloChannel(on);
@@ -3227,7 +3229,9 @@ void MainWindow::showAudioConfig()
             }
         });
         connect(audioConfig, &AudioConfigDialog::saveRequested, this, &MainWindow::saveImportedAudio);
-        connect(audioConfig, &AudioConfigDialog::decodeRequested, this, &MainWindow::startEfmDecoding);
+        connect(audioConfig, &AudioConfigDialog::decodeRequested, this, [this](qint32 decoder, bool noTimecodes, bool conceal, bool pad) {
+            startEfmDecoding(decoder, noTimecodes, conceal, pad);
+        });
         connect(audioConfig, &AudioConfigDialog::decodeStopRequested, this, [this](qint32 decoder) {
             if (efmDecoders[decoder]) efmDecoders[decoder]->stop();
             audioConfig->setDecodeStatus(decoder, tr("Stopped"), false);
@@ -3250,6 +3254,7 @@ void MainWindow::showAudioConfig()
 
 void MainWindow::stopEfmDecoders()
 {
+    stopSidecars();
     for (EfmDecoding *&decoder: efmDecoders) {
         delete decoder;
         decoder = nullptr;
@@ -3282,7 +3287,7 @@ QString MainWindow::efmSourceName()
 
 // Decode the EFM with one of the two decoders (0: the efm-decoder suite, 1: ld-process-efm): its audio is a track as soon as it
 // comes, and the waveform and the sound follow it
-void MainWindow::startEfmDecoding(qint32 decoder, bool noTimecodes, bool conceal, bool pad)
+void MainWindow::startEfmDecoding(qint32 decoder, bool noTimecodes, bool conceal, bool pad, bool select)
 {
     const QString source = efmSourceName();
     if (source.isEmpty()) return;
@@ -3312,16 +3317,21 @@ void MainWindow::startEfmDecoding(qint32 decoder, bool noTimecodes, bool conceal
         return;
     }
     const qint32 index = audio->addDecoded(decoder, decoding->cacheFile(), tr("%1 (decoding...)").arg(EfmDecoding::backendName(backend)));
-    waveform->setTracks(audio->tracks(), index);
-    audio->selectTrack(index);
-    actionWaveform->setEnabled(true);
-    {
-        const QSignalBlocker blocker(actionWaveform);
-        actionWaveform->setChecked(true);
+    if (select) {
+        waveform->setTracks(audio->tracks(), index);
+        audio->selectTrack(index);
+        actionWaveform->setEnabled(true);
+        {
+            const QSignalBlocker blocker(actionWaveform);
+            actionWaveform->setChecked(true);
+        }
+        waveformWanted = true;
+        showWaveform(true);
+        audioFollowVideo(playingAt);
+    } else {
+        // (decoded in the background: the track is there to be chosen, and what is played stays)
+        waveform->setTracks(audio->tracks(), audio->currentTrack());
     }
-    waveformWanted = true;
-    showWaveform(true);
-    audioFollowVideo(playingAt);
     const bool live = (source == "-");
     if (live) {
         liveEfmFed[decoder] = 0;
@@ -3403,7 +3413,11 @@ void MainWindow::loadAudio()
     }
     const bool usable = !tbcSource.getIsLive();
     const QVector<AudioTrackInfo> tracks = usable ? audio->setVideo(tbcSource.getCurrentSourceFilename()) : audio->setVideo(QString());
-    if (tracks.isEmpty()) {
+    // The audio files beside the capture with its name (a reference recording, the audio of another decoder), and its EFM: opened by
+    // themselves, unless that is switched off in the Audio panel
+    const bool beside = usable && configuration.audioValue("sidecars", true).toBool();
+    const QStringList sidecars = beside ? SidecarAudio::find(tbcSource.getCurrentSourceFilename()) : QStringList();
+    if (tracks.isEmpty() && sidecars.isEmpty()) {
         unloadAudio();
         return;
     }
@@ -3417,14 +3431,55 @@ void MainWindow::loadAudio()
         const double frameRate = tbcSource.getSystem() == PAL ? 25.0 : 30000.0 / 1001.0;
         audio->setFieldSamples(tbcSource.getAudioSamplesBeforeFields(), 2.0 * frameRate);
     }
-    audio->selectTrack(first);
-    waveform->setTracks(tracks, first);
+    if (!tracks.isEmpty()) audio->selectTrack(first);
+    startSidecars(sidecars);
+    if (tracks.isEmpty()) first = 0;
+    if (tracks.isEmpty()) audio->selectTrack(0);
+    waveform->setTracks(audio->tracks(), first);
     audioLoadedKey = key;
     actionWaveform->setEnabled(true);
     const QSignalBlocker blocker(actionWaveform);
     actionWaveform->setChecked(waveformWanted);
     showWaveform(waveformWanted);
     updateAudioPlayhead();
+    // The EFM beside the capture is decoded in the background, by the decoder that is chosen, unless the file has its audio already
+    if (beside) {
+        bool hasEfmAudio = false;
+        for (const AudioTrackInfo &track: audio->tracks()) hasEfmAudio |= track.source == "efm";
+        if (!hasEfmAudio && !efmSourceName().isEmpty()) {
+            startEfmDecoding(audioConfig ? audioConfig->currentDecoder() : configuration.audioValue("decoder", 1).toInt(), true, true, false, false);
+        }
+    }
+}
+
+// The files of audio beside the capture, decoded by ffmpeg in the background as tracks that grow: the Imported source of the panel
+void MainWindow::startSidecars(const QStringList &files)
+{
+    stopSidecars();
+    const qint32 firstSlot = 3;       // (0 and 1 are the EFM decoders, 2 the analogue audio of a live input)
+    for (qint32 i = 0; i < files.size() && i < 12; i++) {
+        auto *decoding = new AudioFileDecoding(this);
+        QString error;
+        if (!decoding->start(files[i], error)) {
+            statusBar()->showMessage(error, 8000);
+            delete decoding;
+            continue;
+        }
+        const QString name = QFileInfo(files[i]).fileName();
+        audio->addGrowing(firstSlot + i, "import", decoding->cacheFile(), tr("%1 (beside the capture)").arg(name), 44100.0);
+        connect(decoding, &AudioFileDecoding::grew, this, [this]() { audio->extend(); });
+        connect(decoding, &AudioFileDecoding::finished, this, [this](bool ok, const QString &message) {
+            audio->extend();
+            if (!ok) statusBar()->showMessage(message, 10000);
+        });
+        sidecarDecodings.append(decoding);
+    }
+}
+
+void MainWindow::stopSidecars()
+{
+    qDeleteAll(sidecarDecodings);
+    sidecarDecodings.clear();
 }
 
 // A live LDX input: what its tracks other than the video carry. Its audio is written, as it comes, to a file that the player and the

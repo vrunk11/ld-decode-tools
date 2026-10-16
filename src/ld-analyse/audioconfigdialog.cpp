@@ -53,6 +53,11 @@ AudioConfigDialog::AudioConfigDialog(QWidget *parent) : QDialog(parent)
     waveformCheck->setChecked(true);
     form->addRow(QString(), waveformCheck);
 
+    sidecarsCheck = new QCheckBox(tr("Open the audio files and the EFM beside the capture"), output);
+    sidecarsCheck->setChecked(true);
+    sidecarsCheck->setToolTip(tr("A file with the name of the capture (capture.wav, capture.flac, ...: anything ffmpeg reads as sound, but not RF samples) is a source of audio, and capture.efm is decoded. Takes effect when a capture is opened."));
+    form->addRow(QString(), sidecarsCheck);
+
     sideCheck = new QCheckBox(tr("Show the controls beside the waveform"), output);
     sideCheck->setChecked(true);
     form->addRow(QString(), sideCheck);
@@ -198,6 +203,7 @@ AudioConfigDialog::AudioConfigDialog(QWidget *parent) : QDialog(parent)
 
     connect(deviceCombo, &QComboBox::currentIndexChanged, this, [this]() { emit deviceChosen(deviceCombo->currentData().toByteArray()); });
     connect(waveformCheck, &QCheckBox::toggled, this, &AudioConfigDialog::waveformShownChanged);
+    connect(sidecarsCheck, &QCheckBox::toggled, this, &AudioConfigDialog::sidecarsChanged);
     connect(muteButton, &QToolButton::toggled, this, &AudioConfigDialog::mutedChanged);
     connect(densityCombo, &QComboBox::currentIndexChanged, this, [this]() { emit densityChosen(densityCombo->currentData().toInt()); });
     connect(wellCheck, &QCheckBox::toggled, this, &AudioConfigDialog::wellChanged);
@@ -394,4 +400,10 @@ void AudioConfigDialog::setSoloChannel(bool on)
 {
     const QSignalBlocker blocker(soloCheck);
     soloCheck->setChecked(on);
+}
+
+void AudioConfigDialog::setSidecars(bool on)
+{
+    const QSignalBlocker blocker(sidecarsCheck);
+    sidecarsCheck->setChecked(on);
 }

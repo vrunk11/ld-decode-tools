@@ -26,6 +26,7 @@
 #include "audioengine.h"
 #include "audioconfigdialog.h"
 #include "efmdecoding.h"
+#include "sidecaraudio.h"
 #include "theme.h"
 #include "ldxbytetrack.h"
 #include "waveformpanel.h"
@@ -34,6 +35,7 @@
     do { \
         if (!(condition)) { \
             std::fprintf(stderr, "%s:%d: check failed: %s\n", __FILE__, __LINE__, #condition); \
+            std::fflush(stderr); \
             std::exit(1); \
         } \
     } while (0)
@@ -192,6 +194,35 @@ int main(int argc, char *argv[])
         engine.clearImported();
         CHECK(engine.currentTrack() < 0);
         CHECK(engine.selectTrack(0));         // (the audio of the capture again)
+
+        // The audio files beside a capture with its name: audio is found whatever the extension, RF samples (a FLAC at 40000 Hz) are not
+        {
+            QTemporaryDir folder;
+            CHECK(folder.isValid());
+            QFile(folder.filePath("cap.tbc")).open(QIODevice::WriteOnly);
+            QFile(folder.filePath("cap.json")).open(QIODevice::WriteOnly);
+            const auto make = [&folder](const QString &name, const QString &rate, const QString &channels) {
+                QProcess maker;
+                maker.start("ffmpeg", { "-v", "error", "-f", "lavfi", "-i", "sine=frequency=330:duration=1", "-ar", rate, "-ac", channels, folder.filePath(name) });
+                return maker.waitForFinished(20000) && maker.exitCode() == 0;
+            };
+            CHECK(make("cap.wav", "44100", "2"));
+            CHECK(make("cap.aiff", "48000", "1"));
+            CHECK(make("cap.flac", "40000", "1"));           // (RF samples)
+            CHECK(make("other.wav", "44100", "2"));          // (another name)
+            const QStringList beside = SidecarAudio::find(folder.filePath("cap.tbc"));
+            CHECK(beside.size() == 2);
+            CHECK(beside[0].endsWith("cap.aiff") && beside[1].endsWith("cap.wav"));
+            AudioFileDecoding decoding;
+            bool finished = false;
+            QObject::connect(&decoding, &AudioFileDecoding::finished, [&finished](bool, const QString &) { finished = true; });
+            QString decodeError;
+            CHECK(decoding.start(beside[0], decodeError));
+            QElapsedTimer sideWait;
+            sideWait.start();
+            while (!finished && sideWait.elapsed() < 20000) waitMs(20);
+            CHECK(finished && std::fabs(decoding.seconds() - 1.0) < 0.1);
+        }
     }
 
     // EFM decoded by the programs, as it comes (when the EFM of a real capture is at hand)
