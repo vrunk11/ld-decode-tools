@@ -13,6 +13,7 @@
 #include "mainwindow.h"
 #include <QJsonObject>
 #include <QTemporaryFile>
+#include <QRegularExpression>
 #include <QTextStream>
 #include "ldxcapture.h"
 #include "ldxbytetrack.h"
@@ -2956,9 +2957,10 @@ void MainWindow::setupAudio()
     audioStatsTimer->start();
     waveform = new WaveformPanel(audio, this);
     waveform->setEfmPossible([this]() { return !efmSourceName().isEmpty(); });
-    connect(waveform, &WaveformPanel::efmDecodeRequested, this, [this]() {
+    connect(waveform, &WaveformPanel::efmDecodeRequested, this, [this](qint32 decoder) {
         if (efmSourceName().isEmpty()) return;
-        startEfmDecoding(0, true, true, false);
+        if (audioConfig) startEfmDecoding(decoder, audioConfig->efmWithoutTimecodes(), audioConfig->efmConceal(), audioConfig->efmPad());
+        else startEfmDecoding(decoder, true, true, false);
     });
     showWaveform(false);
     ui->verticalLayout->insertWidget(ui->verticalLayout->indexOf(ui->mediaControl_frame), waveform);
@@ -3019,6 +3021,27 @@ void MainWindow::setupAudio()
 }
 
 
+// What the decoder programs report of errors, in what they say when they end: the lines about errors, corrections, concealed or lost
+// samples and frames, with a value that is not zero
+static QStringList efmFindings(const QStringList &lines)
+{
+    static const QRegularExpression interesting("invalid|corrupt|missing|conceal|silenc|uncorrect|error|corrected|fixed|loss|lost|discard|interrupt|overshoot|undershoot|out of order",
+                                                QRegularExpression::CaseInsensitiveOption);
+    static const QRegularExpression value(":\s*([0-9]+(?:\.[0-9]+)?)\s*(%|MBytes)?\s*(?:\(.*\))?\s*$");
+    QStringList found;
+    for (const QString &line: lines) {
+        // ("[stage] Info:   Invalid C1s: 853")
+        const qint32 info = line.indexOf("Info:");
+        const QString text = (info >= 0 ? line.mid(info + 5) : line).trimmed();
+        const QRegularExpressionMatch match = value.match(text);
+        if (!match.hasMatch() || !interesting.match(text).hasMatch()) continue;
+        if (match.captured(1).toDouble() == 0.0) continue;
+        const QString stage = line.startsWith('[') ? line.left(line.indexOf(']') + 1) + " " : QString();
+        found.append(stage + text);
+    }
+    return found;
+}
+
 // The numbers of the sound and of the EFM decoders, for the Audio panel: where the sound is against the picture, how long it had
 // to wait for audio, and what each decoder has done and said
 void MainWindow::updateAudioStatistics()
@@ -3065,9 +3088,14 @@ void MainWindow::updateAudioStatistics()
             out << "  " << tr("Decoded ahead of the sound: %1 s%2").arg(ahead, 0, 'f', 1).arg(ahead < 0.3 ? tr(" (the sound waits for the decoder)") : QString()) << "\n";
         }
         const QStringList lines = decoder->messages();
-        if (!lines.isEmpty()) {
-            out << "  " << tr("What it says:") << "\n";
-            for (qint32 line = qMax<qint32>(0, lines.size() - 12); line < lines.size(); line++) out << "    " << lines[line] << "\n";
+        if (decoder->isRunning()) {
+            out << "  " << tr("The programs give their statistics (errors, corrections, concealed samples) when they end.") << "\n";
+            for (qint32 line = qMax<qint32>(0, lines.size() - 3); line < lines.size(); line++) out << "    " << lines[line] << "\n";
+        } else {
+            const QStringList findings = efmFindings(lines);
+            out << "  " << (findings.isEmpty() ? tr("No error, correction or concealed sample reported")
+                                               : tr("Errors, corrections and concealed samples (not zero):")) << "\n";
+            for (const QString &finding: findings) out << "    " << finding << "\n";
         }
     }
     audioConfig->setStatistics(text);
@@ -3211,6 +3239,15 @@ void MainWindow::startEfmDecoding(qint32 decoder, bool noTimecodes, bool conceal
     if (source.isEmpty()) return;
     const double playingAt = audio->isPlaying() ? audio->videoSecondsNow() : -1.0;
     const EfmDecoding::Backend backend = decoder == 0 ? EfmDecoding::Backend::Suite : EfmDecoding::Backend::ProcessEfm;
+    // One decoder at a time: the other one is stopped, and its track goes
+    const qint32 other = 1 - decoder;
+    if (efmDecoders[other]) {
+        audio->removeDecoded(other);
+        delete efmDecoders[other];
+        efmDecoders[other] = nullptr;
+        if (audioConfig) audioConfig->setDecodeStatus(other, tr("Stopped"), false);
+    }
+    if (audioConfig) audioConfig->setActiveDecoder(decoder);
     audioStop();
     audio->removeDecoded(decoder);
     delete efmDecoders[decoder];

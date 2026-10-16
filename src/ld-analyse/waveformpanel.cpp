@@ -213,34 +213,55 @@ WaveformPanel::WaveformPanel(AudioEngine *engine, QWidget *parent) : QFrame(pare
     setDensity(Density::Compact);
 }
 
+// What a track is shown under: its source, and for audio decoded from EFM by a program, which program (the decoders are two choices
+// of the same list, one at a time)
+static QString sourceKey(const AudioTrackInfo &track)
+{
+    if (track.source == "efm" && track.trackId <= -2) return QString("efm#%1").arg(-2 - track.trackId);
+    return track.source;
+}
+
+static QString sourceName(const QString &key)
+{
+    if (key == "analogue") return QObject::tr("Analogue");
+    if (key == "efm") return QObject::tr("EFM digital");
+    if (key == "efm#0") return QObject::tr("EFM: efm-decoder");
+    if (key == "efm#1") return QObject::tr("EFM: ld-process-efm");
+    if (key == "import") return QObject::tr("Imported");
+    return key;
+}
+
 void WaveformPanel::setTracks(const QVector<AudioTrackInfo> &tracks, qint32 chosen)
 {
     filling = true;
     allTracks = tracks;
     sourceCombo->clear();
-    const QList<QPair<QString, QString>> sources { { "analogue", tr("Analogue") }, { "efm", tr("EFM digital") }, { "import", tr("Imported") } };
     QStringList seen;
     for (const AudioTrackInfo &track: tracks) {
-        if (seen.contains(track.source)) continue;
-        seen.append(track.source);
-        QString name = track.source;
-        for (const auto &known: sources) if (known.first == track.source) name = known.second;
-        sourceCombo->addItem(name, track.source);
+        const QString key = sourceKey(track);
+        if (seen.contains(key)) continue;
+        seen.append(key);
+        sourceCombo->addItem(sourceName(key), key);
     }
-    // The sources that are not there are shown, out of reach, so that the way to get them is in sight
-    for (const auto &known: sources) {
-        if (known.first == "import" || seen.contains(known.first)) continue;
-        // (the EFM can be asked for from here, when the capture has some, or may have: a decoder that finds nothing says so)
-        const bool askable = known.first == "efm" && efmPossible && efmPossible();
-        sourceCombo->addItem(askable ? tr("%1 (decode...)").arg(known.second) : tr("%1 (none)").arg(known.second), known.first);
-        if (!askable) {
-            if (auto *model = qobject_cast<QStandardItemModel *>(sourceCombo->model())) {
-                model->item(sourceCombo->count() - 1)->setEnabled(false);
-            }
+    const auto addOutOfReach = [this](const QString &text, const QString &key) {
+        sourceCombo->addItem(text, key);
+        if (auto *model = qobject_cast<QStandardItemModel *>(sourceCombo->model())) model->item(sourceCombo->count() - 1)->setEnabled(false);
+    };
+    // The sources that are not there are shown, so that the way to get them is in sight
+    if (!seen.contains("analogue")) addOutOfReach(tr("Analogue (none)"), "analogue");
+    // The EFM can be asked for from here, when the capture has some, or may have (a live input): a decoder that finds nothing says so.
+    // One decoder at a time: choosing the other one stops the first.
+    const bool askable = efmPossible && efmPossible();
+    if (askable) {
+        for (const qint32 slot: { 1, 0 }) {
+            const QString key = QString("efm#%1").arg(slot);
+            if (!seen.contains(key)) sourceCombo->addItem(tr("%1 (decode...)").arg(sourceName(key)), key);
         }
+    } else if (!seen.contains("efm") && !seen.contains("efm#0") && !seen.contains("efm#1")) {
+        addOutOfReach(tr("EFM digital (none)"), "efm");
     }
     // The source of the track that is chosen, and the tracks of that source
-    const QString wanted = (chosen >= 0 && chosen < tracks.size()) ? tracks[chosen].source : QString();
+    const QString wanted = (chosen >= 0 && chosen < tracks.size()) ? sourceKey(tracks[chosen]) : QString();
     const qint32 sourceIndex = sourceCombo->findData(wanted);
     if (sourceIndex >= 0) sourceCombo->setCurrentIndex(sourceIndex);
     filling = false;
@@ -256,23 +277,23 @@ void WaveformPanel::setTracks(const QVector<AudioTrackInfo> &tracks, qint32 chos
 // The tracks of the source that is chosen fill the other choice
 void WaveformPanel::sourceChosen()
 {
-    const QString source = sourceCombo->currentData().toString();
+    const QString key = sourceCombo->currentData().toString();
     const bool wasFilling = filling;
     filling = true;
     trackCombo->clear();
     for (qint32 i = 0; i < allTracks.size(); i++) {
-        if (allTracks[i].source == source) trackCombo->addItem(allTracks[i].label, i);
+        if (sourceKey(allTracks[i]) == key) trackCombo->addItem(allTracks[i].label, i);
     }
     filling = wasFilling;
-    // One choice only is not a choice: it is not shown
-    if (!filling && trackCombo->count() == 0 && source == "efm") {
-        // The EFM that is not decoded yet: asking for it starts a decoder, and the choice stays where it was
+    if (!filling && trackCombo->count() == 0 && key.startsWith("efm#")) {
+        // An EFM decoder that has not run yet: asking for it starts it, and the choice stays where it was until its audio comes
         const QSignalBlocker blocker(sourceCombo);
         if (shownSource >= 0) sourceCombo->setCurrentIndex(shownSource);
-        emit efmDecodeRequested();
+        emit efmDecodeRequested(key.mid(4).toInt());
         return;
     }
     if (!filling) shownSource = sourceCombo->currentIndex();
+    // One choice only is not a choice: it is not shown
     trackCombo->setVisible(trackCombo->count() > 1);
     if (!filling && trackCombo->count() > 0) emit trackSelected(trackCombo->itemData(0).toInt());
 }
