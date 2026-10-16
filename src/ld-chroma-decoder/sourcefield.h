@@ -48,6 +48,14 @@ struct SourceField {
                            QVector<SourceField> &fields, qint32 &startIndex, qint32 &endIndex,
                            qint32 *carryPhase = nullptr);
 
+    // The same for one pair of fields that begins at any field (a "weave" of fields p and p+1, which may be the second field of a
+    // frame and the first of the next), with lookBehindPairs and lookAheadPairs pairs of fields each side. Each pair is given with its top
+    // field first, as the decoders take it, whichever of the two comes first in time. Fields outside the file are black. A NTSC phase
+    // that is not in the metadata is measured from the burst.
+    static void loadFieldRun(SourceVideo &sourceVideo, LdDecodeMetaData &ldDecodeMetaData,
+                             qint32 firstFieldNumber, qint32 lookBehindPairs, qint32 lookAheadPairs,
+                             QVector<SourceField> &fields, qint32 &startIndex, qint32 &endIndex);
+
     // Return the vertical offset of this field within the interlaced frame
     // (i.e. 0 for the top field, 1 for the bottom field).
     qint32 getOffset() const {

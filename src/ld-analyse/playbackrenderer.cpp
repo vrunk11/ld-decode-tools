@@ -66,7 +66,12 @@ protected:
             }
 
             isFieldView = settings.viewMode == TbcSource::ViewMode::FIELD_VIEW;
-            source.load(isFieldView ? (position + 1) / 2 : position, isFieldView ? position : position * 2 - 1);
+            if (settings.weave) {
+                // (the position is a field: the image is the weave of it and the next)
+                source.loadWeave(position);
+            } else {
+                source.load(isFieldView ? (position + 1) / 2 : position, isFieldView ? position : position * 2 - 1);
+            }
             const QImage image = source.getImage();
 
             {

@@ -182,6 +182,7 @@ public:
         bool chromaOn, dropoutsOn, reverseFoOn, stretchFieldOn, combine;
         ViewMode viewMode;
         SourceMode sourceMode;
+        bool weave = false;         // images are weaves of the fields p and p+1 (see loadWeave)
     };
 
     RenderSettings getRenderSettings();
@@ -193,6 +194,13 @@ public:
     void setPrerenderedImage(qint32 position, const QImage &image);
 
     void load(qint32 frameNumber, qint32 fieldNumber);
+    // A playback trick: an image of the frame view that is the weave of the fields p and p+1, whichever frames they belong to (the
+    // fields are put top field first, so the lines are where they belong). The next load() goes back to real frames.
+    void loadWeave(qint32 p);
+    void setWeavePlayback(bool on) { weaveOn = on; }
+    bool getWeavePlayback() const { return weaveOn; }
+    // Forget the image given by setPrerenderedImage and the cache (after a playback of weaves)
+    void clearPrerendered();
 
     QImage getImage();
     qint32 getNumberOfFrames();
@@ -252,6 +260,8 @@ private slots:
 private:
     void applyFieldOrder();
     bool sourceReady;
+    bool weaveOn = false;
+    qint32 weaveStart = 0;      // the first field of the weave that is loaded, 0 if the loaded frame is a real one
 
     // Frame data
     QVector<double> blackSnrGraphData;
