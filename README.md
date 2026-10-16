@@ -20,7 +20,7 @@ This is the complete suite of tools for processing LaserDisc captures and TBC (T
 - **vfs-verifier** - Verify the file system of data recovered from Domesday (VFS) discs
 
 ### Analysis and Quality Tools
-- **ld-analyse** - GUI tool for TBC file analysis and visualization
+- **ld-analyse** - GUI tool for TBC file analysis and visualization, with audio playback, a waveform and EFM decoding
 - **ld-discmap** - TBC and VBI alignment and correction tool
 - **ld-dropout-correct** - Advanced dropout detection and correction
 - **ld-chroma-decoder** - Color decoder for TBC LaserDisc video to RGB/YUV conversion

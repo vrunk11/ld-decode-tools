@@ -132,3 +132,7 @@ CLI options:
 The input can be an LDX file (`capture.ldx`, or `capture.ldx#4` for the `efm` track 4): the EFM t-values of the capture are read from it as they would be from the `.efm` file it was packed from.
 
 The output can be an LDX file that exists (`ld-process-efm capture.ldx capture.ldx`): the decoded audio is added to it as a `pcm` track with `"source": "efm"` (the digital audio of the capture, apart from its analogue audio), and the history records it. Only audio is put in an LDX file, not data. `ld-container wav capture.ldx --source efm` gives it back as a WAV file.
+
+## Pipes
+
+The input can be `-`, the standard input (raw EFM t-values, or an LDX stream that holds them, told by how it begins), and the output can be `-`, the standard output, where the decoded audio (or data) comes out as it is decoded: `ld-process-efm - - < capture.efm > audio.pcm`. ld-analyse uses this to decode EFM while it plays. The messages go to the standard error.

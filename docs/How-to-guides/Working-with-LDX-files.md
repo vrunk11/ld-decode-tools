@@ -40,6 +40,8 @@ A file with several captures is opened by the number of the track: `capture.ldx#
 
 The tools that write video (`ld-dropout-correct`, `ld-discmap`, `ld-disc-stacker`) can write an `.ldx` file as their output. An LDX file holds TBC or CVBS video as it is and the tools read both, so there is nothing to convert (`ld-tbc-to-cvbs` and `ld-cvbs-to-tbc` are for the separate files). The metadata export tools (`ld-export-metadata`, `ld-export-decode-metadata`) read an LDX file like a metadata file. `ld-process-efm` and `efm-decoder-f2` read the EFM track of an LDX file (or, for `efm-decoder-f2`, of a stream). The AC3 tools take RF and make AC3 data, so they have no LDX input: `ld-container extract` gives the RF or the AC3 of a file, and `ld-container addtrack` puts their result in it. `ld-process-efm` and `efm-decoder-audio` can write the digital audio they decode into the file (`ld-process-efm capture.efm capture.ldx`), and `ld-container wav` gives any audio of a file back as a WAV.
 
+`ld-analyse` plays the audio of an LDX file (the analogue audio, the audio decoded from EFM, imported audio) with the video, and shows its waveform; Window > Audio panel decodes the EFM of the file while it plays, imports a sound file and saves it in the file as a track. On a stream (`... | ld-analyse -`) it takes the audio and the EFM that the stream carries too: a producer should declare all its tracks, the EFM one included, at the start of the stream (the specification, section 15), even if it has nothing to send in them yet. See [ld-analyse](../Tools/ld-analyse.md#audio).
+
 ## Pipes
 
 `-` is the standard input or output:
