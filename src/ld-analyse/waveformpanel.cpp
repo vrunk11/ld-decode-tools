@@ -96,7 +96,8 @@ void WaveformView::paintEvent(QPaintEvent *)
     // (the colour of the theme, for the kind of audio that is played, unless one was given)
     const qint32 chosen = engine->currentTrack();
     const bool fromEfm = chosen >= 0 && chosen < engine->tracks().size() && engine->tracks()[chosen].source == "efm";
-    const QColor base = colour.isValid() ? colour : waveformColour(fromEfm);
+    QColor base = colour.isValid() ? colour : waveformColour(fromEfm);
+    if (silenced) base = palette().color(QPalette::Disabled, QPalette::WindowText);        // (muted: grey, as a control that is off)
     QColor faint = base;
     faint.setAlpha(style == Style::Filled ? 170 : 255);
     painter.setPen(faint);
@@ -223,6 +224,7 @@ WaveformPanel::WaveformPanel(AudioEngine *engine, QWidget *parent) : QFrame(pare
     connect(leftButton, &QToolButton::toggled, this, &WaveformPanel::emitMix);
     connect(rightButton, &QToolButton::toggled, this, &WaveformPanel::emitMix);
     connect(muteButton, &QToolButton::toggled, this, &WaveformPanel::mutedChanged);
+    connect(muteButton, &QToolButton::toggled, this, &WaveformPanel::refreshSilence);
     connect(volumeSlider, &QSlider::valueChanged, this, &WaveformPanel::emitMix);
     connect(view, &WaveformView::seekRequested, this, &WaveformPanel::seekRequested);
     setDensity(Density::Compact);
@@ -315,11 +317,13 @@ void WaveformPanel::setMix(bool left, bool right, qint32 volume)
     leftButton->setChecked(!left);
     rightButton->setChecked(!right);
     volumeSlider->setValue(volume);
+    refreshSilence();
 }
 
 void WaveformPanel::emitMix()
 {
     view->setChannels(!leftButton->isChecked(), !rightButton->isChecked());
+    refreshSilence();
     emit mixChanged(!leftButton->isChecked(), !rightButton->isChecked(), volumeSlider->value());
 }
 
@@ -329,6 +333,7 @@ void WaveformPanel::setMuted(bool muted)
 {
     const QSignalBlocker blocker(muteButton);
     muteButton->setChecked(muted);
+    refreshSilence();
 }
 
 void WaveformPanel::setDensity(Density density)
@@ -372,4 +377,10 @@ void WaveformPanel::setWell(bool on)
         inside->setContentsMargins(margin, margin, margin, margin);
     }
     well->update();
+}
+
+// The waveform is grey when nothing is heard: M, or both L and R, are pressed
+void WaveformPanel::refreshSilence()
+{
+    view->setSilenced(muteButton->isChecked() || (leftButton->isChecked() && rightButton->isChecked()));
 }
