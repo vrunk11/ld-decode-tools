@@ -2989,12 +2989,11 @@ void MainWindow::setupAudio()
         showWaveform(shown && audio->hasAudio());
     });
     connect(waveform, &WaveformPanel::trackSelected, this, [this](qint32 index) {
-        const bool wasPlaying = audio->isPlaying();
-        const double at = audio->videoSecondsNow();
+        const double at = audio->isPlaying() ? audio->videoSecondsNow() : -1.0;
         waveform->setMessage(QString());
         audio->selectTrack(index);
         waveform->refresh();
-        if (wasPlaying && playback->isPlaying()) audio->start(at);
+        audioFollowVideo(at);
     });
     connect(waveform, &WaveformPanel::mixChanged, this, [this](bool leftOn, bool rightOn, qint32 volume) {
         audio->setMix(leftOn, rightOn, volume / 100.0);
@@ -3151,6 +3150,7 @@ void MainWindow::startEfmDecoding(qint32 decoder, bool noTimecodes, bool conceal
 {
     const QString source = efmSourceName();
     if (source.isEmpty()) return;
+    const double playingAt = audio->isPlaying() ? audio->videoSecondsNow() : -1.0;
     const EfmDecoding::Backend backend = decoder == 0 ? EfmDecoding::Backend::Suite : EfmDecoding::Backend::ProcessEfm;
     audioStop();
     audio->removeDecoded(decoder);
@@ -3177,6 +3177,7 @@ void MainWindow::startEfmDecoding(qint32 decoder, bool noTimecodes, bool conceal
     }
     waveformWanted = true;
     showWaveform(true);
+    audioFollowVideo(playingAt);
     const bool live = (source == "-");
     if (live) {
         liveEfmFed[decoder] = 0;
@@ -3421,8 +3422,22 @@ double MainWindow::positionSeconds(qint32 position)
 // Play the sound from a position of the video, and let the video keep to it. False if there is no sound to play.
 bool MainWindow::audioStart(qint32 position)
 {
+    return audioStartAt(positionSeconds(position));
+}
+
+// The sound goes on, or begins, from a moment of the video (a track was chosen, or a decoder began, while the video plays); a negative
+// moment is the one the video is at
+void MainWindow::audioFollowVideo(double videoSeconds)
+{
+    if (!playback->isPlaying()) return;
+    audioStop();
+    audioStartAt(videoSeconds >= 0.0 ? videoSeconds : positionSeconds(tbcSource.getFieldViewEnabled() || weaveActive ? currentFieldNumber : currentFrameNumber));
+}
+
+bool MainWindow::audioStartAt(double videoSeconds)
+{
     if (!audio->hasAudio() || audio->currentTrack() < 0 || playback->getSpeed() != 1.0) return false;
-    if (!audio->start(positionSeconds(position))) return false;
+    if (!audio->start(videoSeconds)) return false;
     // (a live input keeps its own clock: the sound is behind the picture at the edge of what has come, and must not hold it back)
     if (!tbcSource.getIsLive()) playback->setExternalClock([this]() { return audio->playedSeconds(); });
     return true;

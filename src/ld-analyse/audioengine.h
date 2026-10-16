@@ -86,6 +86,9 @@ public:
     double playedSeconds() const;
     // The video second the sound is at
     double videoSecondsNow() const;
+    // What the player gave the card since this was asked last: the loudest sample, and since start() how many pairs were real audio
+    qint32 takeOutputLevel();
+    qint64 pairsGiven() const;
 
 signals:
     void peaksProgress(qint32 percent);

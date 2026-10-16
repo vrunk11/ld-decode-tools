@@ -39,6 +39,10 @@ public:
         mix = newMix;
     }
 
+    // The loudest sample given to the card since this was asked last (0 if none, or silence)
+    qint32 takeLevel() { return level.exchange(0); }
+    qint64 givenPairs() const { return given.load(); }
+
     bool isSequential() const override { return true; }
     qint64 bytesAvailable() const override { return 1 << 20; }
 
@@ -61,6 +65,12 @@ protected:
             const QVector<qint16> samples = reader->read(position + skip, pairs - skip);
             const qint64 got = samples.size() / 2;
             if (got > 0) mixStereo(samples.constData(), out + 2 * skip, got, current);
+            if (got > 0) {
+                qint32 loudest = level.load();
+                for (qint64 i = 0; i < 2 * got; i++) loudest = qMax<qint32>(loudest, qAbs(out[2 * skip + i]));
+                level = loudest;
+                given += got;
+            }
             // Audio that is still coming (a live input, audio being decoded): when it has not come yet, the sound waits for it, with
             // silence, rather than going on past it and never meeting it
             if (reader->isGrowing() && position >= 0 && got < pairs - skip) advance = skip + got;
@@ -74,6 +84,8 @@ protected:
 private:
     AudioReader *reader;
     qint64 position;                // the next pair to give, which may be before the start of the audio
+    std::atomic<qint32> level{0};
+    std::atomic<qint64> given{0};
     QMutex lock;
     AudioMix mix;
 };
@@ -402,3 +414,6 @@ bool AudioEngine::usesFieldSamples() const
     return !fieldSamples.isEmpty() && chosen >= 0 && chosen < available.size() && available[chosen].source == "analogue"
            && available[chosen].trackId > -2;
 }
+
+qint32 AudioEngine::takeOutputLevel() { return feeder ? feeder->takeLevel() : 0; }
+qint64 AudioEngine::pairsGiven() const { return feeder ? feeder->givenPairs() : 0; }
