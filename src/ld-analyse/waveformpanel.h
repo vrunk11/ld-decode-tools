@@ -68,6 +68,7 @@ public:
     void setPlayheadSeconds(double videoSeconds) { view->setPlayheadSeconds(videoSeconds); }
     void setColor(const QColor &colour) { view->setColor(colour); }
     void setStyle(WaveformView::Style style) { view->setStyle(style); }
+    void setWell(bool on);
     // How much height the panel takes: Large, Compact (the default, a little more than the buttons of the playback bar) and Ultra
     // (one line of buttons: the controls beside the waveform in a single row)
     enum class Density { Large = 0, Compact = 1, Ultra = 2 };
@@ -100,6 +101,7 @@ private:
     QWidget *controls;
     QFrame *separator = nullptr;
     WaveformView *view;
+    QFrame *well = nullptr;
     QComboBox *sourceCombo;
     QComboBox *trackCombo;
     QToolButton *leftButton;

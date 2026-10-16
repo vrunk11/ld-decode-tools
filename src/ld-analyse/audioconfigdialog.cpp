@@ -95,6 +95,9 @@ AudioConfigDialog::AudioConfigDialog(QWidget *parent) : QDialog(parent)
     densityCombo->addItem(tr("Ultra compact (one line of buttons)"), 2);
     styleForm->addRow(tr("Height"), densityCombo);
     styleForm->addRow(tr("Waveform design"), styleCombo);
+    wellCheck = new QCheckBox(tr("Waveform in a box, set into the panel"), style);
+    wellCheck->setChecked(true);
+    styleForm->addRow(QString(), wellCheck);
     QLabel *colourHelp = new QLabel(tr("The colours of the waveform (analogue audio, audio from EFM) are in the theme: View > Theme > Customize."), style);
     colourHelp->setWordWrap(true);
     styleForm->addRow(colourHelp);
@@ -195,6 +198,7 @@ AudioConfigDialog::AudioConfigDialog(QWidget *parent) : QDialog(parent)
     connect(waveformCheck, &QCheckBox::toggled, this, &AudioConfigDialog::waveformShownChanged);
     connect(muteButton, &QToolButton::toggled, this, &AudioConfigDialog::mutedChanged);
     connect(densityCombo, &QComboBox::currentIndexChanged, this, [this]() { emit densityChosen(densityCombo->currentData().toInt()); });
+    connect(wellCheck, &QCheckBox::toggled, this, &AudioConfigDialog::wellChanged);
     connect(styleCombo, &QComboBox::currentIndexChanged, this, [this]() { emit styleChosen(styleCombo->currentData().toInt()); });
     connect(sideCheck, &QCheckBox::toggled, this, &AudioConfigDialog::sidePanelChanged);
     const auto mixed = [this]() { emit mixChanged(!leftButton->isChecked(), !rightButton->isChecked(), volumeSlider->value()); };
@@ -376,3 +380,9 @@ void AudioConfigDialog::setStatistics(const QString &text)
 }
 
 qint32 AudioConfigDialog::currentDecoder() const { return decoderCombo->currentData().toInt(); }
+
+void AudioConfigDialog::setWell(bool on)
+{
+    const QSignalBlocker blocker(wellCheck);
+    wellCheck->setChecked(on);
+}

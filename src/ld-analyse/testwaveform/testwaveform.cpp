@@ -114,7 +114,7 @@ int main(int argc, char *argv[])
     CHECK(!image.isNull());
     const QWidget *view = panel.findChild<WaveformView *>();
     CHECK(view);
-    const QRect area = view->geometry();
+    const QRect area(view->mapTo(&panel, QPoint(0, 0)), view->size());
     qint32 redLeft = 0, redRight = 0;
     for (qint32 y = area.top(); y < area.bottom(); y++) {
         for (qint32 x = area.left(); x < area.right(); x++) {
