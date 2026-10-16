@@ -54,6 +54,7 @@ public:
     bool efmWithoutTimecodes() const;
     bool efmConceal() const;
     bool efmPad() const;
+    qint32 currentDecoder() const;
     // The numbers of the sound and of the decoders, as text (kept up to date by the window while this is shown)
     void setStatistics(const QString &text);
 
@@ -73,6 +74,7 @@ signals:
     void saveRequested(const QVector<qint16> &samples, double sampleRate, const QString &name);
     void decodeRequested(qint32 decoder, bool noTimecodes, bool conceal, bool pad);
     void decodeStopRequested(qint32 decoder);
+    void decoderChosen(qint32 decoder);        // (the choice of the decoder, which is a setting of its own)
 
 private:
     void browse();

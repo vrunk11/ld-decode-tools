@@ -90,7 +90,7 @@ signals:
     void trackSelected(qint32 index);
     void mixChanged(bool left, bool right, qint32 volume);
     void mutedChanged(bool muted);
-    void efmDecodeRequested(qint32 decoder);
+    void efmDecodeRequested();
     void seekRequested(double videoSeconds);
 
 private:

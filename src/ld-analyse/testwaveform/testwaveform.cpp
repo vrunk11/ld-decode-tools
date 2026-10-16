@@ -335,8 +335,8 @@ int main(int argc, char *argv[])
         asking.setEfmPossible([]() { return true; });
         asking.setTracks(engine.tracks(), 0);
         QComboBox *sources = asking.findChildren<QComboBox *>().first();
-        const qint32 efmIndex = sources->findData("efm#1");
-        CHECK(efmIndex >= 0 && sources->itemText(efmIndex).contains("decode") && sources->findData("efm#0") >= 0);
+        const qint32 efmIndex = sources->findData("efm");
+        CHECK(efmIndex >= 0 && sources->itemText(efmIndex).contains("decode"));
         const qint32 before = sources->currentIndex();
         sources->setCurrentIndex(efmIndex);
         CHECK(asked && sources->currentIndex() == before);

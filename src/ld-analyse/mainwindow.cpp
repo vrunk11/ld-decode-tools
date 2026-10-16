@@ -2957,10 +2957,11 @@ void MainWindow::setupAudio()
     audioStatsTimer->start();
     waveform = new WaveformPanel(audio, this);
     waveform->setEfmPossible([this]() { return !efmSourceName().isEmpty(); });
-    connect(waveform, &WaveformPanel::efmDecodeRequested, this, [this](qint32 decoder) {
+    connect(waveform, &WaveformPanel::efmDecodeRequested, this, [this]() {
         if (efmSourceName().isEmpty()) return;
-        if (audioConfig) startEfmDecoding(decoder, audioConfig->efmWithoutTimecodes(), audioConfig->efmConceal(), audioConfig->efmPad());
-        else startEfmDecoding(decoder, true, true, false);
+        // (the decoder is a choice of its own, made in the Audio panel and kept: the source menu only asks for the EFM)
+        if (audioConfig) startEfmDecoding(audioConfig->currentDecoder(), audioConfig->efmWithoutTimecodes(), audioConfig->efmConceal(), audioConfig->efmPad());
+        else startEfmDecoding(configuration.audioValue("decoder", 1).toInt(), true, true, false);
     });
     showWaveform(false);
     ui->verticalLayout->insertWidget(ui->verticalLayout->indexOf(ui->mediaControl_frame), waveform);
@@ -3109,6 +3110,8 @@ void MainWindow::showAudioConfig()
         audioConfig->setDevice(configuration.audioValue("device", QByteArray()).toByteArray());
         audio->setOutputDevice(configuration.audioValue("device", QByteArray()).toByteArray());
         audioConfig->setSidePanel(configuration.audioValue("sidePanel", true).toBool());
+        audioConfig->setActiveDecoder(configuration.audioValue("decoder", 1).toInt());
+        connect(audioConfig, &AudioConfigDialog::decoderChosen, this, [this](qint32 decoder) { configuration.setAudioValue("decoder", decoder); });
         audioConfig->setMix(waveform->leftOn(), waveform->rightOn(), waveform->volume());
         connect(audioConfig, &AudioConfigDialog::deviceChosen, this, [this](const QByteArray &id) {
             audio->setOutputDevice(id);
@@ -3247,7 +3250,6 @@ void MainWindow::startEfmDecoding(qint32 decoder, bool noTimecodes, bool conceal
         efmDecoders[other] = nullptr;
         if (audioConfig) audioConfig->setDecodeStatus(other, tr("Stopped"), false);
     }
-    if (audioConfig) audioConfig->setActiveDecoder(decoder);
     audioStop();
     audio->removeDecoded(decoder);
     delete efmDecoders[decoder];
