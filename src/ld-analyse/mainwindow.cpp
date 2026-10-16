@@ -828,7 +828,7 @@ void MainWindow::togglePlayback()
     // rather than the button waiting for it
     firstImageShown = false;
 #ifdef LDDECODE_HAVE_AUDIO
-    if (!isLive) audioStart(playbackStartPosition);
+    audioStart(playbackStartPosition);
 #endif
     playback->play(playbackStartPosition);
 }
@@ -3366,7 +3366,8 @@ bool MainWindow::audioStart(qint32 position)
 {
     if (!audio->hasAudio() || audio->currentTrack() < 0 || playback->getSpeed() != 1.0) return false;
     if (!audio->start(positionSeconds(position))) return false;
-    playback->setExternalClock([this]() { return audio->playedSeconds(); });
+    // (a live input keeps its own clock: the sound is behind the picture at the edge of what has come, and must not hold it back)
+    if (!tbcSource.getIsLive()) playback->setExternalClock([this]() { return audio->playedSeconds(); });
     return true;
 }
 
