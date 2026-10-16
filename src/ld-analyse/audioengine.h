@@ -47,6 +47,12 @@ public:
     // Audio brought in by the person (stereo, interleaved), kept in memory, as one more choice of tracks(): the index of it
     qint32 setImported(const QVector<qint16> &samples, double sampleRate, const QString &label);
     void clearImported();
+    // Audio being decoded from EFM by a program, in a raw file that grows (slot 0 or 1: the two decoders): one more choice of tracks(),
+    // the index of it. extend() is called when the file has grown: the waveform is made as the audio comes.
+    qint32 addDecoded(qint32 slot, const QString &cacheFile, const QString &label);
+    void removeDecoded(qint32 slot);
+    void extend();
+    bool isDecoded(qint32 index) const { return index >= 0 && index < available.size() && available[index].trackId <= -2; }
     // The sound device to play on (the id of a QAudioDevice; empty: the default one)
     void setOutputDevice(const QByteArray &id) { deviceId = id; }
 

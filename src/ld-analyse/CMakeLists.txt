@@ -52,7 +52,7 @@ target_link_libraries(ld-analyse PRIVATE
 )
 
 if(LDDECODE_AUDIO_AVAILABLE)
-    target_sources(ld-analyse PRIVATE audioengine.cpp waveformpanel.cpp audioconfigdialog.cpp)
+    target_sources(ld-analyse PRIVATE audioengine.cpp waveformpanel.cpp audioconfigdialog.cpp efmdecoding.cpp)
     target_link_libraries(ld-analyse PRIVATE Qt6::Multimedia)
     target_compile_definitions(ld-analyse PRIVATE LDDECODE_HAVE_AUDIO)
 endif()

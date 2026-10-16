@@ -12,6 +12,8 @@
 
 #include <QFile>
 #include <QFileInfo>
+#include <QMutex>
+#include <QMutexLocker>
 #include <QObject>
 
 #include <cstring>
@@ -28,6 +30,8 @@ struct AudioReader::Private {
     QVector<qint16> memory;
     qint64 total = 0;
     double rate = 44100;
+    QMutex lock;            // (the audio is read by the player and by the thread that makes the waveform)
+    bool growing = false;
 };
 
 AudioReader::AudioReader() : d(new Private) {}
@@ -79,6 +83,7 @@ QVector<AudioTrackInfo> AudioReader::tracksOf(const QString &videoName)
 
 bool AudioReader::open(const AudioTrackInfo &track, QString &error)
 {
+    d->growing = false;
     d->kind = Private::Kind::None;
     d->total = 0;
     if (LdxCapture::isLdxName(track.where)) {
@@ -109,8 +114,30 @@ bool AudioReader::open(const AudioTrackInfo &track, QString &error)
     return true;
 }
 
+bool AudioReader::openGrowing(const QString &fileName, double sampleRate, QString &error)
+{
+    QMutexLocker locker(&d->lock);
+    d->pcm.setFileName(fileName);
+    if (!d->pcm.open(QIODevice::ReadOnly)) {
+        error = QObject::tr("Could not open %1").arg(fileName);
+        return false;
+    }
+    d->kind = Private::Kind::Pcm;
+    d->growing = true;
+    d->total = d->pcm.size() / 4;
+    d->rate = sampleRate;
+    return true;
+}
+
+void AudioReader::refresh()
+{
+    QMutexLocker locker(&d->lock);
+    if (d->growing) d->total = QFileInfo(d->pcm.fileName()).size() / 4;
+}
+
 void AudioReader::openMemory(const QVector<qint16> &samples, double sampleRate)
 {
+    d->growing = false;
     d->memory = samples;
     d->kind = Private::Kind::Memory;
     d->total = samples.size() / 2;
@@ -122,6 +149,7 @@ double AudioReader::sampleRate() const { return d->rate; }
 
 QVector<qint16> AudioReader::read(qint64 start, qint64 count)
 {
+    QMutexLocker locker(&d->lock);
     QVector<qint16> out;
     if (start < 0 || count < 1 || start >= d->total) return out;
     count = qMin(count, d->total - start);

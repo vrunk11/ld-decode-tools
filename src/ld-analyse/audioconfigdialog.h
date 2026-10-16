@@ -42,6 +42,10 @@ public:
     // The length of the video (the imported audio is cut to it) and the LDX file the audio can be saved in (empty if none)
     void setVideo(double videoSeconds, const QString &ldxFile);
     void setImportedName(const QString &name);
+    // The EFM that can be decoded (a file name for a person; empty if the capture has none), and what each decoder (0: the suite of
+    // efm-decoder programs, 1: ld-process-efm) is doing
+    void setEfmSource(const QString &description);
+    void setDecodeStatus(qint32 decoder, const QString &text, bool running);
 
 signals:
     void deviceChosen(const QByteArray &id);
@@ -54,6 +58,8 @@ signals:
     void importRemoved();
     // To save the imported audio in the LDX file as a track (the 16-bit stereo samples)
     void saveRequested(const QVector<qint16> &samples, double sampleRate, const QString &name);
+    void decodeRequested(qint32 decoder, bool noTimecodes, bool conceal, bool pad);
+    void decodeStopRequested(qint32 decoder);
 
 private:
     void browse();
@@ -71,6 +77,13 @@ private:
     QSpinBox *offsetSpin;
     QPushButton *useButton, *saveButton, *removeButton;
     QLabel *status;
+
+    QLabel *efmSource;
+    bool hasEfm = false;
+    QCheckBox *noTimecodesCheck, *concealCheck, *padCheck;
+    QPushButton *decodeButtons[2];
+    QPushButton *stopButtons[2];
+    QLabel *decodeStatus[2];
 
     QColor colour;
     double videoLength = 0.0;

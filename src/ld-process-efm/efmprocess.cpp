@@ -27,6 +27,12 @@
 #include "ldxcapture.h"
 
 #include <vector>
+#include <cstdio>
+#ifdef Q_OS_WIN
+#include <io.h>
+#else
+#include <unistd.h>
+#endif
 
 EfmProcess::EfmProcess()
 {
@@ -110,7 +116,21 @@ bool EfmProcess::process(QString inputFilename, QString outputFilename)
     // Start of file handling
     QFile inputFile;
     LdxByteTrack inputLdx;
-    QIODevice &inputFileHandle = LdxCapture::isLdxName(inputFilename) ? static_cast<QIODevice &>(inputLdx) : static_cast<QIODevice &>(inputFile);
+    // The standard input ("-"): raw t-values, or an LDX stream that holds them (it begins as every Matroska file does)
+    const bool stdinInput = (inputFilename == "-");
+    QByteArray prefix;                  // (what was read of the standard input to see what it is: still to give to the decoder)
+    bool stdinIsLdx = false;
+    if (stdinInput) {
+        char head[4];
+#ifdef Q_OS_WIN
+        const int got = _read(_fileno(stdin), head, 4);
+#else
+        const int got = static_cast<int>(::read(fileno(stdin), head, 4));
+#endif
+        prefix = QByteArray(head, got > 0 ? got : 0);
+        stdinIsLdx = LdxByteTrack::isLdxMagic(prefix);
+    }
+    QIODevice &inputFileHandle = (LdxCapture::isLdxName(inputFilename) || stdinIsLdx) ? static_cast<QIODevice &>(inputLdx) : static_cast<QIODevice &>(inputFile);
     QFile outputFileHandle;
 
     // Ensure input file is valid
@@ -118,7 +138,7 @@ bool EfmProcess::process(QString inputFilename, QString outputFilename)
         qDebug() << "EfmDecoder::process(): Input EFM filename is empty!";
         return false;
     }
-    if (inputFilename == outputFilename) {
+    if (inputFilename == outputFilename && !stdinInput) {
         qDebug() << "EfmDecoder::process(): Input and output files cannot be the same!";
         return false;
     }
@@ -126,7 +146,14 @@ bool EfmProcess::process(QString inputFilename, QString outputFilename)
     // Open the input EFM data file
     // The EFM of an LDX file (capture.ldx, or capture.ldx#4 for the track 4) is read in place of an .efm file
     bool opened = false;
-    if (LdxCapture::isLdxName(inputFilename)) {
+    if (stdinIsLdx) {
+        QString ldxError;
+        opened = inputLdx.openStdin(prefix, LdxByteTrack::Kind::Efm, ldxError);
+        if (!opened) qCritical().noquote() << ldxError;
+        prefix.clear();
+    } else if (stdinInput) {
+        opened = inputFile.open(stdin, QIODevice::ReadOnly);
+    } else if (LdxCapture::isLdxName(inputFilename)) {
         QString ldxError;
         opened = inputLdx.openFile(inputFilename, LdxByteTrack::Kind::Efm, ldxError);
         if (!opened) qCritical().noquote() << ldxError;
@@ -141,9 +168,11 @@ bool EfmProcess::process(QString inputFilename, QString outputFilename)
     } else qDebug() << "EfmDecoder::process(): Opened EFM input file:" << inputFilename;
 
     // Open output file
+    // ("-" is the standard output: the audio comes out as it is decoded)
+    const bool stdoutOutput = (outputFilename == "-");
     outputFileHandle.setFileName(outputFilename);
-    if (outputFileHandle.exists()) outputFileHandle.remove();
-    if (!outputFileHandle.open(QIODevice::WriteOnly)) {
+    if (!stdoutOutput && outputFileHandle.exists()) outputFileHandle.remove();
+    if (stdoutOutput ? !outputFileHandle.open(stdout, QIODevice::WriteOnly) : !outputFileHandle.open(QIODevice::WriteOnly)) {
         // Failed to open file
         qFatal("EfmDecoder::process(): Could not open output file - this is fatal!");
         return false;
@@ -161,13 +190,28 @@ bool EfmProcess::process(QString inputFilename, QString outputFilename)
     // Set input EFM data buffer size in 256K blocks
     qint32 bufferSize = 1024 * 256;
 
-    while(inputFileHandle.bytesAvailable() > 0) {
+    // A file is read while it has bytes; a pipe until it ends (what is there is taken, not a full buffer waited for)
+    const bool pipeInput = stdinInput;
+    while (pipeInput || inputFileHandle.bytesAvailable() > 0) {
         // Get a buffer of EFM data
         QByteArray inputEfmBuffer;
-        inputEfmBuffer.resize(bufferSize);
-
-        qint64 bytesRead = inputFileHandle.read(inputEfmBuffer.data(), inputEfmBuffer.size());
-        if (bytesRead != bufferSize) inputEfmBuffer.resize(static_cast<qint32>(bytesRead));
+        if (pipeInput && !stdinIsLdx) {
+            inputEfmBuffer = prefix;
+            prefix.clear();
+            char chunk[65536];
+#ifdef Q_OS_WIN
+            const int got = _read(_fileno(stdin), chunk, sizeof(chunk));
+#else
+            const int got = static_cast<int>(::read(fileno(stdin), chunk, sizeof(chunk)));
+#endif
+            if (got > 0) inputEfmBuffer.append(chunk, got);
+            if (inputEfmBuffer.isEmpty()) break;
+        } else {
+            inputEfmBuffer.resize(bufferSize);
+            qint64 bytesRead = inputFileHandle.read(inputEfmBuffer.data(), inputEfmBuffer.size());
+            if (bytesRead <= 0) break;
+            if (bytesRead != bufferSize) inputEfmBuffer.resize(static_cast<qint32>(bytesRead));
+        }
 
         // Perform EFM processing
         const std::vector<F3Frame> &initialF3Frames = efmToF3Frames.process(inputEfmBuffer, debug_efmToF3Frames, audioIsDts);
@@ -182,8 +226,9 @@ bool EfmProcess::process(QString inputFilename, QString outputFilename)
             outputFileHandle.write(f1ToData.process(f1Frames, debug_f1ToData));
         }
 
+        if (stdoutOutput) outputFileHandle.flush();
         // Report progress to user
-        double percent = 100 - (100.0 / static_cast<double>(initialInputFileSize)) * static_cast<double>(inputFileHandle.bytesAvailable());
+        double percent = (pipeInput || initialInputFileSize <= 0) ? 0.0 : 100 - (100.0 / static_cast<double>(initialInputFileSize)) * static_cast<double>(inputFileHandle.bytesAvailable());
         if (static_cast<qint32>(percent) > lastPercent) {
             qInfo().nospace() << "Processed " << static_cast<qint32>(percent) << "%";
         }

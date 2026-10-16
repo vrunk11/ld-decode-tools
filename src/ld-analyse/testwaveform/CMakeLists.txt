@@ -3,6 +3,7 @@ add_executable(testwaveform
     ../audioengine.cpp
     ../waveformpanel.cpp
     ../audioconfigdialog.cpp
+    ../efmdecoding.cpp
 )
 
 target_link_libraries(testwaveform PRIVATE Qt::Core Qt::Gui Qt::Widgets Qt6::Multimedia lddecode-library)
