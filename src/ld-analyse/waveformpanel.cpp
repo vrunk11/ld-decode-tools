@@ -69,7 +69,13 @@ void WaveformView::paintEvent(QPaintEvent *)
     const qint32 middle = h / 2;
     painter.setPen(palette().color(QPalette::Mid));
     painter.drawLine(0, middle, w, middle);
-    if (total < 1) return;
+    if (total < 1) {
+        if (!message.isEmpty()) {
+            painter.setPen(palette().color(QPalette::PlaceholderText));
+            painter.drawText(rect().adjusted(8, 0, -8, 0), Qt::AlignVCenter | Qt::AlignLeft | Qt::TextWordWrap, message);
+        }
+        return;
+    }
 
     // One column for a run of the audio: the highest and lowest value of each channel over it, the left channel above the
     // middle and the right below, so that each has a half of the height

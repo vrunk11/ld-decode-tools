@@ -9,6 +9,9 @@
  ******************************************************************************/
 
 #include <QApplication>
+#include <QLineEdit>
+#include <QProcess>
+#include <QPushButton>
 #include <QElapsedTimer>
 #include <QFile>
 #include <QImage>
@@ -19,6 +22,7 @@
 #include <cstdlib>
 
 #include "audioengine.h"
+#include "audioconfigdialog.h"
 #include "waveformpanel.h"
 
 #define CHECK(condition) \
@@ -121,6 +125,35 @@ int main(int argc, char *argv[])
     QApplication::sendEvent(const_cast<QWidget *>(view), &press);
     CHECK(std::fabs(asked - 0.5) < 0.02);
 
+
+    // Imported audio: ffmpeg reads a file, the dialog gives the samples cut to the length of the video, the engine plays them as a track
+    QProcess probe;
+    probe.start("ffmpeg", { "-version" });
+    if (probe.waitForFinished(5000) && probe.exitCode() == 0) {
+        const QString tone = directory.filePath("tone.wav");
+        QProcess make;
+        make.start("ffmpeg", { "-v", "error", "-f", "lavfi", "-i", "sine=frequency=440:duration=2", "-ar", "22050", "-ac", "1", tone });
+        CHECK(make.waitForFinished(20000) && make.exitCode() == 0);
+        AudioConfigDialog dialog;
+        dialog.setVideo(1.0, QString());
+        QVector<qint16> got;
+        double gotRate = 0;
+        QObject::connect(&dialog, &AudioConfigDialog::imported, [&](const QVector<qint16> &samples, double rate, const QString &) { got = samples; gotRate = rate; });
+        dialog.findChild<QLineEdit *>()->setText(tone);
+        for (QPushButton *button: dialog.findChildren<QPushButton *>()) {
+            if (button->text() == "Use") button->click();
+        }
+        QElapsedTimer wait;
+        wait.start();
+        while (got.isEmpty() && wait.elapsed() < 20000) waitMs(20);
+        CHECK(gotRate == 44100.0);
+        CHECK(got.size() == 2 * 44100);                 // (one second, cut to the video, in stereo)
+        const qint32 index = engine.setImported(got, gotRate, "tone");
+        CHECK(engine.selectTrack(index));
+        CHECK(engine.samples() == 44100 && engine.tracks()[index].source == "import");
+        engine.clearImported();
+        CHECK(engine.currentTrack() < 0);
+    }
     // The channels and the volume
     bool left = true, right = true;
     qint32 volume = 0;

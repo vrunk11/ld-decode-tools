@@ -97,6 +97,7 @@ QVector<AudioTrackInfo> AudioEngine::setVideo(const QString &videoName)
     chosen = -1;
     audioPeaks.clear();
     peaksFinished = false;
+    importedSamples.clear();
     available = AudioReader::tracksOf(videoName);
     return available;
 }
@@ -111,7 +112,10 @@ bool AudioEngine::selectTrack(qint32 index)
 
     std::unique_ptr<AudioReader> opened(new AudioReader);
     QString error;
-    if (!opened->open(available[index], error)) {
+    bool ok = true;
+    if (available[index].source == "import" && available[index].trackId < 0) opened->openMemory(importedSamples, importedRate);
+    else ok = opened->open(available[index], error);
+    if (!ok) {
         reader.reset();
         chosen = -1;
         emit problem(error);
@@ -174,7 +178,12 @@ bool AudioEngine::start(double videoSeconds)
     stop();
     if (!reader || chosen < 0) return false;
 
-    const QAudioDevice device = QMediaDevices::defaultAudioOutput();
+    QAudioDevice device = QMediaDevices::defaultAudioOutput();
+    if (!deviceId.isEmpty()) {
+        for (const QAudioDevice &candidate: QMediaDevices::audioOutputs()) {
+            if (candidate.id() == deviceId) device = candidate;
+        }
+    }
     if (device.isNull()) {
         emit problem(tr("There is no sound card to play the audio on"));
         return false;
@@ -220,4 +229,36 @@ double AudioEngine::playedSeconds() const
 double AudioEngine::videoSecondsNow() const
 {
     return startedAt + playedSeconds();
+}
+
+qint32 AudioEngine::setImported(const QVector<qint16> &samples, double sampleRate, const QString &label)
+{
+    importedSamples = samples;
+    importedRate = sampleRate;
+    for (qint32 i = 0; i < available.size(); i++) {
+        if (available[i].source == "import" && available[i].trackId < 0) available.remove(i--);
+    }
+    AudioTrackInfo info;
+    info.label = label;
+    info.source = "import";
+    info.trackId = -1;
+    info.sampleRate = sampleRate;
+    available.append(info);
+    return static_cast<qint32>(available.size()) - 1;
+}
+
+void AudioEngine::clearImported()
+{
+    importedSamples.clear();
+    const bool wasChosen = chosen >= 0 && available[chosen].source == "import" && available[chosen].trackId < 0;
+    for (qint32 i = 0; i < available.size(); i++) {
+        if (available[i].source == "import" && available[i].trackId < 0) available.remove(i--);
+    }
+    if (wasChosen) {
+        stop();
+        stopPeaks();
+        reader.reset();
+        chosen = -1;
+        audioPeaks.clear();
+    }
 }

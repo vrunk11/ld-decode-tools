@@ -34,7 +34,7 @@ Step 1 (commit 663a742, plus d97acd2 for the pipe detection):
 ## To do, in order
 
 1. DONE (points 1 to 3: thinner panel, source combo always shown with missing sources disabled, index of files from other writers: dedup by position and a last cue that cannot be read is dropped; `verify D:decodde	est.ldx` is sound). Still to do here: show the reason in the panel when a track cannot be opened.
-2. `Audio config` window: Output and Import tabs (ffmpeg decode to memory/cache, offset, save as a track).
+2. DONE (needs a test by hand in the GUI): `Audio config` window (Output and Import tabs, ffmpeg through QProcess, offset, Use / Save in the file as a track via `addTrackFromFile`, source "import"); the panel shows the reason when a track cannot be opened. To check by hand: saving into an LDX file that ld-analyse has open (Windows may refuse the replace).
 3. `ld-process-efm -` (stdin/stdout), the EFM feed of `LdxStream`, the `EfmDecoderBackend` interface with the two implementations, the EFM tab (progressive decode, cache, progress, options), A/B switch and the difference strip.
 4. Live input: waveform accumulated as the audio arrives, audio of a stream (the pcm track of the LDX stream).
 5. Sync: use the `audioSamples` of the metadata for the analogue audio of a capture (exact) instead of time times rate.

@@ -44,6 +44,12 @@ public:
 
     // The channels that are played and the volume (0 to 1)
     void setMix(bool left, bool right, double volume);
+    // Audio brought in by the person (stereo, interleaved), kept in memory, as one more choice of tracks(): the index of it
+    qint32 setImported(const QVector<qint16> &samples, double sampleRate, const QString &label);
+    void clearImported();
+    // The sound device to play on (the id of a QAudioDevice; empty: the default one)
+    void setOutputDevice(const QByteArray &id) { deviceId = id; }
+
     // The audio is this many milliseconds later than the video (negative: earlier)
     void setOffsetMs(qint32 milliseconds);
 
@@ -89,6 +95,9 @@ private:
     bool mixLeft = true, mixRight = true;
     double mixVolume = 1.0;
     qint32 offsetMs = 0;
+    QByteArray deviceId;
+    QVector<qint16> importedSamples;
+    double importedRate = 44100.0;
 };
 
 #endif // AUDIOENGINE_H

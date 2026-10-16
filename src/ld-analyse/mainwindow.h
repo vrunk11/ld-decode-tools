@@ -48,6 +48,7 @@
 #ifdef LDDECODE_HAVE_AUDIO
 #include "audioengine.h"
 #include "waveformpanel.h"
+#include "audioconfigdialog.h"
 #endif
 #include "videofilter.h"
 #include "videofilterdialog.h"
@@ -246,6 +247,10 @@ private:
     WaveformPanel *waveform = nullptr;
     QAction *actionWaveform = nullptr;
     bool waveformWanted = true;
+    AudioConfigDialog *audioConfig = nullptr;
+    QAction *actionAudioConfig = nullptr;
+    void showAudioConfig();
+    void saveImportedAudio(const QVector<qint16> &samples, double sampleRate, const QString &name);
     void setupAudio();
     void loadAudio();
     void unloadAudio();
