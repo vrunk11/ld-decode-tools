@@ -18,6 +18,8 @@
 #include "audioreader.h"
 
 class AudioEngine;
+class QBoxLayout;
+class QHBoxLayout;
 class QComboBox;
 class QSlider;
 class QToolButton;
@@ -34,7 +36,6 @@ public:
     enum class Style { Filled = 0, Outline = 1, Bars = 2 };
     void setStyle(Style newStyle) { style = newStyle; update(); }
     void setMessage(const QString &text) { message = text; update(); }
-    QSize minimumSizeHint() const override { return QSize(120, 60); }
 
 signals:
     void seekRequested(double videoSeconds);
@@ -66,6 +67,10 @@ public:
     void setPlayheadSeconds(double videoSeconds) { view->setPlayheadSeconds(videoSeconds); }
     void setColor(const QColor &colour) { view->setColor(colour); }
     void setStyle(WaveformView::Style style) { view->setStyle(style); }
+    // How much height the panel takes: Large, Compact (the default, a little more than the buttons of the playback bar) and Ultra
+    // (one line of buttons: the controls beside the waveform in a single row)
+    enum class Density { Large = 0, Compact = 1, Ultra = 2 };
+    void setDensity(Density density);
     bool muted() const;
     void setMuted(bool muted);
     void setMessage(const QString &text) { view->setMessage(text); }
@@ -95,6 +100,8 @@ private:
     QToolButton *leftButton;
     QToolButton *rightButton;
     QToolButton *muteButton;
+    QBoxLayout *column = nullptr;
+    QHBoxLayout *mixRow = nullptr;
     QSlider *volumeSlider;
     QVector<AudioTrackInfo> allTracks;
     bool filling = false;

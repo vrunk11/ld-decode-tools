@@ -38,6 +38,7 @@ public:
     void setMuted(bool muted);
     void setWaveformShown(bool shown);
     void setStyle(qint32 style);
+    void setDensity(qint32 density);
     void setSidePanel(bool shown);
     void setMix(bool left, bool right, qint32 volume);
     void setOffsetMs(qint32 milliseconds);
@@ -54,6 +55,7 @@ signals:
     void mutedChanged(bool muted);
     void waveformShownChanged(bool shown);
     void styleChosen(qint32 style);
+    void densityChosen(qint32 density);
     void sidePanelChanged(bool shown);
     void mixChanged(bool left, bool right, qint32 volume);
     void offsetChanged(qint32 milliseconds);
@@ -74,6 +76,7 @@ private:
     QToolButton *muteButton;
     QCheckBox *waveformCheck;
     QComboBox *styleCombo;
+    QComboBox *densityCombo;
     QCheckBox *sideCheck;
     QToolButton *leftButton, *rightButton;
     QSlider *volumeSlider;

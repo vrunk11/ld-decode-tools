@@ -84,6 +84,11 @@ AudioConfigDialog::AudioConfigDialog(QWidget *parent) : QDialog(parent)
     styleCombo->addItem(tr("Filled"), 0);
     styleCombo->addItem(tr("Outline"), 1);
     styleCombo->addItem(tr("Bars"), 2);
+    densityCombo = new QComboBox(style);
+    densityCombo->addItem(tr("Compact"), 1);
+    densityCombo->addItem(tr("Large"), 0);
+    densityCombo->addItem(tr("Ultra compact (one line of buttons)"), 2);
+    styleForm->addRow(tr("Height"), densityCombo);
     styleForm->addRow(tr("Waveform design"), styleCombo);
     QLabel *colourHelp = new QLabel(tr("The colours of the waveform (analogue audio, audio from EFM) are in the theme: View > Theme > Customize."), style);
     colourHelp->setWordWrap(true);
@@ -174,6 +179,7 @@ AudioConfigDialog::AudioConfigDialog(QWidget *parent) : QDialog(parent)
     connect(deviceCombo, &QComboBox::currentIndexChanged, this, [this]() { emit deviceChosen(deviceCombo->currentData().toByteArray()); });
     connect(waveformCheck, &QCheckBox::toggled, this, &AudioConfigDialog::waveformShownChanged);
     connect(muteButton, &QToolButton::toggled, this, &AudioConfigDialog::mutedChanged);
+    connect(densityCombo, &QComboBox::currentIndexChanged, this, [this]() { emit densityChosen(densityCombo->currentData().toInt()); });
     connect(styleCombo, &QComboBox::currentIndexChanged, this, [this]() { emit styleChosen(styleCombo->currentData().toInt()); });
     connect(sideCheck, &QCheckBox::toggled, this, &AudioConfigDialog::sidePanelChanged);
     const auto mixed = [this]() { emit mixChanged(leftButton->isChecked(), rightButton->isChecked(), volumeSlider->value()); };
@@ -314,4 +320,10 @@ void AudioConfigDialog::setDecodeStatus(qint32 decoder, const QString &text, boo
     decodeStatus[decoder]->setText(text);
     stopButtons[decoder]->setEnabled(running);
     decodeButtons[decoder]->setEnabled(!running && hasEfm);
+}
+
+void AudioConfigDialog::setDensity(qint32 density)
+{
+    const QSignalBlocker blocker(densityCombo);
+    densityCombo->setCurrentIndex(qMax(0, densityCombo->findData(density)));
 }

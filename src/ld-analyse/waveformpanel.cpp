@@ -24,7 +24,6 @@
 
 WaveformView::WaveformView(AudioEngine *engine, QWidget *parent) : QWidget(parent), engine(engine), colour()
 {
-    setMinimumHeight(48);
     setMouseTracking(false);
     setToolTip(tr("Click to go to a place in the audio"));
 }
@@ -63,13 +62,18 @@ void WaveformView::mouseMoveEvent(QMouseEvent *event)
 void WaveformView::paintEvent(QPaintEvent *)
 {
     QPainter painter(this);
-    painter.fillRect(rect(), palette().color(QPalette::Base));
+    painter.setRenderHint(QPainter::Antialiasing, true);
 
     const qint32 w = width(), h = height();
     const qint64 total = engine->samples();
     const qint32 middle = h / 2;
-    painter.setPen(palette().color(QPalette::Mid));
+    // (no background of its own: the application's, with a faint grid as the SNR graphs have, that shows on any theme)
+    QColor grid = palette().color(QPalette::Text);
+    grid.setAlpha(70);
+    painter.setPen(QPen(grid, 1));
     painter.drawLine(0, middle, w, middle);
+    painter.drawLine(0, h / 4, w, h / 4);
+    painter.drawLine(0, 3 * h / 4, w, 3 * h / 4);
     if (total < 1) {
         if (!message.isEmpty()) {
             painter.setPen(palette().color(QPalette::PlaceholderText));
@@ -123,6 +127,7 @@ void WaveformView::paintEvent(QPaintEvent *)
     const qint64 sample = engine->sampleAt(playhead);
     if (sample >= 0 && sample <= total) {
         const qint32 x = static_cast<qint32>(static_cast<double>(sample) * w / static_cast<double>(total));
+        painter.setRenderHint(QPainter::Antialiasing, false);
         painter.setPen(QPen(palette().color(QPalette::Highlight), 2));
         painter.drawLine(x, 0, x, h);
     }
@@ -137,11 +142,10 @@ WaveformPanel::WaveformPanel(AudioEngine *engine, QWidget *parent) : QFrame(pare
     QHBoxLayout *layout = new QHBoxLayout(this);
     layout->setContentsMargins(4, 4, 4, 4);
     layout->setSpacing(6);
-    setMaximumHeight(80);
 
     controls = new QWidget(this);
     controls->setFixedWidth(170);
-    QVBoxLayout *column = new QVBoxLayout(controls);
+    column = new QVBoxLayout(controls);
     column->setContentsMargins(0, 0, 0, 0);
     column->setSpacing(3);
 
@@ -153,24 +157,24 @@ WaveformPanel::WaveformPanel(AudioEngine *engine, QWidget *parent) : QFrame(pare
     column->addWidget(trackCombo);
 
     // The channels and the volume on one line
-    QHBoxLayout *mixRow = new QHBoxLayout();
+    mixRow = new QHBoxLayout();
     mixRow->setSpacing(3);
     leftButton = new QToolButton(controls);
     leftButton->setText(tr("L"));
     leftButton->setCheckable(true);
     leftButton->setChecked(true);
-    leftButton->setAutoRaise(true);
+    
     leftButton->setToolTip(tr("Play the left channel"));
     rightButton = new QToolButton(controls);
     rightButton->setText(tr("R"));
     rightButton->setCheckable(true);
     rightButton->setChecked(true);
-    rightButton->setAutoRaise(true);
+    
     rightButton->setToolTip(tr("Play the right channel"));
     muteButton = new QToolButton(controls);
     muteButton->setText(tr("M"));
     muteButton->setCheckable(true);
-    muteButton->setAutoRaise(true);
+    
     muteButton->setToolTip(tr("Mute"));
     volumeSlider = new QSlider(Qt::Horizontal, controls);
     volumeSlider->setRange(0, 100);
@@ -197,6 +201,7 @@ WaveformPanel::WaveformPanel(AudioEngine *engine, QWidget *parent) : QFrame(pare
     connect(muteButton, &QToolButton::toggled, this, &WaveformPanel::mutedChanged);
     connect(volumeSlider, &QSlider::valueChanged, this, &WaveformPanel::emitMix);
     connect(view, &WaveformView::seekRequested, this, &WaveformPanel::seekRequested);
+    setDensity(Density::Compact);
 }
 
 void WaveformPanel::setTracks(const QVector<AudioTrackInfo> &tracks, qint32 chosen)
@@ -278,4 +283,21 @@ void WaveformPanel::setMuted(bool muted)
 {
     const QSignalBlocker blocker(muteButton);
     muteButton->setChecked(muted);
+}
+
+void WaveformPanel::setDensity(Density density)
+{
+    const bool ultra = density == Density::Ultra;
+    column->setDirection(ultra ? QBoxLayout::LeftToRight : QBoxLayout::TopToBottom);
+    controls->setFixedWidth(ultra ? 380 : 170);
+    sourceCombo->setMaximumWidth(ultra ? 130 : QWIDGETSIZE_MAX);
+    trackCombo->setMaximumWidth(ultra ? 110 : QWIDGETSIZE_MAX);
+    volumeSlider->setMinimumWidth(ultra ? 80 : 0);
+    const qint32 viewHeight = density == Density::Large ? 72 : (density == Density::Compact ? 40 : 20);
+    view->setMinimumHeight(viewHeight);
+    const qint32 margin = ultra ? 2 : 4;
+    layout()->setContentsMargins(margin, margin, margin, margin);
+    // (the panel is as high as its controls need, or as the waveform asks, whichever is more, and not much more)
+    setMaximumHeight(density == Density::Large ? 110 : (density == Density::Compact ? 60 : 32));
+    updateGeometry();
 }

@@ -18,6 +18,7 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QPushButton>
+#include <QScrollArea>
 #include <QVBoxLayout>
 
 ThemeEditorDialog::ThemeEditorDialog(const QPalette &startPalette, QWidget *parent)
@@ -39,17 +40,24 @@ ThemeEditorDialog::ThemeEditorDialog(const QPalette &startPalette, QWidget *pare
     layout->addLayout(startLayout);
 
     // One colour swatch per editable colour
-    QFormLayout *form = new QFormLayout;
+    QWidget *formWidget = new QWidget(this);
+    QFormLayout *form = new QFormLayout(formWidget);
     const QVector<ThemeColourRole> &roles = themeColourRoles();
     for (int index = 0; index < roles.size(); index++) {
-        QPushButton *swatch = new QPushButton(this);
+        QPushButton *swatch = new QPushButton(formWidget);
         swatch->setMinimumWidth(120);
         swatch->setToolTip(tr("Click to choose the colour"));
         connect(swatch, &QPushButton::clicked, this, [this, index]() { pickColour(index); });
         swatches.append(swatch);
         form->addRow(tr(roles[index].label) + ":", swatch);
     }
-    layout->addLayout(form);
+    // (a list that scrolls: the screen may not be high enough for all the colours)
+    QScrollArea *scroll = new QScrollArea(this);
+    scroll->setWidget(formWidget);
+    scroll->setWidgetResizable(true);
+    scroll->setFrameShape(QFrame::NoFrame);
+    scroll->setMinimumHeight(qMin(formWidget->sizeHint().height() + 4, 460));
+    layout->addWidget(scroll, 1);
 
     QDialogButtonBox *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel
                                                      | QDialogButtonBox::Reset, this);
