@@ -3132,7 +3132,7 @@ QString MainWindow::efmSourceName()
         LdxCapture::split(name, path, track);
         LdxByteTrack probe;
         QString error;
-        return probe.openFile(path, LdxByteTrack::Kind::Efm, error) ? path : QString();
+        return probe.openFile(path, LdxByteTrack::Kind::Efm, error) && probe.size() > 0 ? path : QString();      // (a track with no EFM in it, as a producer may always write, is none)
     }
     const QFileInfo video(name);
     const QString efm = video.absolutePath() + "/" + video.completeBaseName() + ".efm";
