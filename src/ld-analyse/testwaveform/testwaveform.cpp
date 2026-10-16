@@ -11,6 +11,7 @@
 #include <QApplication>
 #include <QLineEdit>
 #include <QProcess>
+#include <QThread>
 #include <QPushButton>
 #include <QElapsedTimer>
 #include <QFile>
@@ -217,6 +218,73 @@ int main(int argc, char *argv[])
         }
     }
 
+
+    // How long the sound waits for audio while the waveform is being made (the player reads small pieces, the waveform big ones)
+    if (std::getenv("WAVEFORM_BENCH") && QFile::exists(realCapture)) {
+        const QVector<AudioTrackInfo> tracks = AudioReader::tracksOf(realCapture);
+        CHECK(!tracks.isEmpty());
+        for (qint32 separate = 0; separate < 2; separate++) {
+            AudioReader player, shape;
+            QString error;
+            CHECK(player.open(tracks[0], error));
+            CHECK(separate ? shape.open(tracks[0], error) : true);
+            AudioReader &peaksSource = separate ? shape : player;
+            AudioPeaks peaks(1024);
+            std::atomic_bool cancel{false};
+            QThread *thread = QThread::create([&]() { peaks.addAll(peaksSource, &cancel); });
+            thread->start();
+            QElapsedTimer total;
+            total.start();
+            qint64 worst = 0, position = 0;
+            for (qint32 i = 0; i < 1500; i++) {
+                QElapsedTimer one;
+                one.start();
+                player.read(position, 441);
+                position += 441;
+                worst = qMax(worst, one.nsecsElapsed());
+                QThread::usleep(10000);
+            }
+            cancel = true;
+            thread->wait();
+            delete thread;
+            std::fprintf(stderr, "bench: %s reader, worst read %.1f ms\n", separate ? "separate" : "shared", worst / 1.0e6);
+        }
+    }
+
+    // The sound card, if there is one: how the clock of the sound moves, and that it can be started and stopped again and again
+    if (std::getenv("WAVEFORM_BENCH") && QFile::exists(realCapture)) {
+        AudioEngine player;
+        const QVector<AudioTrackInfo> tracks = player.setVideo(realCapture);
+        CHECK(!tracks.isEmpty());
+        CHECK(player.selectTrack(0));
+        waitMs(500);
+        for (qint32 round = 0; round < 6; round++) {
+            const bool started = player.start(1.0 + round);
+            if (!started) {
+                std::fprintf(stderr, "bench: start %d failed (no sound card?)\n", round);
+                break;
+            }
+            QElapsedTimer run;
+            run.start();
+            double last = -1.0, biggestStep = 0.0, lastMoved = 0.0;
+            qint32 steps = 0;
+            qint64 stillMax = 0, lastChange = 0;
+            while (run.elapsed() < (round == 0 ? 3000 : 700)) {
+                const double now = player.playedSeconds();
+                if (now != last) {
+                    if (last >= 0) { biggestStep = qMax(biggestStep, now - last); steps++; }
+                    lastChange = run.elapsed();
+                    last = now;
+                    lastMoved = now;
+                }
+                stillMax = qMax(stillMax, run.elapsed() - lastChange);
+                waitMs(1);
+            }
+            std::fprintf(stderr, "bench: round %d, clock %.3f s after %lld ms, %d steps, biggest step %.1f ms, longest still %lld ms\n",
+                         round, lastMoved, static_cast<long long>(run.elapsed()), steps, biggestStep * 1000.0, static_cast<long long>(stillMax));
+            player.stop();
+        }
+    }
     // A live input: the EFM is given as it comes, a piece at a time, and the audio is the same as from the file
     if (QFile::exists(realCapture)) {
         LdxByteTrack source;

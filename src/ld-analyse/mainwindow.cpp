@@ -3436,7 +3436,7 @@ void MainWindow::audioStop()
 void MainWindow::updateAudioPlayhead()
 {
     if (!audio || !waveform || !waveform->isVisible()) return;
-    const qint32 position = tbcSource.getFieldViewEnabled() ? currentFieldNumber : currentFrameNumber;
+    const qint32 position = tbcSource.getFieldViewEnabled() || weaveActive ? currentFieldNumber : currentFrameNumber;
     waveform->setPlayheadSeconds(positionSeconds(position));
 }
 

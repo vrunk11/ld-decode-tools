@@ -144,12 +144,15 @@ void AudioReader::openMemory(const QVector<qint16> &samples, double sampleRate)
     d->rate = sampleRate;
 }
 
+bool AudioReader::isGrowing() const { return d->growing; }
+
 qint64 AudioReader::samples() const { return d->total; }
 double AudioReader::sampleRate() const { return d->rate; }
 
 QVector<qint16> AudioReader::read(qint64 start, qint64 count)
 {
     QMutexLocker locker(&d->lock);
+    if (d->growing && start + count > d->total) d->total = QFileInfo(d->pcm.fileName()).size() / 4;       // (it may have grown since)
     QVector<qint16> out;
     if (start < 0 || count < 1 || start >= d->total) return out;
     count = qMin(count, d->total - start);

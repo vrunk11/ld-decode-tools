@@ -13,6 +13,7 @@
 
 #include <QObject>
 #include <QVector>
+#include <QElapsedTimer>
 #include <atomic>
 #include <memory>
 
@@ -98,6 +99,7 @@ private:
     QVector<AudioTrackInfo> available;
     qint32 chosen = -1;
     std::unique_ptr<AudioReader> reader;
+    std::unique_ptr<AudioReader> peaksReader;      // (the thread of the waveform reads with this one)
     AudioPeaks audioPeaks;
     std::atomic_bool cancelPeaks{false};
     std::atomic_bool peaksFinished{false};
@@ -108,6 +110,9 @@ private:
     QObject *host = nullptr;            // (what runs in that thread)
     QTimer *clock = nullptr;            // (in that thread: reads how much the sink has played)
     std::atomic<qint64> processedUs{0};
+    std::atomic<qint64> stampNs{0};                // (when, on monotonic, processedUs was read)
+    mutable std::atomic<qint64> lastClockNs{0};    // (the clock never goes back)
+    QElapsedTimer monotonic;
     std::unique_ptr<AudioFeeder> feeder;
     bool playing = false;
     double startedAt = 0.0;        // the video second the sound started at

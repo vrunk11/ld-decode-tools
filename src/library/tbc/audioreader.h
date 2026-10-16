@@ -48,6 +48,7 @@ public:
     void refresh();
 
     qint64 samples() const;             // pairs of samples
+    bool isGrowing() const;
     double sampleRate() const;
     // count pairs from sample start (fewer if the audio ends), 2 * count values
     QVector<qint16> read(qint64 start, qint64 count);

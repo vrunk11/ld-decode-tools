@@ -54,15 +54,19 @@ protected:
         }
         qint16 *out = reinterpret_cast<qint16 *>(data);
         std::memset(data, 0, static_cast<size_t>(pairs) * 4);
+        qint64 advance = pairs;
         if (reader && position + pairs > 0) {
             // (a start before the audio begins gives silence up to its first sample)
             const qint64 skip = position < 0 ? -position : 0;
             const QVector<qint16> samples = reader->read(position + skip, pairs - skip);
             const qint64 got = samples.size() / 2;
             if (got > 0) mixStereo(samples.constData(), out + 2 * skip, got, current);
+            // Audio that is still coming (a live input, audio being decoded): when it has not come yet, the sound waits for it, with
+            // silence, rather than going on past it and never meeting it
+            if (reader->isGrowing() && position >= 0 && got < pairs - skip) advance = skip + got;
         }
         // (before the start of the audio nothing is played, and the position goes on, so the sound keeps its place)
-        position += pairs;
+        position += advance;
         return pairs * 4;
     }
     qint64 writeData(const char *, qint64) override { return -1; }
@@ -96,6 +100,7 @@ void AudioEngine::stopPeaks()
         delete peaksThread;
         peaksThread = nullptr;
     }
+    peaksReader.reset();
 }
 
 QVector<AudioTrackInfo> AudioEngine::setVideo(const QString &videoName)
@@ -140,9 +145,14 @@ bool AudioEngine::selectTrack(qint32 index)
         return true;
     }
 
-    // The shape of the sound, for the waveform, made on a thread of its own: a capture's takes a while
+    // The shape of the sound, for the waveform, made on a thread of its own: a capture's takes a while. It reads with a reader of
+    // its own, so that it does not hold up the one the sound is read from (they share a lock, and a block that was cached).
     cancelPeaks = false;
-    AudioReader *source = reader.get();
+    peaksReader.reset(new AudioReader);
+    QString peaksError;
+    if (available[index].source == "import" && available[index].trackId == -1) peaksReader->openMemory(importedSamples, importedRate);
+    else if (!peaksReader->open(available[index], peaksError)) peaksReader.reset();
+    AudioReader *source = peaksReader ? peaksReader.get() : reader.get();
     peaksThread = QThread::create([this, source]() {
         const bool done = audioPeaks.addAll(*source, &cancelPeaks, [this](qint64 done, qint64 total) {
             if (total > 0) QMetaObject::invokeMethod(this, [this, done, total]() { emit peaksProgress(static_cast<qint32>(done * 100 / total)); }, Qt::QueuedConnection);
@@ -252,13 +262,20 @@ bool AudioEngine::start(double videoSeconds)
         audioThread->start(QThread::HighPriority);
     }
     processedUs = 0;
+    lastClockNs = 0;
+    monotonic.start();
+    stampNs = 0;
     AudioFeeder *source = feeder.get();
     QMetaObject::invokeMethod(host, [this, device, format, source]() {
         sink = new QAudioSink(device, format);
         sink->setBufferSize(static_cast<qsizetype>(format.sampleRate() * 4 * 0.3));       // (about 300 ms)
         sink->start(source);
         clock = new QTimer;
-        QObject::connect(clock, &QTimer::timeout, [this]() { if (sink) processedUs = sink->processedUSecs(); });
+        QObject::connect(clock, &QTimer::timeout, [this]() {
+            if (!sink) return;
+            processedUs = sink->processedUSecs();
+            stampNs = monotonic.nsecsElapsed();
+        });
         clock->start(10);
     }, Qt::BlockingQueuedConnection);
     startedAt = videoSeconds;
@@ -283,7 +300,12 @@ void AudioEngine::stop()
 
 double AudioEngine::playedSeconds() const
 {
-    return sink ? static_cast<double>(processedUs.load()) / 1.0e6 : 0.0;
+    if (!sink || stampNs.load() == 0) return 0.0;      // (nothing read yet)
+    // What the card has played, read every 10 ms, and the time since: so that the clock moves smoothly, as the pictures are due
+    const qint64 age = qBound<qint64>(0, monotonic.nsecsElapsed() - stampNs.load(), Q_INT64_C(40000000));
+    const qint64 now = qMax(lastClockNs.load(), processedUs.load() * 1000 + age);
+    lastClockNs = now;
+    return static_cast<double>(now) / 1.0e9;
 }
 
 double AudioEngine::videoSecondsNow() const
