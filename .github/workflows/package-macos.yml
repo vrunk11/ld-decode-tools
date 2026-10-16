@@ -183,10 +183,10 @@ jobs:
           }
           for lib in "$APP_BUNDLE"/Contents/Frameworks/*.dylib; do
             [[ -f "$lib" ]] || continue
-            id="$(otool -D "$lib" | tail -n +2)"
-            if [[ "$id" == "$APP_BUNDLE"/* ]]; then
-              install_name_tool -id "@loader_path/$(basename "$lib")" "$lib"
-            fi
+            # (the name of each library is its own, relative to where it is, whatever it was; the log says what became of it)
+            before="$(otool -D "$lib" | tail -n +2)"
+            install_name_tool -id "@loader_path/$(basename "$lib")" "$lib"
+            echo "$(basename "$lib"): $before -> $(otool -D "$lib" | tail -n +2)"
             relink "$lib" "@loader_path"
           done
           while IFS= read -r plugin; do
