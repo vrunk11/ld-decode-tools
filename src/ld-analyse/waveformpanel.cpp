@@ -196,14 +196,20 @@ WaveformPanel::WaveformPanel(AudioEngine *engine, QWidget *parent) : QFrame(pare
     column->addLayout(mixRow);
     column->addStretch(1);
 
-    view = new WaveformView(engine, this);
+    // The waveform is in a box of its own, set into the panel (it can be left out: setWell)
+    well = new QFrame(this);
+    QVBoxLayout *wellLayout = new QVBoxLayout(well);
+    wellLayout->setContentsMargins(2, 2, 2, 2);
+    view = new WaveformView(engine, well);
+    wellLayout->addWidget(view);
+    setWell(true);
     layout->addWidget(controls);
     // A line between the controls and the waveform: they are two parts of one block
     separator = new QFrame(this);
     separator->setFrameShape(QFrame::VLine);
     separator->setFrameShadow(QFrame::Sunken);
     layout->addWidget(separator);
-    layout->addWidget(view, 1);
+    layout->addWidget(well, 1);
 
     connect(sourceCombo, &QComboBox::currentIndexChanged, this, [this]() { if (!filling) sourceChosen(); });
     connect(trackCombo, &QComboBox::currentIndexChanged, this, [this]() {
@@ -342,4 +348,19 @@ void WaveformPanel::setDensity(Density density)
     // (the panel is as high as its controls need, or as the waveform asks, whichever is more, and not much more)
     setMaximumHeight(density == Density::Large ? 110 : (density == Density::Compact ? 60 : 36));
     updateGeometry();
+}
+
+// The box round the waveform: sunken, on the colour of the fields (the depth of a well), or no box and the background of the panel
+void WaveformPanel::setWell(bool on)
+{
+    well->setFrameShape(on ? QFrame::StyledPanel : QFrame::NoFrame);
+    well->setFrameShadow(QFrame::Sunken);
+    well->setLineWidth(on ? 2 : 0);
+    well->setBackgroundRole(QPalette::Base);
+    well->setAutoFillBackground(on);
+    if (QLayout *inside = well->layout()) {
+        const qint32 margin = on ? 3 : 0;
+        inside->setContentsMargins(margin, margin, margin, margin);
+    }
+    well->update();
 }

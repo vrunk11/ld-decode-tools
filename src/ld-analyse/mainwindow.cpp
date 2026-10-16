@@ -3007,6 +3007,7 @@ void MainWindow::setupAudio()
     waveform->setMuted(muted);
     audio->setMuted(muted);
     waveform->setStyle(static_cast<WaveformView::Style>(configuration.audioValue("style", 0).toInt()));
+    waveform->setWell(configuration.audioValue("well", true).toBool());
     waveform->setDensity(static_cast<WaveformPanel::Density>(configuration.audioValue("density", 1).toInt()));
     connect(waveform, &WaveformPanel::mutedChanged, this, [this](bool isMuted) {
         audio->setMuted(isMuted);
@@ -3154,6 +3155,11 @@ void MainWindow::showAudioConfig()
         audioConfig->setMuted(waveform->muted());
         audioConfig->setWaveformShown(actionWaveform->isChecked());
         audioConfig->setStyle(configuration.audioValue("style", 0).toInt());
+        audioConfig->setWell(configuration.audioValue("well", true).toBool());
+        connect(audioConfig, &AudioConfigDialog::wellChanged, this, [this](bool on) {
+            waveform->setWell(on);
+            configuration.setAudioValue("well", on);
+        });
         audioConfig->setDensity(configuration.audioValue("density", 1).toInt());
         connect(audioConfig, &AudioConfigDialog::densityChosen, this, [this](qint32 density) {
             applyWaveformDensity(density);
