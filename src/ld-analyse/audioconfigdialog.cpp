@@ -58,11 +58,11 @@ AudioConfigDialog::AudioConfigDialog(QWidget *parent) : QDialog(parent)
     leftButton = new QToolButton(output);
     leftButton->setText(tr("L"));
     leftButton->setCheckable(true);
-    leftButton->setChecked(true);
+    leftButton->setChecked(false);
     rightButton = new QToolButton(output);
     rightButton->setText(tr("R"));
     rightButton->setCheckable(true);
-    rightButton->setChecked(true);
+    rightButton->setChecked(false);
     muteButton = new QToolButton(output);
     muteButton->setText(tr("M"));
     muteButton->setCheckable(true);
@@ -70,6 +70,8 @@ AudioConfigDialog::AudioConfigDialog(QWidget *parent) : QDialog(parent)
     volumeSlider = new QSlider(Qt::Horizontal, output);
     volumeSlider->setRange(0, 100);
     volumeSlider->setValue(70);
+    leftButton->setToolTip(tr("Mute the left channel"));
+    rightButton->setToolTip(tr("Mute the right channel"));
     mix->addWidget(leftButton);
     mix->addWidget(rightButton);
     mix->addWidget(muteButton);
@@ -182,7 +184,7 @@ AudioConfigDialog::AudioConfigDialog(QWidget *parent) : QDialog(parent)
     connect(densityCombo, &QComboBox::currentIndexChanged, this, [this]() { emit densityChosen(densityCombo->currentData().toInt()); });
     connect(styleCombo, &QComboBox::currentIndexChanged, this, [this]() { emit styleChosen(styleCombo->currentData().toInt()); });
     connect(sideCheck, &QCheckBox::toggled, this, &AudioConfigDialog::sidePanelChanged);
-    const auto mixed = [this]() { emit mixChanged(leftButton->isChecked(), rightButton->isChecked(), volumeSlider->value()); };
+    const auto mixed = [this]() { emit mixChanged(!leftButton->isChecked(), !rightButton->isChecked(), volumeSlider->value()); };
     connect(leftButton, &QToolButton::toggled, this, mixed);
     connect(rightButton, &QToolButton::toggled, this, mixed);
     connect(volumeSlider, &QSlider::valueChanged, this, mixed);
@@ -234,8 +236,8 @@ void AudioConfigDialog::setSidePanel(bool shown)
 void AudioConfigDialog::setMix(bool left, bool right, qint32 volume)
 {
     const QSignalBlocker a(leftButton), b(rightButton), c(volumeSlider);
-    leftButton->setChecked(left);
-    rightButton->setChecked(right);
+    leftButton->setChecked(!left);
+    rightButton->setChecked(!right);
     volumeSlider->setValue(volume);
 }
 
