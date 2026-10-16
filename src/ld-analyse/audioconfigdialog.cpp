@@ -173,7 +173,7 @@ AudioConfigDialog::AudioConfigDialog(QWidget *parent) : QDialog(parent)
         emit decodeRequested(decoderCombo->currentData().toInt(), noTimecodesCheck->isChecked(), concealCheck->isChecked(), padCheck->isChecked());
     });
     connect(stopButton, &QPushButton::clicked, this, [this]() { emit decodeStopRequested(decoderCombo->currentData().toInt()); });
-    connect(decoderCombo, &QComboBox::currentIndexChanged, this, [this]() { showDecoderState(); });
+    connect(decoderCombo, &QComboBox::currentIndexChanged, this, [this]() { showDecoderState(); emit decoderChosen(decoderCombo->currentData().toInt()); });
     QLabel *efmHelp = new QLabel(tr("One decoder runs at a time: starting one stops the other. The same choice is in the source menu of the waveform."), efm);
     efmHelp->setWordWrap(true);
     efmLayout->addWidget(efmHelp);
@@ -339,8 +339,10 @@ void AudioConfigDialog::setDecodeStatus(qint32 decoder, const QString &text, boo
 
 void AudioConfigDialog::setActiveDecoder(qint32 decoder)
 {
+    const QSignalBlocker blocker(decoderCombo);
     const qint32 index = decoderCombo->findData(decoder);
     if (index >= 0) decoderCombo->setCurrentIndex(index);
+    showDecoderState();
 }
 
 // The buttons and the line of the decoder that is chosen
@@ -372,3 +374,5 @@ void AudioConfigDialog::setStatistics(const QString &text)
     statistics->setPlainText(text);
     bar->setValue(atEnd ? bar->maximum() : value);
 }
+
+qint32 AudioConfigDialog::currentDecoder() const { return decoderCombo->currentData().toInt(); }
