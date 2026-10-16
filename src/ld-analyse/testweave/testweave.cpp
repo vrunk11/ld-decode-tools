@@ -12,9 +12,11 @@
 #include <QElapsedTimer>
 #include <QFile>
 #include <cstdio>
+#include <cmath>
 #include <cstdlib>
 #include <cstring>
 
+#include "playbackcontroller.h"
 #include "playbackrenderer.h"
 #include "tbcsource.h"
 
@@ -138,6 +140,23 @@ int main(int argc, char *argv[])
         renderRound("first round");
         renderRound("second round, the decoders started again");
         renderer.stop();
+    }
+    // The speeds: the clock gives as many positions a second as the rate times the speed, no more (nothing is made in between)
+    for (const double speed: { 0.25, 0.5, 1.0 }) {
+        PlaybackController clock;
+        clock.setRate(30000.0 / 1001.0);
+        clock.setSpeed(speed);
+        clock.setRange(1, 100000);
+        qint32 given = 0;
+        QObject::connect(&clock, &PlaybackController::positionDue, [&given](qint32) { given++; });
+        clock.play(1);
+        QElapsedTimer run;
+        run.start();
+        while (run.elapsed() < 2000) QCoreApplication::processEvents(QEventLoop::AllEvents, 5);
+        clock.pause();
+        const double perSecond = given / (run.elapsed() / 1000.0);
+        std::fprintf(stderr, "testweave: speed %.2f: %.1f positions a second\n", speed, perSecond);
+        CHECK(std::fabs(perSecond - 29.97 * speed) < 29.97 * speed * 0.25 + 1.0);
     }
     step("all tests passed");
     return 0;

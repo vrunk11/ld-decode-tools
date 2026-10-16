@@ -4,6 +4,7 @@ add_executable(testweave
     ../filesnr.cpp
     ../livesnr.cpp
     ../playbackrenderer.cpp
+    ../playbackcontroller.cpp
 )
 
 target_link_libraries(testweave PRIVATE Qt::Core Qt::Gui Qt::Widgets lddecode-library lddecode-chroma)
