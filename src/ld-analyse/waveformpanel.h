@@ -100,6 +100,8 @@ private:
 
     QWidget *controls;
     QFrame *separator = nullptr;
+    bool controlsOn = true;
+    bool wellOn = true;
     WaveformView *view;
     QFrame *well = nullptr;
     QComboBox *sourceCombo;

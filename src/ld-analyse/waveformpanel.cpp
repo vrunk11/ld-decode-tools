@@ -204,11 +204,12 @@ WaveformPanel::WaveformPanel(AudioEngine *engine, QWidget *parent) : QFrame(pare
     wellLayout->addWidget(view);
     setWell(true);
     layout->addWidget(controls);
-    // A line between the controls and the waveform: they are two parts of one block
+    // A line between the controls and the waveform, when the waveform has no box of its own
     separator = new QFrame(this);
     separator->setFrameShape(QFrame::VLine);
     separator->setFrameShadow(QFrame::Sunken);
     layout->addWidget(separator);
+    separator->setVisible(!wellOn);
     layout->addWidget(well, 1);
 
     connect(sourceCombo, &QComboBox::currentIndexChanged, this, [this]() { if (!filling) sourceChosen(); });
@@ -296,7 +297,8 @@ void WaveformPanel::sourceChosen()
 void WaveformPanel::setControlsVisible(bool visible)
 {
     controls->setVisible(visible);
-    separator->setVisible(visible);
+    controlsOn = visible;
+    separator->setVisible(controlsOn && !wellOn);
 }
 
 bool WaveformPanel::leftOn() const { return !leftButton->isChecked(); }
@@ -353,6 +355,8 @@ void WaveformPanel::setDensity(Density density)
 // The box round the waveform: sunken, on the colour of the fields (the depth of a well), or no box and the background of the panel
 void WaveformPanel::setWell(bool on)
 {
+    wellOn = on;
+    if (separator) separator->setVisible(controlsOn && !wellOn);        // (the box is the line between the controls and the waveform)
     well->setFrameShape(on ? QFrame::StyledPanel : QFrame::NoFrame);
     well->setFrameShadow(QFrame::Sunken);
     well->setLineWidth(on ? 2 : 0);
