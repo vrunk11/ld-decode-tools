@@ -72,7 +72,7 @@ void WaveformView::paintEvent(QPaintEvent *)
     grid.setAlpha(70);
     painter.setPen(QPen(grid, 1));
     painter.drawLine(0, middle, w, middle);
-    if (h >= 34) {
+    {
         painter.drawLine(0, h / 4, w, h / 4);
         painter.drawLine(0, 3 * h / 4, w, 3 * h / 4);
     }
@@ -89,7 +89,7 @@ void WaveformView::paintEvent(QPaintEvent *)
     const AudioPeaks &peaks = engine->peaks();
     const qint64 available = peaks.samples();
     // (in a low view the channels are drawn as one shape: each would have a few pixels)
-    const bool merged = h < 34;
+    const bool merged = false;      // (both channels are always shown: one above the other, the left first)
     const qint32 channels = merged ? 1 : 2;
     const double half = merged ? (h / 2.0 - 1.0) : h / 4.0;
     // (the colour of the theme, for the kind of audio that is played, unless one was given)
@@ -298,15 +298,16 @@ void WaveformPanel::setDensity(Density density)
 {
     const bool ultra = density == Density::Ultra;
     column->setDirection(ultra ? QBoxLayout::LeftToRight : QBoxLayout::TopToBottom);
-    controls->setFixedWidth(ultra ? 380 : 170);
+    controls->setFixedWidth(ultra ? 310 : 170);
     sourceCombo->setMaximumWidth(ultra ? 130 : QWIDGETSIZE_MAX);
     trackCombo->setMaximumWidth(ultra ? 110 : QWIDGETSIZE_MAX);
-    volumeSlider->setMinimumWidth(ultra ? 80 : 0);
-    const qint32 viewHeight = density == Density::Large ? 72 : (density == Density::Compact ? 40 : 20);
+    volumeSlider->setMinimumWidth(ultra ? 60 : 0);
+    volumeSlider->setMaximumWidth(ultra ? 80 : QWIDGETSIZE_MAX);
+    const qint32 viewHeight = density == Density::Large ? 72 : (density == Density::Compact ? 40 : 28);
     view->setMinimumHeight(viewHeight);
     const qint32 margin = ultra ? 2 : 4;
     layout()->setContentsMargins(margin, margin, margin, margin);
     // (the panel is as high as its controls need, or as the waveform asks, whichever is more, and not much more)
-    setMaximumHeight(density == Density::Large ? 110 : (density == Density::Compact ? 60 : 32));
+    setMaximumHeight(density == Density::Large ? 110 : (density == Density::Compact ? 60 : 36));
     updateGeometry();
 }

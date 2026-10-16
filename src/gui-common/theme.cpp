@@ -79,6 +79,9 @@ const QVector<ThemeColourRole> &themeColourRoles()
         { QPalette::All, QPalette::Link, "Link", "Link" },
         { QPalette::All, QPalette::BrightText, "PlayButton", "Play button" },
         { QPalette::Disabled, QPalette::WindowText, "DisabledText", "Disabled text" },
+        // (no palette role is for these: the colours of the audio waveform ride on the visited link colour, which nothing else uses)
+        { QPalette::All, QPalette::LinkVisited, "WaveformAnalogue", "Waveform: analogue audio" },
+        { QPalette::Disabled, QPalette::LinkVisited, "WaveformEfm", "Waveform: audio from EFM" },
     };
     return roles;
 }

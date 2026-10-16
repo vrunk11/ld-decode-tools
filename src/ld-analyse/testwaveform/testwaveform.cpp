@@ -24,6 +24,7 @@
 #include "audioengine.h"
 #include "audioconfigdialog.h"
 #include "efmdecoding.h"
+#include "theme.h"
 #include "waveformpanel.h"
 
 #define CHECK(condition) \
@@ -132,6 +133,10 @@ int main(int argc, char *argv[])
         if (pictures) panel.grab().save(QString("%1/density%2.png").arg(pictures).arg(d));
     }
     CHECK(heights[0] > heights[1] && heights[1] > heights[2]);
+    // The colours of the waveform are among those the theme editor offers
+    bool editable = false;
+    for (const ThemeColourRole &role: themeColourRoles()) editable |= qstrcmp(role.key, "WaveformEfm") == 0;
+    CHECK(editable);
     panel.setDensity(WaveformPanel::Density::Compact);
     // A click asks to go to a place
     double asked = -1.0;
