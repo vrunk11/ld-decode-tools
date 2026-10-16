@@ -72,8 +72,10 @@ void WaveformView::paintEvent(QPaintEvent *)
     grid.setAlpha(70);
     painter.setPen(QPen(grid, 1));
     painter.drawLine(0, middle, w, middle);
-    painter.drawLine(0, h / 4, w, h / 4);
-    painter.drawLine(0, 3 * h / 4, w, 3 * h / 4);
+    if (h >= 34) {
+        painter.drawLine(0, h / 4, w, h / 4);
+        painter.drawLine(0, 3 * h / 4, w, 3 * h / 4);
+    }
     if (total < 1) {
         if (!message.isEmpty()) {
             painter.setPen(palette().color(QPalette::PlaceholderText));
@@ -86,7 +88,10 @@ void WaveformView::paintEvent(QPaintEvent *)
     // middle and the right below, so that each has a half of the height
     const AudioPeaks &peaks = engine->peaks();
     const qint64 available = peaks.samples();
-    const double half = h / 4.0;
+    // (in a low view the channels are drawn as one shape: each would have a few pixels)
+    const bool merged = h < 34;
+    const qint32 channels = merged ? 1 : 2;
+    const double half = merged ? (h / 2.0 - 1.0) : h / 4.0;
     // (the colour of the theme, for the kind of audio that is played, unless one was given)
     const qint32 chosen = engine->currentTrack();
     const bool fromEfm = chosen >= 0 && chosen < engine->tracks().size() && engine->tracks()[chosen].source == "efm";
@@ -105,8 +110,12 @@ void WaveformView::paintEvent(QPaintEvent *)
         const double leftBottom = (h / 4.0) - (peak.minLeft / 32768.0) * half;
         const double rightTop = (3.0 * h / 4.0) - (peak.maxRight / 32768.0) * half;
         const double rightBottom = (3.0 * h / 4.0) - (peak.minRight / 32768.0) * half;
-        const double tops[2] = { leftTop, rightTop }, bottoms[2] = { qMax(leftBottom, leftTop + 1.0), qMax(rightBottom, rightTop + 1.0) };
-        for (qint32 c = 0; c < 2; c++) {
+        double tops[2] = { leftTop, rightTop }, bottoms[2] = { qMax(leftBottom, leftTop + 1.0), qMax(rightBottom, rightTop + 1.0) };
+        if (merged) {
+            tops[0] = h / 2.0 - (qMax(peak.maxLeft, peak.maxRight) / 32768.0) * half;
+            bottoms[0] = qMax(h / 2.0 - (qMin(peak.minLeft, peak.minRight) / 32768.0) * half, tops[0] + 1.0);
+        }
+        for (qint32 c = 0; c < channels; c++) {
             if (style == Style::Outline) {
                 // the edge of the shape only: a line along the highest and along the lowest values
                 if (previousTop[c] >= 0) {

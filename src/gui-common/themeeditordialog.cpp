@@ -56,7 +56,9 @@ ThemeEditorDialog::ThemeEditorDialog(const QPalette &startPalette, QWidget *pare
     scroll->setWidget(formWidget);
     scroll->setWidgetResizable(true);
     scroll->setFrameShape(QFrame::NoFrame);
-    scroll->setMinimumHeight(qMin(formWidget->sizeHint().height() + 4, 460));
+    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    scroll->setMinimumWidth(formWidget->sizeHint().width() + 24);
+    scroll->setMinimumHeight(qMin(formWidget->sizeHint().height() + 4, 640));
     layout->addWidget(scroll, 1);
 
     QDialogButtonBox *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel
