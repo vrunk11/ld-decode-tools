@@ -298,7 +298,15 @@ void WaveformPanel::setDensity(Density density)
 {
     const bool ultra = density == Density::Ultra;
     column->setDirection(ultra ? QBoxLayout::LeftToRight : QBoxLayout::TopToBottom);
-    controls->setFixedWidth(ultra ? 310 : 170);
+    if (ultra) {
+        // (as wide as the controls are, no more: the waveform has the rest)
+        controls->setMinimumWidth(0);
+        controls->setMaximumWidth(QWIDGETSIZE_MAX);
+        controls->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Preferred);
+    } else {
+        controls->setFixedWidth(170);
+        controls->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Preferred);
+    }
     sourceCombo->setMaximumWidth(ultra ? 130 : QWIDGETSIZE_MAX);
     trackCombo->setMaximumWidth(ultra ? 110 : QWIDGETSIZE_MAX);
     volumeSlider->setMinimumWidth(ultra ? 60 : 0);
