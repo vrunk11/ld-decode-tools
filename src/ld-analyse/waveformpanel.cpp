@@ -162,15 +162,15 @@ WaveformPanel::WaveformPanel(AudioEngine *engine, QWidget *parent) : QFrame(pare
     leftButton = new QToolButton(controls);
     leftButton->setText(tr("L"));
     leftButton->setCheckable(true);
-    leftButton->setChecked(true);
+    leftButton->setChecked(false);
     
-    leftButton->setToolTip(tr("Play the left channel"));
+    leftButton->setToolTip(tr("Mute the left channel"));
     rightButton = new QToolButton(controls);
     rightButton->setText(tr("R"));
     rightButton->setCheckable(true);
-    rightButton->setChecked(true);
+    rightButton->setChecked(false);
     
-    rightButton->setToolTip(tr("Play the right channel"));
+    rightButton->setToolTip(tr("Mute the right channel"));
     muteButton = new QToolButton(controls);
     muteButton->setText(tr("M"));
     muteButton->setCheckable(true);
@@ -260,21 +260,21 @@ void WaveformPanel::setControlsVisible(bool visible)
     controls->setVisible(visible);
 }
 
-bool WaveformPanel::leftOn() const { return leftButton->isChecked(); }
-bool WaveformPanel::rightOn() const { return rightButton->isChecked(); }
+bool WaveformPanel::leftOn() const { return !leftButton->isChecked(); }
+bool WaveformPanel::rightOn() const { return !rightButton->isChecked(); }
 qint32 WaveformPanel::volume() const { return volumeSlider->value(); }
 
 void WaveformPanel::setMix(bool left, bool right, qint32 volume)
 {
     const QSignalBlocker a(leftButton), b(rightButton), c(volumeSlider);
-    leftButton->setChecked(left);
-    rightButton->setChecked(right);
+    leftButton->setChecked(!left);
+    rightButton->setChecked(!right);
     volumeSlider->setValue(volume);
 }
 
 void WaveformPanel::emitMix()
 {
-    emit mixChanged(leftButton->isChecked(), rightButton->isChecked(), volumeSlider->value());
+    emit mixChanged(!leftButton->isChecked(), !rightButton->isChecked(), volumeSlider->value());
 }
 
 bool WaveformPanel::muted() const { return muteButton->isChecked(); }
