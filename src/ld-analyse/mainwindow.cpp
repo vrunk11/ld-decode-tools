@@ -569,6 +569,7 @@ void MainWindow::setPlaybackOptionsVisible(bool visible)
         playback->setSpeed(1.0);
     }
     actionLoop->setVisible(visible);
+    if (actionWeave) actionWeave->setVisible(visible);        // (it is for files: a live input plays as it arrives)
     speedSeparator->setVisible(visible);
     for (QAction *action: speedActions->actions()) action->setVisible(visible);
 }
@@ -704,13 +705,6 @@ void MainWindow::setupPlayback()
     actionLoop = menu->addAction(tr("&Loop"));
     actionLoop->setCheckable(true);
     connect(actionLoop, &QAction::toggled, playback, &PlaybackController::setLoop);
-
-    // A trick of the playback: in the frame view the images go at the rate of the fields, each the weave of a field and the next
-    // (fields 1 and 2, then 2 and 3, then 3 and 4...). Off by default: a source with 2:2 pulldown (film) shows two fields of
-    // different times in such a weave.
-    actionWeave = menu->addAction(tr("Frame view at field rate (weave)"));
-    actionWeave->setCheckable(true);
-    actionWeave->setToolTip(tr("While playing, show a frame made of each field and the next, at the field rate. Not for sources with 2:2 pulldown."));
 
     // A trick of the playback: in the frame view the images go at the rate of the fields, each the weave of a field and the next
     // (fields 1 and 2, then 2 and 3, then 3 and 4...). Off by default: a source with 2:2 pulldown (film) shows two fields of
