@@ -165,6 +165,9 @@ int main(int argc, char *argv[])
             }
             streamInput.cvbs = LdxStream::instance()->isCvbs();
             streamInput.system = LdxStream::instance()->system();
+#ifdef LDDECODE_HAVE_AUDIO
+            LdxStream::instance()->keepOtherTracks();        // (the audio and the EFM of the stream are for the waveform and the sound)
+#endif
             qInfo().noquote() << "The LDX stream holds" << Cvbs::presetName(streamInput.system) << (streamInput.cvbs ? "CVBS" : "TBC") << "video";
         } else {
             if (!parser.isSet(systemOption)) {
