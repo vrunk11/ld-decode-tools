@@ -29,6 +29,7 @@ public:
     explicit WaveformView(AudioEngine *engine, QWidget *parent = nullptr);
     void setPlayheadSeconds(double videoSeconds);
     void setColor(const QColor &colour);
+    void setMessage(const QString &text) { message = text; update(); }
     QSize minimumSizeHint() const override { return QSize(120, 60); }
 
 signals:
@@ -44,6 +45,7 @@ private:
     AudioEngine *engine;
     double playhead = 0.0;
     QColor colour;
+    QString message;
 };
 
 // The waveform with, on its left, what is played: which audio (analogue, decoded from EFM...), which track of the file, the
@@ -58,6 +60,7 @@ public:
     void setTracks(const QVector<AudioTrackInfo> &tracks, qint32 chosen);
     void setPlayheadSeconds(double videoSeconds) { view->setPlayheadSeconds(videoSeconds); }
     void setColor(const QColor &colour) { view->setColor(colour); }
+    void setMessage(const QString &text) { view->setMessage(text); }
     void setControlsVisible(bool visible);
     bool controlsVisible() const { return controls->isVisible(); }
 

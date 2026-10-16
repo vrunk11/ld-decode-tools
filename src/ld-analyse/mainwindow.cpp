@@ -11,6 +11,9 @@
 
 #include <QDateTime>
 #include "mainwindow.h"
+#include <QJsonObject>
+#include <QTemporaryFile>
+#include "ldxcapture.h"
 #include "ui_mainwindow.h"
 #include "tbc/logging.h"
 #include "cvbs.h"
@@ -2911,6 +2914,8 @@ void MainWindow::setupAudio()
     actionWaveform = ui->menuView->addAction(tr("&Waveform"));
     actionWaveform->setCheckable(true);
     actionWaveform->setEnabled(false);
+    actionAudioConfig = ui->menuView->addAction(tr("&Audio config..."));
+    connect(actionAudioConfig, &QAction::triggered, this, &MainWindow::showAudioConfig);
 
     // What was chosen the last time
     waveformWanted = configuration.audioValue("waveformVisible", true).toBool();
@@ -2930,6 +2935,7 @@ void MainWindow::setupAudio()
     connect(waveform, &WaveformPanel::trackSelected, this, [this](qint32 index) {
         const bool wasPlaying = audio->isPlaying();
         const double at = audio->videoSecondsNow();
+        waveform->setMessage(QString());
         audio->selectTrack(index);
         waveform->refresh();
         if (wasPlaying && playback->isPlaying()) audio->start(at);
@@ -2943,13 +2949,114 @@ void MainWindow::setupAudio()
     connect(waveform, &WaveformPanel::seekRequested, this, &MainWindow::waveformSeek);
     connect(audio, &AudioEngine::peaksProgress, this, [this](qint32) { waveform->refresh(); });
     connect(audio, &AudioEngine::peaksFinishedSignal, this, [this]() { waveform->refresh(); });
-    connect(audio, &AudioEngine::problem, this, [this](const QString &message) { statusBar()->showMessage(message, 8000); });
+    connect(audio, &AudioEngine::problem, this, [this](const QString &message) { statusBar()->showMessage(message, 8000); waveform->setMessage(message); });
     // Looping: the video goes back to its start, and so does the sound
     connect(playback, &PlaybackController::looped, this, [this]() {
         if (!audio->isPlaying()) return;
         audioStop();
         audioStart(playbackStartPosition);
     });
+}
+
+
+// The Audio config window: made when first wanted, with what is set now
+void MainWindow::showAudioConfig()
+{
+    if (!audioConfig) {
+        audioConfig = new AudioConfigDialog(this);
+        audioConfig->setDevice(configuration.audioValue("device", QByteArray()).toByteArray());
+        audio->setOutputDevice(configuration.audioValue("device", QByteArray()).toByteArray());
+        audioConfig->setColor(QColor(configuration.audioValue("waveformColour", "#2a82da").toString()));
+        audioConfig->setSidePanel(configuration.audioValue("sidePanel", true).toBool());
+        audioConfig->setMix(waveform->leftOn(), waveform->rightOn(), waveform->volume());
+        connect(audioConfig, &AudioConfigDialog::deviceChosen, this, [this](const QByteArray &id) {
+            audio->setOutputDevice(id);
+            configuration.setAudioValue("device", id);
+        });
+        connect(audioConfig, &AudioConfigDialog::colorChosen, this, [this](const QColor &colour) {
+            waveform->setColor(colour);
+            configuration.setAudioValue("waveformColour", colour.name());
+        });
+        connect(audioConfig, &AudioConfigDialog::sidePanelChanged, this, [this](bool shown) {
+            waveform->setControlsVisible(shown);
+            configuration.setAudioValue("sidePanel", shown);
+        });
+        // (the controls are in the panel and here: each follows the other)
+        connect(audioConfig, &AudioConfigDialog::mixChanged, this, [this](bool leftOn, bool rightOn, qint32 volume) {
+            waveform->setMix(leftOn, rightOn, volume);
+            audio->setMix(leftOn, rightOn, volume / 100.0);
+            configuration.setAudioValue("left", leftOn);
+            configuration.setAudioValue("right", rightOn);
+            configuration.setAudioValue("volume", volume);
+        });
+        connect(waveform, &WaveformPanel::mixChanged, audioConfig, &AudioConfigDialog::setMix);
+        connect(audioConfig, &AudioConfigDialog::offsetChanged, this, [this](qint32 milliseconds) {
+            audio->setOffsetMs(milliseconds);
+            waveform->refresh();
+        });
+        connect(audioConfig, &AudioConfigDialog::imported, this, [this](const QVector<qint16> &samples, double rate, const QString &name) {
+            audioStop();
+            const qint32 index = audio->setImported(samples, rate, tr("%1 (imported)").arg(name));
+            audio->selectTrack(index);
+            waveform->setTracks(audio->tracks(), index);
+            actionWaveform->setEnabled(true);
+            const QSignalBlocker blocker(actionWaveform);
+            actionWaveform->setChecked(true);
+            waveformWanted = true;
+            waveform->show();
+            updateAudioPlayhead();
+        });
+        connect(audioConfig, &AudioConfigDialog::importRemoved, this, [this]() {
+            audioStop();
+            audio->clearImported();
+            if (audio->hasAudio()) {
+                qint32 first = 0;
+                for (qint32 i = 0; i < audio->tracks().size(); i++) {
+                    if (audio->tracks()[i].source == "analogue") { first = i; break; }
+                }
+                audio->selectTrack(first);
+                waveform->setTracks(audio->tracks(), first);
+            } else {
+                waveform->hide();
+            }
+        });
+        connect(audioConfig, &AudioConfigDialog::saveRequested, this, &MainWindow::saveImportedAudio);
+    }
+    const bool isLdx = tbcSource.getIsSourceLoaded() && LdxCapture::isLdxName(tbcSource.getCurrentSourceFilename());
+    QString path;
+    qint32 track = 0;
+    if (isLdx) LdxCapture::split(tbcSource.getCurrentSourceFilename(), path, track);
+    const qint32 last = tbcSource.getIsSourceLoaded() ? (tbcSource.getFieldViewEnabled() ? tbcSource.getNumberOfFields() : tbcSource.getNumberOfFrames()) : 0;
+    const double frameRate = tbcSource.getSystem() == PAL ? 25.0 : 30000.0 / 1001.0;
+    audioConfig->setVideo(last > 0 ? last / (tbcSource.getFieldViewEnabled() ? 2.0 * frameRate : frameRate) : 0.0, path);
+    audioConfig->show();
+    audioConfig->raise();
+}
+
+// The imported audio goes into the LDX file of the capture as a pcm track
+void MainWindow::saveImportedAudio(const QVector<qint16> &samples, double sampleRate, const QString &name)
+{
+    QString path;
+    qint32 track = 0;
+    LdxCapture::split(tbcSource.getCurrentSourceFilename(), path, track);
+    QTemporaryFile raw;
+    if (path.isEmpty() || !raw.open() || raw.write(reinterpret_cast<const char *>(samples.constData()), samples.size() * 2) != samples.size() * 2) {
+        statusBar()->showMessage(tr("The audio could not be saved in the file"), 8000);
+        return;
+    }
+    raw.close();
+    audioStop();
+    audio->setVideo(QString());          // (the file is not held open by the audio)
+    QJsonObject parameters;
+    parameters["sampleRate"] = sampleRate;
+    parameters["channels"] = 2;
+    parameters["source"] = "import";
+    QString error;
+    const bool added = LdxCapture::addTrackFromFile(path, "pcm", raw.fileName(), parameters, name, 0,
+                                                    LdxCapture::historyEntry("ld-analyse", tr("audio imported from %1").arg(name)), error);
+    statusBar()->showMessage(added ? tr("The audio is saved in %1; open the file again to use it from there").arg(path)
+                                   : tr("The audio could not be saved: %1").arg(error), 10000);
+    if (added) loadAudio();
 }
 
 // A capture has been loaded: its audio, if it has any, is what the waveform shows
@@ -2982,6 +3089,8 @@ void MainWindow::unloadAudio()
     audio->setVideo(QString());
     waveform->hide();
     actionWaveform->setEnabled(false);
+    actionAudioConfig = ui->menuView->addAction(tr("&Audio config..."));
+    connect(actionAudioConfig, &QAction::triggered, this, &MainWindow::showAudioConfig);
 }
 
 double MainWindow::positionSeconds(qint32 position)
