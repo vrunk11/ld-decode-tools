@@ -52,9 +52,11 @@ public:
     void clearImported();
     // Audio being decoded from EFM by a program, in a raw file that grows (slot 0 or 1: the two decoders): one more choice of tracks(),
     // the index of it. extend() is called when the file has grown: the waveform is made as the audio comes.
-    qint32 addDecoded(qint32 slot, const QString &cacheFile, const QString &label) { return addGrowing(slot, "efm", cacheFile, label, 44100.0); }
+    qint32 addDecoded(qint32 slot, const QString &cacheFile, const QString &label, double startSeconds = 0.0) { return addGrowing(slot, "efm", cacheFile, label, 44100.0, startSeconds); }
     // The same for any raw 16-bit stereo file that grows (the analogue audio of a live input is slot 2)
-    qint32 addGrowing(qint32 slot, const QString &source, const QString &cacheFile, const QString &label, double sampleRate);
+    qint32 addGrowing(qint32 slot, const QString &source, const QString &cacheFile, const QString &label, double sampleRate, double startSeconds = 0.0);
+    // Where in the capture the first sample of a growing track is (known when its first audio comes)
+    void setGrowingStart(qint32 slot, double startSeconds);
     void removeDecoded(qint32 slot);
     void extend();
     bool isDecoded(qint32 index) const { return index >= 0 && index < available.size() && available[index].trackId <= -2; }
@@ -130,6 +132,7 @@ private:
     QVector<qint64> fieldSamples;
     double fieldRate = 0.0;
     bool usesFieldSamples() const;
+    double trackStartSeconds() const;
     QByteArray deviceId;
     QVector<qint16> importedSamples;
     double importedRate = 44100.0;

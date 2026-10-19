@@ -276,6 +276,10 @@ private:
     qint32 livePcmBits = 16;
     double livePcmRate = 44100.0;
     qint64 liveEfmFed[2] = { 0, 0 };
+    QVector<QPair<qint64, qint64>> liveEfmIndex;      // (byte in the file of the EFM kept, time in the capture) for each piece of EFM that came
+    qint64 liveEfmBytes = 0;
+    bool liveEfmStartPending[2] = { false, false };
+    bool livePcmStartSet = false;
     QString audioLoadedKey;      // what loadAudio loaded: a source (a file, or the live input) is loaded once
     void loadLiveAudio();
     void pollLiveTracks();

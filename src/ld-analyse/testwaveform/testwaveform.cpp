@@ -18,6 +18,7 @@
 #include <QFile>
 #include <QImage>
 #include <QTemporaryDir>
+#include <QTemporaryFile>
 #include <QMouseEvent>
 #include <cmath>
 #include <cstdio>
@@ -485,6 +486,23 @@ int main(int argc, char *argv[])
         CHECK(redCount() > 0);
         solo.setSoloChannel(false);
         solo.setDensity(WaveformPanel::Density::Compact);
+    }
+
+    // A growing track that begins later in the capture (audio decoded from a part of the EFM, or that came late): the place in it of a
+    // moment of the video is counted from there
+    {
+        QTemporaryFile cacheFile;
+        CHECK(cacheFile.open());
+        cacheFile.write(QByteArray(4 * 44100 * 3, 'x'));
+        cacheFile.flush();
+        AudioEngine late;
+        late.setVideo(QString());
+        const qint32 index = late.addGrowing(5, "efm", cacheFile.fileName(), "late", 44100.0, 5.0);
+        CHECK(late.selectTrack(index));
+        CHECK(late.sampleAt(7.0) == 2 * 44100);
+        CHECK(std::fabs(late.videoSecondsOf(2 * 44100) - 7.0) < 1e-9);
+        late.setGrowingStart(5, 6.0);
+        CHECK(late.sampleAt(7.0) == 44100);
     }
     // The channels and the volume
     bool left = true, right = true;

@@ -23,6 +23,7 @@ struct AudioTrackInfo {
     qint32 trackId = 0;         // the id of the pcm track of an LDX file, 0 for a file
     double sampleRate = 44100;
     qint32 bits = 16;
+    double startSeconds = 0.0;  // the moment of the capture where the first sample of the track is (audio decoded from a part of the EFM, or that came late)
 };
 
 // Reads the audio of a capture as 16-bit stereo samples (a left and a right for each sample, in turn), whatever it is kept as:

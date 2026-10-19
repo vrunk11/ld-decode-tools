@@ -90,6 +90,34 @@ int main(int argc, char *argv[])
         previousColour = image;
     }
     step("weaves in colour done");
+
+    // What a picture costs (WEAVE_TIMES=1): a frame and a weave of fields, in colour, with the comb filter in 2 and in 3 dimensions
+    if (std::getenv("WEAVE_TIMES")) {
+        for (const qint32 dimensions: { 2, 3 }) {
+            PalColour::Configuration pal = source.getPalConfiguration();
+            Comb::Configuration ntsc = source.getNtscConfiguration();
+            OutputWriter::Configuration output = source.getOutputConfiguration();
+            ntsc.dimensions = dimensions;
+            output.paddingAmount = 1;
+            source.setChromaConfiguration(pal, ntsc, output);
+            source.setChromaDecoder(true);
+            QElapsedTimer timer;
+            timer.start();
+            for (qint32 frame = 300; frame < 330; frame++) {
+                source.load(frame, 2 * frame - 1);
+                source.getImage();
+            }
+            const double frameMs = timer.elapsed() / 30.0;
+            timer.restart();
+            for (qint32 p = 600; p < 630; p++) {
+                source.loadWeave(p);
+                source.getImage();
+            }
+            const double weaveMs = timer.elapsed() / 30.0;
+            std::fprintf(stderr, "testweave: %dD comb: a frame %.1f ms, a weave %.1f ms\n", dimensions, frameMs, weaveMs);
+        }
+        source.setChromaDecoder(false);
+    }
     source.setChromaDecoder(false);
 
     // The field view is a bob: the lines of the top field are doubled on the rows 2k and 2k+1, those of the bottom field on the rows

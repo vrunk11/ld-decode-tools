@@ -3316,7 +3316,27 @@ void MainWindow::startEfmDecoding(qint32 decoder, bool noTimecodes, bool conceal
         statusBar()->showMessage(error, 8000);
         return;
     }
-    const qint32 index = audio->addDecoded(decoder, decoding->cacheFile(), tr("%1 (decoding...)").arg(EfmDecoding::backendName(backend)));
+    // A live input: the decoder begins a few seconds before where the video is, not at the start of what has come (which would be
+    // decoded again at each change of decoder, with the sound waiting for it). The audio it makes begins at that moment of the capture.
+    const bool live = (source == "-");
+    double startSeconds = 0.0;
+    qint64 startByte = 0;
+    liveEfmStartPending[decoder] = false;
+    if (live) {
+        const double videoNow = positionSeconds(tbcSource.getFieldViewEnabled() || weaveActive ? currentFieldNumber : currentFrameNumber);
+        const qint64 wanted = static_cast<qint64>(qMax(0.0, videoNow - 3.0) * 1.0e9);
+        if (liveEfmIndex.isEmpty()) {
+            liveEfmStartPending[decoder] = true;                // (no EFM yet: it begins with the first that comes)
+        } else {
+            qint32 chosen = liveEfmIndex.size() - 1;
+            for (qint32 i = 0; i < liveEfmIndex.size(); i++) {
+                if (liveEfmIndex[i].second >= wanted) { chosen = i; break; }
+            }
+            startByte = liveEfmIndex[chosen].first;
+            startSeconds = static_cast<double>(liveEfmIndex[chosen].second) / 1.0e9;
+        }
+    }
+    const qint32 index = audio->addDecoded(decoder, decoding->cacheFile(), tr("%1 (decoding...)").arg(EfmDecoding::backendName(backend)), startSeconds);
     if (select) {
         waveform->setTracks(audio->tracks(), index);
         audio->selectTrack(index);
@@ -3332,9 +3352,8 @@ void MainWindow::startEfmDecoding(qint32 decoder, bool noTimecodes, bool conceal
         // (decoded in the background: the track is there to be chosen, and what is played stays)
         waveform->setTracks(audio->tracks(), audio->currentTrack());
     }
-    const bool live = (source == "-");
     if (live) {
-        liveEfmFed[decoder] = 0;
+        liveEfmFed[decoder] = startByte;
         feedLiveEfm();
     }
     if (audioConfig) audioConfig->setDecodeStatus(decoder, live && liveEfm && liveEfm->size() == 0 ? tr("Waiting for EFM...") : tr("Decoding..."), true);
@@ -3492,6 +3511,10 @@ void MainWindow::loadLiveAudio()
     liveKinds.clear();
     livePcmTrack = 0;
     liveEfmFed[0] = liveEfmFed[1] = 0;
+    liveEfmIndex.clear();
+    liveEfmBytes = 0;
+    liveEfmStartPending[0] = liveEfmStartPending[1] = false;
+    livePcmStartSet = false;
     audio->setVideo(QString());
 
     liveEfm = std::make_unique<QTemporaryFile>();
@@ -3558,9 +3581,25 @@ void MainWindow::pollLiveTracks()
                 }
                 pairs = narrow;
             }
+            // (the first sample of the track is where its first block is in the capture, which may not be the start)
+            if (!livePcmStartSet) {
+                livePcmStartSet = true;
+                audio->setGrowingStart(2, static_cast<double>(block.timeNs) / 1.0e9);
+            }
             liveAnalogue->write(pairs);
             audioCame = true;
         } else if (kind == "efm") {
+            // Where in the capture each piece of EFM is, to decode from a place of it (a decoder started later need not begin at the start)
+            liveEfmIndex.append({ liveEfmBytes, block.timeNs });
+            liveEfmBytes += block.data.size();
+            for (qint32 i = 0; i < 2; i++) {
+                if (efmDecoders[i] && liveEfmStartPending[i]) {
+                    // (a decoder that was started before any EFM: its audio begins with this)
+                    liveEfmStartPending[i] = false;
+                    liveEfmFed[i] = liveEfmIndex.last().first;
+                    audio->setGrowingStart(i, static_cast<double>(block.timeNs) / 1.0e9);
+                }
+            }
             liveEfm->write(block.data);
             efmCame = true;
         }

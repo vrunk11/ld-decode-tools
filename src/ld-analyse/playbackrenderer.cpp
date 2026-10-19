@@ -112,7 +112,7 @@ void PlaybackRenderer::start(const TbcSource::RenderSettings &settings, quint32 
     liveParent = _liveParent;
 
     // Leave a core for the window, and a few for the rest of the machine
-    const qint32 count = std::clamp(QThread::idealThreadCount() - 2, 1, 4);
+    const qint32 count = settings.weave ? std::clamp(QThread::idealThreadCount() - 1, 2, 8) : std::clamp(QThread::idealThreadCount() - 2, 1, 4);
     while (static_cast<qint32>(sources.size()) < count) sources.push_back(std::make_unique<TbcSource>());
 
     {

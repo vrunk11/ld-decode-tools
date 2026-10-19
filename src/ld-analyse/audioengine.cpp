@@ -230,7 +230,7 @@ qint64 AudioEngine::sampleAt(double videoSeconds) const
         const double fraction = qBound(0.0, position - static_cast<double>(field), 1.0);
         return fieldSamples[field] + static_cast<qint64>(fraction * static_cast<double>(fieldSamples[field + 1] - fieldSamples[field]));
     }
-    return static_cast<qint64>((videoSeconds - offsetMs / 1000.0) * sampleRate());
+    return static_cast<qint64>((videoSeconds - trackStartSeconds() - offsetMs / 1000.0) * sampleRate());
 }
 
 double AudioEngine::videoSecondsOf(qint64 sample) const
@@ -242,7 +242,7 @@ double AudioEngine::videoSecondsOf(qint64 sample) const
         const double fraction = span > 0 ? static_cast<double>(sample - fieldSamples[field]) / static_cast<double>(span) : 0.0;
         return (static_cast<double>(field) + fraction) / fieldRate + offsetMs / 1000.0;
     }
-    return static_cast<double>(sample) / sampleRate() + offsetMs / 1000.0;
+    return static_cast<double>(sample) / sampleRate() + trackStartSeconds() + offsetMs / 1000.0;
 }
 
 bool AudioEngine::start(double videoSeconds)
@@ -366,7 +366,7 @@ void AudioEngine::clearImported()
     }
 }
 
-qint32 AudioEngine::addGrowing(qint32 slot, const QString &source, const QString &cacheFile, const QString &label, double sampleRate)
+qint32 AudioEngine::addGrowing(qint32 slot, const QString &source, const QString &cacheFile, const QString &label, double sampleRate, double startSeconds)
 {
     removeDecoded(slot);
     AudioTrackInfo info;
@@ -375,6 +375,7 @@ qint32 AudioEngine::addGrowing(qint32 slot, const QString &source, const QString
     info.where = cacheFile;
     info.trackId = -2 - slot;
     info.sampleRate = sampleRate;
+    info.startSeconds = startSeconds;
     available.append(info);
     return static_cast<qint32>(available.size()) - 1;
 }
@@ -429,3 +430,15 @@ qint64 AudioEngine::waitsForAudio() const { return feeder ? feeder->waits() : 0;
 qint64 AudioEngine::samplePlaying() const { return feeder ? feeder->positionNow() : 0; }
 qint32 AudioEngine::takeOutputLevel() { return feeder ? feeder->takeLevel() : 0; }
 qint64 AudioEngine::pairsGiven() const { return feeder ? feeder->givenPairs() : 0; }
+
+void AudioEngine::setGrowingStart(qint32 slot, double startSeconds)
+{
+    for (AudioTrackInfo &track: available) {
+        if (track.trackId == -2 - slot) track.startSeconds = startSeconds;
+    }
+}
+
+double AudioEngine::trackStartSeconds() const
+{
+    return chosen >= 0 && chosen < available.size() ? available[chosen].startSeconds : 0.0;
+}
