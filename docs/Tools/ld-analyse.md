@@ -191,6 +191,24 @@ When a capture is opened, the files in its folder that have its name are looked 
 
 On `... | ld-analyse -` with an LDX stream (see below), the audio and the EFM of the stream are taken too. The analogue audio is added to a growing track, so the waveform builds up as the stream comes, and the sound can be played from the position shown (a live input keeps the clock of the video: the sound waits for audio that has not arrived yet, and goes on when it has). The EFM is kept, and given as it comes to the decoders of the EFM tab; they can be started before any EFM has arrived (they wait for it, and the tab says so) or when it has. A stream says which tracks it holds at its start, so a producer should declare its EFM track from the beginning, even if it holds nothing for a while (see the specification, section 15).
 
+
+# Keyboard: jog, shuttle and shortcuts
+
+The keys seek like the controls of a laserdisc player (Playback > Seek). The arrows are a **jog**: each press steps one frame (one field in the field view), and held, the key repeats. With Shift they go ten, with Alt one second, and the page keys go a minute (Page Up back, Page Down forward); Home and End go to the start and the end. A seek stops the playback, as the buttons do (a live input can not be sought while it plays).
+
+J, K and L are a **shuttle**: L plays forward (the normal speed), and each further press doubles the speed (2x, 4x, 8x, 16x, 32x); J goes backward, from 1x to 32x; a key against the movement goes the other way at the normal speed; K stops. The fast speeds scan: the pictures that are due are shown as the clock goes, without the colour while the scan lasts (the colour comes back when it stops), and without sound.
+
+| Key | |
+| --- | --- |
+| Left, Right | Step back, forward (frame, or field) |
+| Shift+Left, Shift+Right | Back, forward ten |
+| Alt+Left, Alt+Right | Back, forward one second |
+| Page Up, Page Down | Back, forward one minute |
+| Home, End | Go to the start, to the end |
+| J, K, L | Shuttle backward, stop, forward |
+| Space | Play, pause |
+
+**Config > Keyboard shortcuts...** lists every command that has a place in the menus, with its keys, the menu it is in and its default. Click the shortcut of a command and press the keys to have; Backspace clears it, Reset gives back the one it had; Reset all does it for all. A key that two commands have is shown in red, with the name of the other. Search finds a command, a menu or a key. OK keeps the changes for the next time (in the `[shortcuts]` group of `ld-analyse.ini`).
 # Video filters
 
 Config > Video filter... shows the picture through ffmpeg filters (libavfilter). There are three kinds, which are independent of each other and run in this order:

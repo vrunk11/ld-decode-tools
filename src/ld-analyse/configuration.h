@@ -83,6 +83,10 @@ public:
     // The settings of the audio (volume, channels, waveform...), kept in their own group of the file
     QVariant audioValue(const QString &key, const QVariant &defaultValue = QVariant());
     void setAudioValue(const QString &key, const QVariant &value);
+    // The keys that were changed from the ones a command has by default: "Ctrl+X" (portable text), "" for none; found says if there are some
+    QString shortcutValue(const QString &commandId, bool &found);
+    void setShortcutValue(const QString &commandId, const QString &keys);
+    void clearShortcutValue(const QString &commandId);
     // The same for the playback (the weave at field rate...)
     QVariant playbackValue(const QString &key, const QVariant &defaultValue = QVariant());
     void setPlaybackValue(const QString &key, const QVariant &value);

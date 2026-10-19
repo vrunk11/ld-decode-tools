@@ -389,3 +389,20 @@ void Configuration::setPlaybackValue(const QString &key, const QVariant &value)
 {
     configuration->setValue("playback/" + key, value);
 }
+
+QString Configuration::shortcutValue(const QString &commandId, bool &found)
+{
+    const QString key = "shortcuts/" + commandId;
+    found = configuration->contains(key);
+    return found ? configuration->value(key).toString() : QString();
+}
+
+void Configuration::setShortcutValue(const QString &commandId, const QString &keys)
+{
+    configuration->setValue("shortcuts/" + commandId, keys);
+}
+
+void Configuration::clearShortcutValue(const QString &commandId)
+{
+    configuration->remove("shortcuts/" + commandId);
+}

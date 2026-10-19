@@ -7,6 +7,7 @@ set(ld-analyse_SOURCES
     closedcaptionsdialog.cpp closedcaptionsdialog.ui
     main.cpp
     mainwindow.cpp mainwindow.ui
+    shortcutsdialog.cpp
     oscilloscopedialog.cpp oscilloscopedialog.ui
     vectorscopedialog.cpp vectorscopedialog.ui
     aboutdialog.cpp aboutdialog.ui

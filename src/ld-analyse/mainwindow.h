@@ -28,6 +28,8 @@
 #include <QSignalBlocker>
 #include <QPainter>
 #include <QMap>
+#include <QHash>
+#include <QElapsedTimer>
 #include <QTemporaryFile>
 #include <memory>
 #include <QIcon>
@@ -45,6 +47,7 @@
 #include "videoparametersdialog.h"
 #include "chromadecoderconfigdialog.h"
 #include "configuration.h"
+#include "shortcutsdialog.h"
 #include "tbcsource.h"
 #include "playbackcontroller.h"
 #include "playbackrenderer.h"
@@ -239,6 +242,31 @@ private:
     bool weaveActive = false;
     QAction *actionVideoFilter = nullptr;
     void buildConfigMenu();
+    // Seeking by the keyboard (the keys of a jog and a shuttle) and the keys of the program that can be changed
+    QMenu *playbackMenu = nullptr;
+    QTimer *scanTimer = nullptr;
+    QElapsedTimer scanClock;
+    double scanSpeed = 0.0;               // times the normal speed, negative backward; 0: not scanning
+    double scanRemainder = 0.0;
+    bool scanChromaSuppressed = false;
+    QHash<QAction *, QList<QKeySequence>> shortcutDefaults;
+    QAction *actionKeyboardShortcuts = nullptr;
+    void setupSeekActions();
+    qint32 seekPosition();
+    qint32 seekLast();
+    qint32 seekFirst();
+    qint32 seekUnitsPerSecond();
+    void seekTo(qint32 position);
+    void seekBy(qint32 units);
+    void startScan(double speed);
+    void stopScan();
+    void scanTick();
+    void shuttle(qint32 direction);
+    void shuttleStop();
+    QVector<ShortcutCommand> shortcutCommands();
+    void captureShortcutDefaults();
+    void applyStoredShortcuts();
+    void showShortcuts();
     QAction *actionWeave = nullptr;
     void updateLive();
     void updateLiveControls();

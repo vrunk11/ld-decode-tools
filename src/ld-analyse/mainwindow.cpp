@@ -12,6 +12,8 @@
 #include <QDateTime>
 #include "mainwindow.h"
 #include <QJsonObject>
+#include <QSet>
+#include <functional>
 #include <QTemporaryFile>
 #include <QRegularExpression>
 #include <QTextStream>
@@ -182,6 +184,9 @@ MainWindow::MainWindow(QString inputFilenameParam, const TbcSource::StreamInput 
     }
     setupVideoFilter();
     buildConfigMenu();
+    setupSeekActions();
+    captureShortcutDefaults();
+    applyStoredShortcuts();
 
     // Field order: the button is left out when the window is narrow, so the menu has it too
     actionFieldOrder = new QAction(tr("Reverse field order"), this);
@@ -252,6 +257,10 @@ void MainWindow::buildConfigMenu()
     menu->addSeparator();
     if (actionAudioConfig) menu->addAction(actionAudioConfig);
 #endif
+    menu->addSeparator();
+    actionKeyboardShortcuts = menu->addAction(tr("&Keyboard shortcuts..."));
+    actionKeyboardShortcuts->setObjectName("actionKeyboardShortcuts");
+    connect(actionKeyboardShortcuts, &QAction::triggered, this, &MainWindow::showShortcuts);
     // (the separator that was before them is of no use at the end of the Window menu)
     const QList<QAction *> left = ui->menuWindow->actions();
     if (!left.isEmpty() && left.last()->isSeparator()) ui->menuWindow->removeAction(left.last());
@@ -720,6 +729,7 @@ void MainWindow::setupPlayback()
     ui->horizontalLayout_3->insertWidget(nextIndex, playPushButton);
 
     QMenu *menu = new QMenu(tr("&Playback"), this);
+    playbackMenu = menu;
     ui->menuBar->insertMenu(ui->menuWindow->menuAction(), menu);
 
     actionPlayPause = menu->addAction(tr("&Play"));
@@ -3721,3 +3731,234 @@ void MainWindow::waveformSeek(double seconds)
     ui->posHorizontalSlider->setValue(qBound(1, static_cast<qint32>(seconds * rate) + 1, qMax(1, last)));
 }
 #endif // LDDECODE_HAVE_AUDIO
+
+// Seeking by the keyboard ------------------------------------------------------------------------------------------------------------
+// The keys of a jog and a shuttle, as a laserdisc player has them: the arrows step (held, they repeat: a jog), with Shift, Alt and the
+// page keys they go further, and J, K and L are a shuttle (J backward, L forward, each press faster, K stops).
+
+// What the controls count in: the field in the field view, the frame in the others
+qint32 MainWindow::seekPosition()
+{
+    return tbcSource.getFieldViewEnabled() ? currentFieldNumber : currentFrameNumber;
+}
+
+qint32 MainWindow::seekLast()
+{
+    return tbcSource.getFieldViewEnabled() ? tbcSource.getNumberOfFields() : tbcSource.getNumberOfFrames();
+}
+
+qint32 MainWindow::seekFirst()
+{
+    if (!tbcSource.getIsLive()) return 1;
+    const qint32 firstFrame = tbcSource.getFirstAvailableFrame();
+    return tbcSource.getFieldViewEnabled() ? 2 * firstFrame - 1 : firstFrame;
+}
+
+// A second, in those units (the frame rate is 25 or 30, rounded)
+qint32 MainWindow::seekUnitsPerSecond()
+{
+    return (tbcSource.getSystem() == PAL ? 25 : 30) * (tbcSource.getFieldViewEnabled() ? 2 : 1);
+}
+
+// Go to a position (kept to what there is): the playback stops, as when the buttons are used
+void MainWindow::seekTo(qint32 position)
+{
+    if (!tbcSource.getIsSourceLoaded()) return;
+    // (a live input can not be sought while it plays)
+    if (tbcSource.getIsLive() && playback->isPlaying()) return;
+    pausePlayback();
+    const qint32 first = seekFirst();
+    position = qBound(first, position, qMax(first, seekLast()));
+    if (position == seekPosition()) return;
+    if (tbcSource.getFieldViewEnabled()) setCurrentField(position); else setCurrentFrame(position);
+    const QSignalBlocker spinBlocker(ui->posNumberSpinBox);
+    const QSignalBlocker sliderBlocker(ui->posHorizontalSlider);
+    ui->posNumberSpinBox->setValue(position);
+    ui->posHorizontalSlider->setValue(position);
+}
+
+void MainWindow::seekBy(qint32 units)
+{
+    seekTo(seekPosition() + units);
+}
+
+// The shuttle: a scan at a multiple of the normal speed, forward or backward, showing the pictures that are due as the clock goes (the
+// others are not shown), without the colour while it lasts
+void MainWindow::startScan(double speed)
+{
+    if (!tbcSource.getIsSourceLoaded() || tbcSource.getIsLive()) return;
+    pausePlayback();
+#ifdef LDDECODE_HAVE_AUDIO
+    audioStop();
+#endif
+    if (scanSpeed == 0.0 && tbcSource.getChromaDecoder()) {
+        scanChromaSuppressed = true;
+        tbcSource.setChromaDecoder(false);
+    }
+    scanSpeed = speed;
+    scanRemainder = 0.0;
+    scanClock.start();
+    scanTimer->start();
+    statusBar()->showMessage(tr("Scan %1%2x").arg(speed < 0 ? QString("-") : QString("+")).arg(qAbs(speed)), 0);
+}
+
+void MainWindow::stopScan()
+{
+    if (scanSpeed == 0.0) return;
+    scanTimer->stop();
+    scanSpeed = 0.0;
+    statusBar()->clearMessage();
+    if (scanChromaSuppressed) {
+        scanChromaSuppressed = false;
+        tbcSource.setChromaDecoder(true);
+        showImage();
+    }
+}
+
+void MainWindow::scanTick()
+{
+    if (scanSpeed == 0.0) return;
+    const double seconds = scanClock.restart() / 1000.0;
+    const double units = scanSpeed * seekUnitsPerSecond() * seconds + scanRemainder;
+    const qint32 step = static_cast<qint32>(units);
+    scanRemainder = units - step;
+    if (step == 0) return;
+    const qint32 before = seekPosition();
+    seekTo(before + step);
+    // (at the start or at the end: the scan is over)
+    if (seekPosition() == before) stopScan();
+}
+
+// A press of J (direction -1) or L (+1): from rest it plays at the normal speed (forward) or scans at it (backward), and each press in
+// the same direction doubles the speed, up to 32 times; against the movement it goes the other way at the normal speed
+void MainWindow::shuttle(qint32 direction)
+{
+    if (!tbcSource.getIsSourceLoaded() || tbcSource.getIsLive()) return;
+    static const double ladder[] = { 1.0, 2.0, 4.0, 8.0, 16.0, 32.0 };
+    const double current = scanSpeed != 0.0 ? scanSpeed : (playback->isPlaying() ? 1.0 : 0.0);
+    double next = direction;
+    if (current != 0.0 && (current > 0) == (direction > 0)) {
+        qint32 level = 0;
+        while (level < 5 && ladder[level] < qAbs(current)) level++;
+        next = direction * ladder[qMin(5, level + 1)];
+    }
+    if (next == 1.0) {
+        // (forward at the normal speed is the playback)
+        stopScan();
+        if (!playback->isPlaying()) togglePlayback();
+    } else {
+        startScan(next);
+    }
+}
+
+void MainWindow::shuttleStop()
+{
+    stopScan();
+    pausePlayback();
+}
+
+// The actions of the keys, in Playback > Seek
+void MainWindow::setupSeekActions()
+{
+    scanTimer = new QTimer(this);
+    scanTimer->setInterval(25);
+    scanTimer->setTimerType(Qt::PreciseTimer);
+    connect(scanTimer, &QTimer::timeout, this, &MainWindow::scanTick);
+
+    QMenu *seek = playbackMenu ? playbackMenu->addMenu(tr("&Seek")) : new QMenu(tr("&Seek"), this);
+    const auto add = [this, seek](const QString &id, const QString &text, const QKeySequence &key, auto &&handler) {
+        QAction *action = seek->addAction(text);
+        action->setObjectName(id);
+        action->setShortcut(key);
+        action->setAutoRepeat(true);          // (held, a key goes on: a jog)
+        connect(action, &QAction::triggered, this, handler);
+        return action;
+    };
+    add("seekStepBack", tr("Step back"), Qt::Key_Left, [this]() { stopScan(); seekBy(-1); });
+    add("seekStepForward", tr("Step forward"), Qt::Key_Right, [this]() { stopScan(); seekBy(1); });
+    seek->addSeparator();
+    add("seekBack10", tr("Back 10"), Qt::SHIFT | Qt::Key_Left, [this]() { stopScan(); seekBy(-10); });
+    add("seekForward10", tr("Forward 10"), Qt::SHIFT | Qt::Key_Right, [this]() { stopScan(); seekBy(10); });
+    add("seekBackSecond", tr("Back one second"), Qt::ALT | Qt::Key_Left, [this]() { stopScan(); seekBy(-seekUnitsPerSecond()); });
+    add("seekForwardSecond", tr("Forward one second"), Qt::ALT | Qt::Key_Right, [this]() { stopScan(); seekBy(seekUnitsPerSecond()); });
+    add("seekBackMinute", tr("Back one minute"), Qt::Key_PageUp, [this]() { stopScan(); seekBy(-60 * seekUnitsPerSecond()); });
+    add("seekForwardMinute", tr("Forward one minute"), Qt::Key_PageDown, [this]() { stopScan(); seekBy(60 * seekUnitsPerSecond()); });
+    add("seekStart", tr("Go to the start"), Qt::Key_Home, [this]() { stopScan(); seekTo(seekFirst()); });
+    add("seekEnd", tr("Go to the end"), Qt::Key_End, [this]() { stopScan(); seekTo(seekLast()); });
+    seek->addSeparator();
+    add("shuttleBackward", tr("Shuttle backward (each press faster)"), Qt::Key_J, [this]() { shuttle(-1); })->setAutoRepeat(false);
+    add("shuttleStop", tr("Shuttle stop"), Qt::Key_K, [this]() { shuttleStop(); })->setAutoRepeat(false);
+    add("shuttleForward", tr("Shuttle forward (each press faster)"), Qt::Key_L, [this]() { shuttle(1); })->setAutoRepeat(false);
+}
+
+// The keys of the program ------------------------------------------------------------------------------------------------------------
+
+// The commands that have a place in the menus, with where, and an id that stays the same (the name of the action, or its place and text)
+QVector<ShortcutCommand> MainWindow::shortcutCommands()
+{
+    QVector<ShortcutCommand> commands;
+    QSet<QAction *> seen;
+    const auto plain = [](QString text) {
+        text.remove(QChar('&'));
+        return text;
+    };
+    const std::function<void(QMenu *, const QString &)> walk = [&](QMenu *menu, const QString &path) {
+        for (QAction *action: menu->actions()) {
+            if (action->isSeparator()) continue;
+            if (QMenu *sub = action->menu()) {
+                walk(sub, path.isEmpty() ? plain(sub->title()) : path + " > " + plain(sub->title()));
+                continue;
+            }
+            if (seen.contains(action)) continue;
+            seen.insert(action);
+            ShortcutCommand command;
+            command.text = plain(action->text()).remove("...");
+            command.menu = path;
+            command.action = action;
+            command.id = action->objectName().isEmpty() ? (path + "/" + command.text) : action->objectName();
+            command.defaults = shortcutDefaults.value(action);
+            commands.append(command);
+        }
+    };
+    for (QAction *top: ui->menuBar->actions()) {
+        if (QMenu *menu = top->menu()) walk(menu, plain(menu->title()));
+    }
+    return commands;
+}
+
+// The keys the commands have as the program begins (before the ones that were changed are put on)
+void MainWindow::captureShortcutDefaults()
+{
+    for (const ShortcutCommand &command: shortcutCommands()) shortcutDefaults.insert(command.action, command.action->shortcuts());
+}
+
+void MainWindow::applyStoredShortcuts()
+{
+    for (const ShortcutCommand &command: shortcutCommands()) {
+        bool found = false;
+        const QString text = configuration.shortcutValue(command.id, found);
+        if (!found) continue;
+        QList<QKeySequence> keys;
+        for (const QString &part: text.split(QChar(';'), Qt::SkipEmptyParts)) keys << QKeySequence(part, QKeySequence::PortableText);
+        command.action->setShortcuts(keys);
+    }
+}
+
+void MainWindow::showShortcuts()
+{
+    ShortcutsDialog dialog(shortcutCommands(), this);
+    connect(&dialog, &ShortcutsDialog::changed, this, [this](const QString &id, const QList<QKeySequence> &keys) {
+        for (const ShortcutCommand &command: shortcutCommands()) {
+            if (command.id != id) continue;
+            command.action->setShortcuts(keys);
+            if (keys == command.defaults) {
+                configuration.clearShortcutValue(id);
+            } else {
+                QStringList parts;
+                for (const QKeySequence &key: keys) parts << key.toString(QKeySequence::PortableText);
+                configuration.setShortcutValue(id, parts.join(QChar(';')));
+            }
+        }
+    });
+    if (dialog.exec() == QDialog::Accepted) configuration.writeConfiguration();
+}
