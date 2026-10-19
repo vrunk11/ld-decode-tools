@@ -11,6 +11,7 @@
 #include <QApplication>
 #include <QElapsedTimer>
 #include <QFile>
+#include <QTemporaryDir>
 #include <cstdio>
 #include <cmath>
 #include <cstdlib>
@@ -34,9 +35,49 @@ static void step(const char *text)
     std::fflush(stderr);
 }
 
+// A capture that ends before its metadata do (a file cut short): nothing past the last whole frame is asked of the file
+static int truncatedCapture(const QString &name)
+{
+    TbcSource source;
+    source.loadSource(name);
+    QElapsedTimer wait;
+    wait.start();
+    while (!source.getIsSourceLoaded() && wait.elapsed() < 60000) QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+    if (!source.getIsSourceLoaded()) {
+        std::fprintf(stderr, "testweave: the capture did not load\n");
+        return 1;
+    }
+    const qint32 frames = source.getNumberOfFrames();
+    std::fprintf(stderr, "testweave: the cut capture has %d frames\n", frames);
+    source.setViewMode(TbcSource::ViewMode::FRAME_VIEW);
+    PalColour::Configuration pal = source.getPalConfiguration();
+    Comb::Configuration ntsc = source.getNtscConfiguration();
+    OutputWriter::Configuration output = source.getOutputConfiguration();
+    ntsc.dimensions = 2;
+    output.paddingAmount = 1;
+    source.setChromaConfiguration(pal, ntsc, output);
+    for (const bool chroma: { false, true }) {
+        source.setChromaDecoder(chroma);
+        for (qint32 frame = qMax(1, frames - 3); frame <= frames; frame++) {
+            source.load(frame, 2 * frame - 1);
+            if (source.getImage().isNull()) {
+                std::fprintf(stderr, "testweave: no picture for frame %d\n", frame);
+                return 1;
+            }
+        }
+        source.setViewMode(TbcSource::ViewMode::FIELD_VIEW);
+        source.load(frames, 2 * frames);
+        if (source.getImage().isNull()) return 1;
+        source.setViewMode(TbcSource::ViewMode::FRAME_VIEW);
+    }
+    std::fprintf(stderr, "testweave: the last frames of the cut capture are shown\n");
+    return 0;
+}
+
 int main(int argc, char *argv[])
 {
     QApplication app(argc, argv);
+    if (const char *cut = std::getenv("TRUNC_TBC")) return truncatedCapture(QString::fromLocal8Bit(cut));
     // (a real capture is needed: the test does nothing without one)
     const QString capture = "D:/decodde/test.ldx";
     if (!QFile::exists(capture)) {
@@ -194,6 +235,21 @@ int main(int argc, char *argv[])
         renderRound("second round, the decoders started again");
         renderer.stop();
     }
+    // A capture that ends early (here an LDX file of which the first part is kept): the frames end at the last whole one, and the last ones
+    // are shown, in colour too, instead of the program stopping
+    {
+        QTemporaryDir folder;
+        CHECK(folder.isValid());
+        QFile whole(capture);
+        CHECK(whole.open(QIODevice::ReadOnly));
+        QFile cut(folder.filePath("cut.ldx"));
+        CHECK(cut.open(QIODevice::WriteOnly));
+        cut.write(whole.read(60 << 20));
+        cut.close();
+        CHECK(truncatedCapture(cut.fileName()) == 0);
+        step("a capture cut short is shown as far as it goes");
+    }
+
     // The speeds: the clock gives as many positions a second as the rate times the speed, no more (nothing is made in between)
     for (const double speed: { 0.25, 0.5, 1.0 }) {
         PlaybackController clock;

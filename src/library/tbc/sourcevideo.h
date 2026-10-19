@@ -92,6 +92,11 @@ public:
     // from a stream that is still going; a false means the stream ended before it.
     bool hasField(qint32 fieldNumber);
 
+    // A program that shows video (ld-analyse) does not stop on a capture that is cut short, or whose metadata describe more video than
+    // it holds: a field that is not there is given blank (and a warning said), instead of the fatal error the tools that process it give
+    void setLenient(bool lenient) { lenientReads = lenient; }
+    bool isLenient() const { return lenientReads; }
+
     // Get and set methods
     bool isSourceValid();
     qint32 getNumberOfAvailableFields();
@@ -102,6 +107,8 @@ private:
     QFile inputFile;
     qint64 inputFilePos;
     bool isSourceVideoOpen;
+    bool lenientReads = false;
+    Data blankField(qint32 startFieldLine, qint32 endFieldLine) const;
     qint32 availableFields;
     qint32 fieldLength;
     qint32 fieldByteLength;

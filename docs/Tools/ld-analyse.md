@@ -560,3 +560,7 @@ An LDX file (see [the container format](../Specifications/container-format.md)) 
 ## LDX stream
 
 With `-`, an input that begins as a Matroska file does is an LDX stream, whatever `--system` says (it is looked at, not assumed) (`ld-container pack capture.tbc -o - | ld-analyse -`): the video system and TBC or CVBS come from it, and its video is shown as the video of any pipe is, as it arrives. `--input-format ldx` says so. Its audio and EFM tracks are used too (see Audio, above).
+
+# A capture that ends early
+
+A capture that is cut short (a file that was not finished, or that is still being written), or whose metadata describe more video than the file holds, is shown as far as it goes. The frames end at the last whole one: the frame count, the slider and the playback stop there, and what is asked of the end of the file is a blank field (and a warning in the console), not a fatal error. The same goes for an LDX file or a stream that ends inside a field. The tools that process video (`ld-chroma-decoder` and the others) still stop with an error on such a file, as they should.

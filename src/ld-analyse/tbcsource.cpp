@@ -25,6 +25,11 @@ TbcSource::TbcSource(QObject *parent) : QObject(parent)
 {
     resetState();
 
+    // A capture that is cut short, or whose metadata describe more than it holds, is shown as far as it goes: a field that is not there
+    // is blank, and the frames end at the last whole one (see numberOfWholeFrames)
+    sourceVideo.setLenient(true);
+    chromaSourceVideo.setLenient(true);
+
     // Configure the chroma decoder
     palConfiguration = palColour.getConfiguration();
     palConfiguration.chromaFilter = PalColour::transform2DFilter;
@@ -527,7 +532,7 @@ qint32 TbcSource::getNumberOfFrames()
 {
     if (!sourceReady) return 0;
     if (isLive) return liveFrozen ? frozenLastFrame : liveFrames;
-    return ldDecodeMetaData.getNumberOfFrames();
+    return numberOfWholeFrames();
 }
 
 // Method to get the number of available fields
@@ -535,7 +540,10 @@ qint32 TbcSource::getNumberOfFields()
 {
     if (!sourceReady) return 0;
     if (isLive) return 2 * (liveFrozen ? frozenLastFrame : liveFrames);
-    return ldDecodeMetaData.getNumberOfFields();
+    // (a file that ends inside a frame: the fields of the whole frames)
+    const qint32 whole = numberOfWholeFrames();
+    return whole < ldDecodeMetaData.getNumberOfFrames() ? qMin(ldDecodeMetaData.getNumberOfFields(), 2 * whole)
+                                                         : ldDecodeMetaData.getNumberOfFields();
 }
 
 // Method returns true if the TBC source is anamorphic (false for 4:3)
@@ -2034,4 +2042,25 @@ void TbcSource::clearPrerendered()
     prerenderedPosition = -1;
     prerenderedImage = QImage();
     invalidateImageCache();
+}
+
+// The frames the metadata describe that the video holds whole: a file that was cut short, or that is still being written, has fewer.
+// Counted back from the end of the metadata to the last frame whose two fields are both in the video.
+qint32 TbcSource::numberOfWholeFrames()
+{
+    const qint32 frames = ldDecodeMetaData.getNumberOfFrames();
+    qint32 available = sourceVideo.getNumberOfAvailableFields();
+    if (sourceMode != ONE_SOURCE && chromaSourceVideo.isSourceValid()) {
+        const qint32 chromaAvailable = chromaSourceVideo.getNumberOfAvailableFields();
+        if (chromaAvailable >= 0) available = available < 0 ? chromaAvailable : qMin(available, chromaAvailable);
+    }
+    if (available < 0 || frames < 1) return frames;
+    qint32 whole = qMin(frames, available / 2 + 1);
+    while (whole > 0) {
+        const qint32 first = ldDecodeMetaData.getFirstFieldNumber(whole);
+        const qint32 second = ldDecodeMetaData.getSecondFieldNumber(whole);
+        if (first >= 1 && second >= 1 && first <= available && second <= available) break;
+        whole--;
+    }
+    return qMax(1, whole);
 }

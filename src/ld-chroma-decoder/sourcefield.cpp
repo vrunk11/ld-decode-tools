@@ -61,7 +61,7 @@ void SourceField::loadFields(SourceVideo &sourceVideo, LdDecodeMetaData &ldDecod
         qint32 secondFieldNumber = ldDecodeMetaData.getSecondFieldNumber(useBlankFrame ? 1 : frameNumber);
 
         // A stream may end before the metadata says it does
-        if (!useBlankFrame && sourceVideo.isStream()
+        if (!useBlankFrame && (sourceVideo.isStream() || sourceVideo.isLenient())
             && !sourceVideo.hasField(qMax(firstFieldNumber, secondFieldNumber))) {
             useBlankFrame = true;
             firstFieldNumber = ldDecodeMetaData.getFirstFieldNumber(1);
@@ -180,7 +180,7 @@ void SourceField::loadFieldRun(SourceVideo &sourceVideo, LdDecodeMetaData &ldDec
         qint32 a = firstFieldNumber + (slot - startIndex);
         qint32 b = a + 1;
         // (a stream may not have the fields yet, or no more)
-        const bool useBlank = a < 1 || b > numberOfFields || (sourceVideo.isStream() && !sourceVideo.hasField(b));
+        const bool useBlank = a < 1 || b > numberOfFields || ((sourceVideo.isStream() || sourceVideo.isLenient()) && !sourceVideo.hasField(b));
         if (useBlank) {
             a = ldDecodeMetaData.getFirstFieldNumber(1);
             b = ldDecodeMetaData.getSecondFieldNumber(1);

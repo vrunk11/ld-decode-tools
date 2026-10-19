@@ -307,10 +307,16 @@ SourceVideo::Data SourceVideo::getVideoField(qint32 fieldNumber, qint32 startFie
 
     if (ldx) {
         // Whole fields, kept for the next time they are asked for
-        if (fieldNumber < 1 || fieldNumber > availableFields) qFatal("Application requested a field that is not in the input LDX file");
+        if (fieldNumber < 1 || fieldNumber > availableFields) {
+            if (lenientReads) { qWarning() << "Field" << fieldNumber << "is not in the input LDX file: shown blank"; return blankField(startFieldLine, endFieldLine); }
+            qFatal("Application requested a field that is not in the input LDX file");
+        }
         if (!fieldCache.contains(fieldNumber - 1)) {
             Data whole = ldx->getField(fieldNumber);
-            if (whole.size() != fieldLength) qFatal("A field of the input LDX file is not of the length the metadata says (field %d is %d samples, %d expected)", fieldNumber, static_cast<int>(whole.size()), fieldLength);
+            if (whole.size() != fieldLength) {
+                if (lenientReads) { qWarning() << "A field of the input LDX file is not of the length the metadata says: shown blank"; return blankField(startFieldLine, endFieldLine); }
+                qFatal("A field of the input LDX file is not of the length the metadata says (field %d is %d samples, %d expected)", fieldNumber, static_cast<int>(whole.size()), fieldLength);
+            }
             fieldCache.insert(fieldNumber - 1, new Data(whole), 1);
         }
         const Data &field = *fieldCache.object(fieldNumber - 1);
@@ -333,6 +339,10 @@ SourceVideo::Data SourceVideo::getVideoField(qint32 fieldNumber, qint32 startFie
     if (stream) {
         Data field;
         if (!stream->getField(fieldNumber, field)) {
+            if (lenientReads) {
+                qWarning() << "The input stream ended after" << stream->fieldsRead() << "fields: field" << fieldNumber + 1 << "is shown blank";
+                return blankField(startFieldLine, endFieldLine);
+            }
             qFatal("The input stream ended after %d fields, but field %d was asked for - "
                    "the metadata describes more video than the stream holds",
                    stream->fieldsRead(), fieldNumber + 1);
@@ -350,6 +360,10 @@ SourceVideo::Data SourceVideo::getVideoField(qint32 fieldNumber, qint32 startFie
     if (isCvbs) {
         // Fields come from whole frames, which are cached as two fields
         if (fieldNumber < 0 || fieldNumber >= availableFields) {
+            if (lenientReads) {
+                qWarning() << "Field" << fieldNumber + 1 << "is not in the input CVBS file: shown blank";
+                return blankField(startFieldLine, endFieldLine);
+            }
             qFatal("Application requested field that exceeds the boundaries of the input CVBS file");
         }
         if (!fieldCache.contains(fieldNumber)) readCvbsFrame(fieldNumber / 2);
@@ -396,6 +410,10 @@ SourceVideo::Data SourceVideo::getVideoField(qint32 fieldNumber, qint32 startFie
     if (availableFields != -1
         && (requiredStartPosition < 0
             || requiredStartPosition + requiredReadLength > (static_cast<qint64>(fieldByteLength) * availableFields))) {
+        if (lenientReads) {
+            qWarning() << "Field" << fieldNumber + 1 << "is past the end of the input TBC file: shown blank";
+            return blankField(startFieldLine + 1, endFieldLine + 1);
+        }
         qFatal("Application requested field line range that exceeds the boundaries of the input TBC file");
     }
 
@@ -438,7 +456,15 @@ SourceVideo::Data SourceVideo::getVideoField(qint32 fieldNumber, qint32 startFie
     } while (receivedBytes > 0 && totalReceivedBytes < requiredReadLength);
 
     // Verify read was ok
-    if (totalReceivedBytes != requiredReadLength) qFatal("Could not read field data from input TBC file");
+    if (totalReceivedBytes != requiredReadLength) {
+        // (the file ended inside the field: it was cut short, or is being written)
+        if (lenientReads) {
+            qWarning() << "Field" << fieldNumber + 1 << "could not be read whole from the input TBC file: shown blank";
+            inputFilePos = -1;           // (the position in the file is not known now)
+            return blankField(startFieldLine + 1, endFieldLine + 1);
+        }
+        qFatal("Could not read field data from input TBC file");
+    }
 
     if (startFieldLine == -1 && endFieldLine == -1) {
         // Insert the field data into the cache
@@ -536,4 +562,13 @@ void SourceVideo::readCvbsFrame(qint32 frameNumber)
                         field1->data(), field2->data());
     fieldCache.insert(frameNumber * 2, field1, 1);
     fieldCache.insert(frameNumber * 2 + 1, field2, 1);
+}
+
+// A field that is not there, as a program that shows video has it: all zeros, whole or the lines asked for (-1 for both: the whole field)
+SourceVideo::Data SourceVideo::blankField(qint32 startFieldLine, qint32 endFieldLine) const
+{
+    if (startFieldLine == -1 && endFieldLine == -1) return Data(fieldLength, 0);
+    const qint32 lineSamples = fieldLineLength > 0 ? fieldLineLength / 2 : 0;
+    const qint32 lines = qMax(0, endFieldLine - startFieldLine + 1);
+    return Data(lines * lineSamples, 0);
 }

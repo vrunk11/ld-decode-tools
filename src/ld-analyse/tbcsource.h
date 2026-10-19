@@ -80,6 +80,8 @@ public:
     bool getIsLive();
     // The audio samples before each field (one more entry than there are fields), from the metadata; empty if it does not say
     QVector<qint64> getAudioSamplesBeforeFields();
+    // The frames of the metadata that the video holds whole (a file cut short has fewer)
+    qint32 numberOfWholeFrames();
     // For a stream: take count of what has arrived. Call from the thread of the window.
     void updateLive();
     // The first frame that can be shown (the earlier ones have left the buffer of a stream)
