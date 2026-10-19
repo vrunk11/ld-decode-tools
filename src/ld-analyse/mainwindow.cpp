@@ -3312,6 +3312,12 @@ void MainWindow::startEfmDecoding(qint32 decoder, bool noTimecodes, bool conceal
     options.noTimecodes = noTimecodes;
     options.conceal = conceal;
     options.pad = pad;
+    // A live input goes on for as long as it likes: the audio that is decoded from it is kept as a ring too
+    std::shared_ptr<AudioRing> decodedRing;
+    if (source == "-") {
+        decodedRing = std::make_shared<AudioRing>(120.0, 44100.0);
+        decoding->setRing(decodedRing);
+    }
     QString error;
     if (!decoding->start(source, options, error)) {
         if (audioConfig) audioConfig->setDecodeStatus(decoder, error, false);
@@ -3338,7 +3344,9 @@ void MainWindow::startEfmDecoding(qint32 decoder, bool noTimecodes, bool conceal
             startSeconds = static_cast<double>(liveEfmIndex[chosen].second) / 1.0e9;
         }
     }
-    const qint32 index = audio->addDecoded(decoder, decoding->cacheFile(), tr("%1 (decoding...)").arg(EfmDecoding::backendName(backend)), startSeconds);
+    const QString trackName = tr("%1 (decoding...)").arg(EfmDecoding::backendName(backend));
+    const qint32 index = decodedRing ? audio->addRing(decoder, "efm", decodedRing, trackName, startSeconds)
+                                     : audio->addDecoded(decoder, decoding->cacheFile(), trackName, startSeconds);
     if (select) {
         waveform->setTracks(audio->tracks(), index);
         audio->selectTrack(index);
@@ -3358,7 +3366,7 @@ void MainWindow::startEfmDecoding(qint32 decoder, bool noTimecodes, bool conceal
         liveEfmFed[decoder] = startByte;
         feedLiveEfm();
     }
-    if (audioConfig) audioConfig->setDecodeStatus(decoder, live && liveEfm && liveEfm->size() == 0 ? tr("Waiting for EFM...") : tr("Decoding..."), true);
+    if (audioConfig) audioConfig->setDecodeStatus(decoder, live && liveEfm && liveEfm->endByte() == 0 ? tr("Waiting for EFM...") : tr("Decoding..."), true);
     connect(decoding, &EfmDecoding::grew, this, [this, decoder, decoding]() {
         audio->extend();
         if (audioConfig) audioConfig->setDecodeStatus(decoder, tr("Decoding: %1 seconds").arg(decoding->seconds(), 0, 'f', 1), true);
@@ -3519,8 +3527,7 @@ void MainWindow::loadLiveAudio()
     livePcmStartSet = false;
     audio->setVideo(QString());
 
-    liveEfm = std::make_unique<QTemporaryFile>();
-    liveEfm->open();
+    liveEfm = std::make_unique<EfmByteRing>();
 
     for (const LdxStream::OtherTrack &track: LdxStream::instance()->otherTracks()) {
         qInfo().noquote() << "Live input: track" << track.number << track.kind << track.name;
@@ -3535,9 +3542,8 @@ void MainWindow::loadLiveAudio()
 
 
     if (livePcmTrack != 0) {
-        liveAnalogue = std::make_unique<QTemporaryFile>();
-        liveAnalogue->open();
-        const qint32 index = audio->addGrowing(2, "analogue", liveAnalogue->fileName(), tr("Analogue (live)"), livePcmRate);
+        liveAnalogue = std::make_shared<AudioRing>(120.0, livePcmRate);
+        const qint32 index = audio->addRing(2, "analogue", liveAnalogue, tr("Analogue (live)"));
         waveform->setTracks(audio->tracks(), index);
         audio->selectTrack(index);
         actionWaveform->setEnabled(true);
@@ -3588,7 +3594,7 @@ void MainWindow::pollLiveTracks()
                 livePcmStartSet = true;
                 audio->setGrowingStart(2, static_cast<double>(block.timeNs) / 1.0e9);
             }
-            liveAnalogue->write(pairs);
+            liveAnalogue->append(pairs);
             audioCame = true;
         } else if (kind == "efm") {
             // Where in the capture each piece of EFM is, to decode from a place of it (a decoder started later need not begin at the start)
@@ -3602,22 +3608,31 @@ void MainWindow::pollLiveTracks()
                     audio->setGrowingStart(i, static_cast<double>(block.timeNs) / 1.0e9);
                 }
             }
-            liveEfm->write(block.data);
+            liveEfm->append(block.data);
             efmCame = true;
         }
     }
     if (audioCame) {
-        liveAnalogue->flush();
         waveform->setMessage(QString());
         audio->extend();
     }
-    if (efmCame) liveEfm->flush();
     feedLiveEfm();
+    // Only the last part of the EFM is kept, as for the video of a live input: what is older than that is let go (a decoder that is
+    // started, or changed, begins a few seconds before the video, not at the start)
+    if (efmCame && !liveEfmIndex.isEmpty()) {
+        const qint64 keepFrom = liveEfmIndex.last().second - static_cast<qint64>(30.0e9);
+        qint32 drop = 0;
+        while (drop < liveEfmIndex.size() - 1 && liveEfmIndex[drop].second < keepFrom) drop++;
+        if (drop > 0) {
+            liveEfm->trimBefore(liveEfmIndex[drop].first);
+            liveEfmIndex.remove(0, drop);
+        }
+    }
     // The end of the stream: the decoders are told there is no more
     if (tbcSource.getIsLiveEnded() && liveEfm) {
         feedLiveEfm();
         for (EfmDecoding *decoder: efmDecoders) {
-            if (decoder && decoder->isRunning() && liveEfmFed[decoder == efmDecoders[0] ? 0 : 1] >= liveEfm->size()) decoder->finishInput();
+            if (decoder && decoder->isRunning() && liveEfmFed[decoder == efmDecoders[0] ? 0 : 1] >= liveEfm->endByte()) decoder->finishInput();
         }
     }
 }
@@ -3627,10 +3642,10 @@ void MainWindow::feedLiveEfm()
 {
     if (!liveEfm) return;
     for (qint32 i = 0; i < 2; i++) {
-        if (!efmDecoders[i] || !efmDecoders[i]->isRunning() || liveEfmFed[i] >= liveEfm->size()) continue;
-        QFile reader(liveEfm->fileName());
-        if (!reader.open(QIODevice::ReadOnly) || !reader.seek(liveEfmFed[i])) continue;
-        const QByteArray data = reader.read(4 << 20);
+        if (!efmDecoders[i] || !efmDecoders[i]->isRunning() || liveEfmFed[i] >= liveEfm->endByte()) continue;
+        // (a decoder that fell behind by more than what is kept goes on from the oldest that is there)
+        if (liveEfmFed[i] < liveEfm->firstByte()) liveEfmFed[i] = liveEfm->firstByte();
+        const QByteArray data = liveEfm->read(liveEfmFed[i], 4 << 20);
         efmDecoders[i]->feed(data);
         liveEfmFed[i] += data.size();
     }

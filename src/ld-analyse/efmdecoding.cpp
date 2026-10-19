@@ -49,10 +49,15 @@ bool EfmDecoding::start(const QString &efmFile, const Options &options, QString 
         }
     }
 
-    cache = std::make_unique<QTemporaryFile>();
-    if (!cache->open()) {
-        error = tr("Could not make a file for the decoded audio");
-        return false;
+    cache.reset();
+    if (!ring) {
+        cache = std::make_unique<QTemporaryFile>();
+        if (!cache->open()) {
+            error = tr("Could not make a file for the decoded audio");
+            return false;
+        }
+    } else {
+        ring->clear();
     }
     written = 0;
     fedBytes = 0;
@@ -123,11 +128,15 @@ bool EfmDecoding::start(const QString &efmFile, const Options &options, QString 
 void EfmDecoding::readOutput()
 {
     QProcess *last = processes.empty() ? nullptr : processes.back().get();
-    if (!last || !cache) return;
+    if (!last || (!cache && !ring)) return;
     const QByteArray data = last->readAllStandardOutput();
     if (data.isEmpty()) return;
-    cache->write(data);
-    cache->flush();
+    if (ring) {
+        ring->append(data);
+    } else {
+        cache->write(data);
+        cache->flush();
+    }
     written += data.size();
     emit grew();
 }

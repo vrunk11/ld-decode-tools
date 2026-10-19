@@ -26,6 +26,7 @@
 
 #include "audioengine.h"
 #include "audioconfigdialog.h"
+#include "audioring.h"
 #include "efmdecoding.h"
 #include "sidecaraudio.h"
 #include "theme.h"
@@ -338,6 +339,8 @@ int main(int argc, char *argv[])
                 bool done = false;
                 QObject::connect(&decoding, &EfmDecoding::finished, [&](bool, const QString &) { done = true; });
                 QString error;
+                auto liveRing = std::make_shared<AudioRing>(300.0, 44100.0);
+                if (mode == 1) decoding.setRing(liveRing);
                 CHECK(decoding.start(mode == 0 ? realCapture : QStringLiteral("-"), EfmDecoding::Options(), error));
                 if (mode == 1) {
                     // (nothing for a moment, as when the EFM comes late)
@@ -352,10 +355,13 @@ int main(int argc, char *argv[])
                 decodeWait.start();
                 while (!done && decodeWait.elapsed() < 120000) waitMs(50);
                 CHECK(done);
-                QFile result(decoding.cacheFile());
-                CHECK(result.open(QIODevice::ReadOnly));
-                if (mode == 0) sizes[i] = result.size();
-                else CHECK(result.size() == sizes[i] && sizes[i] > 0);
+                if (mode == 0) {
+                    QFile result(decoding.cacheFile());
+                    CHECK(result.open(QIODevice::ReadOnly));
+                    sizes[i] = result.size();
+                } else {
+                    CHECK(liveRing->endSample() * 4 == sizes[i] && sizes[i] > 0);      // (as much audio, in a ring)
+                }
             }
         }
     }
@@ -503,6 +509,26 @@ int main(int argc, char *argv[])
         CHECK(std::fabs(late.videoSecondsOf(2 * 44100) - 7.0) < 1e-9);
         late.setGrowingStart(5, 6.0);
         CHECK(late.sampleAt(7.0) == 44100);
+    }
+
+    // Audio that arrives into a ring: the engine plays and draws it as it comes, and what was let go before it was seen is silence in
+    // the shape; the samples keep their numbers, so the place of a moment of the video is the same
+    {
+        auto ring = std::make_shared<AudioRing>(0.05, 44100.0);                 // (about two thousand pairs)
+        AudioEngine live;
+        live.setVideo(QString());
+        const qint32 index = live.addRing(6, "analogue", ring, "ring", 10.0);
+        CHECK(live.selectTrack(index));
+        QByteArray piece(4 * 44100, 'a');                                        // (a second)
+        ring->append(piece);
+        live.extend();
+        CHECK(live.samples() == 44100 && live.peaks().samples() == 44100);
+        CHECK(live.sampleAt(10.5) == 22050);
+        ring->append(piece);
+        ring->append(piece);
+        live.extend();
+        CHECK(live.samples() == 3 * 44100 && live.peaks().samples() == 3 * 44100);
+        CHECK(live.sampleAt(12.0) == 2 * 44100);
     }
     // The channels and the volume
     bool left = true, right = true;

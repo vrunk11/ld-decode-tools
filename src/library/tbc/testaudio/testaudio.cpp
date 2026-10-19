@@ -19,6 +19,7 @@
 
 #include "audiopeaks.h"
 #include "audioreader.h"
+#include "audioring.h"
 #include "ldxcapture.h"
 #ifdef LDDECODE_WITH_LDX
 #include "ldx.h"
@@ -202,6 +203,45 @@ int main(int argc, char *argv[])
     }
 #endif
 
+
+    // A ring of arriving audio: it keeps the last part, the samples keep their numbers, a piece of a pair waits for the next
+    {
+        AudioRing ring(0.01, 1000.0);                   // (1024 pairs at the least: that is what is kept)
+        QByteArray all;
+        for (qint32 i = 0; i < 3000; i++) {
+            const qint16 left = static_cast<qint16>(i), right = static_cast<qint16>(-i);
+            all.append(reinterpret_cast<const char *>(&left), 2);
+            all.append(reinterpret_cast<const char *>(&right), 2);
+        }
+        // in pieces that cut a pair in two
+        ring.append(all.left(1001));
+        CHECK(ring.endSample() == 250 && ring.firstSample() == 0);
+        ring.append(all.mid(1001, 5000));
+        ring.append(all.mid(6001));
+        CHECK(ring.endSample() == 3000);
+        CHECK(ring.firstSample() == 3000 - 1024);
+        qint64 firstGiven = -1;
+        QVector<qint16> got = ring.read(2900, 50, &firstGiven);
+        CHECK(firstGiven == 2900 && got.size() == 100 && got[0] == 2900 && got[1] == -2900 && got[98] == 2949 && got[99] == -2949);
+        // what was let go is not there: the first held is given
+        got = ring.read(0, 3000, &firstGiven);
+        CHECK(firstGiven == 3000 - 1024 && got.size() == 2 * 1024 && got[0] == static_cast<qint16>(3000 - 1024) && got[2 * 1023] == 2999);
+        CHECK(ring.read(3000, 10).isEmpty());
+        // a piece longer than the ring
+        AudioRing small(0.001, 1000.0);
+        small.append(all);
+        CHECK(small.endSample() == 3000 && small.firstSample() == 3000 - 1024);
+        got = small.read(2990, 20);
+        CHECK(got.size() == 20 && got[0] == 2990);
+        // read as audio
+        AudioReader reader;
+        auto shared = std::make_shared<AudioRing>(0.01, 1000.0);
+        reader.openRing(shared);
+        shared->append(all);
+        CHECK(reader.samples() == 3000 && reader.firstSample() == 3000 - 1024 && reader.sampleRate() == 1000.0);
+        got = reader.read(2995, 10);
+        CHECK(got.size() == 10 && got[0] == 2995);
+    }
     std::fprintf(stderr, "testaudio: all tests passed\n");
     return 0;
 }

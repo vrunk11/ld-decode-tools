@@ -17,7 +17,10 @@
 #include <atomic>
 #include <memory>
 
+#include <QMap>
+
 #include "audiopeaks.h"
+#include "audioring.h"
 #include "audioreader.h"
 
 class QAudioSink;
@@ -55,6 +58,9 @@ public:
     qint32 addDecoded(qint32 slot, const QString &cacheFile, const QString &label, double startSeconds = 0.0) { return addGrowing(slot, "efm", cacheFile, label, 44100.0, startSeconds); }
     // The same for any raw 16-bit stereo file that grows (the analogue audio of a live input is slot 2)
     qint32 addGrowing(qint32 slot, const QString &source, const QString &cacheFile, const QString &label, double sampleRate, double startSeconds = 0.0);
+    // Audio that arrives and of which only the last part is kept, as the video of a live input (a live input's audio, or audio being decoded
+    // from its EFM as it comes): the same, with the ring that has it
+    qint32 addRing(qint32 slot, const QString &source, std::shared_ptr<AudioRing> ring, const QString &label, double startSeconds = 0.0);
     // Where in the capture the first sample of a growing track is (known when its first audio comes)
     void setGrowingStart(qint32 slot, double startSeconds);
     void removeDecoded(qint32 slot);
@@ -134,6 +140,7 @@ private:
     bool usesFieldSamples() const;
     double trackStartSeconds() const;
     QByteArray deviceId;
+    QMap<qint32, std::shared_ptr<AudioRing>> rings;        // (by slot)
     QVector<qint16> importedSamples;
     double importedRate = 44100.0;
 };

@@ -10,6 +10,8 @@
 
 #include "audioreader.h"
 
+#include "audioring.h"
+
 #include <QFile>
 #include <QFileInfo>
 #include <QMutex>
@@ -23,7 +25,8 @@
 #include "ldxcapture.h"
 
 struct AudioReader::Private {
-    enum class Kind { None, Ldx, Pcm, Wav, Memory } kind = Kind::None;
+    enum class Kind { None, Ldx, Pcm, Wav, Memory, Ring } kind = Kind::None;
+    std::shared_ptr<AudioRing> ring;
     LdxCapture ldx;
     QFile pcm;
     CvbsAudio::WavReader wav;
@@ -146,12 +149,28 @@ void AudioReader::openMemory(const QVector<qint16> &samples, double sampleRate)
 
 bool AudioReader::isGrowing() const { return d->growing; }
 
-qint64 AudioReader::samples() const { return d->total; }
+void AudioReader::openRing(std::shared_ptr<AudioRing> audioRing)
+{
+    QMutexLocker locker(&d->lock);
+    d->growing = true;
+    d->kind = Private::Kind::Ring;
+    d->rate = audioRing->rate();
+    d->ring = std::move(audioRing);
+}
+
+qint64 AudioReader::firstSample() const
+{
+    return d->kind == Private::Kind::Ring && d->ring ? d->ring->firstSample() : 0;
+}
+
+qint64 AudioReader::samples() const { return d->kind == Private::Kind::Ring && d->ring ? d->ring->endSample() : d->total; }
 double AudioReader::sampleRate() const { return d->rate; }
 
 QVector<qint16> AudioReader::read(qint64 start, qint64 count)
 {
     QMutexLocker locker(&d->lock);
+    // (an arriving ring: from the oldest held, if what is asked for was let go)
+    if (d->kind == Private::Kind::Ring && d->ring) return d->ring->read(start, count);
     if (d->growing && start + count > d->total) d->total = QFileInfo(d->pcm.fileName()).size() / 4;       // (it may have grown since)
     QVector<qint16> out;
     if (start < 0 || count < 1 || start >= d->total) return out;

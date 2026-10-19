@@ -35,6 +35,8 @@ public:
 
     // Stereo samples, interleaved, one pair after the other from where the last call ended
     void add(const qint16 *stereo, qint64 pairs);
+    // The same for samples that did not come (audio that was let go before it was seen): silence, quickly
+    void addSilence(qint64 pairs);
 
     qint64 samples() const;                         // pairs added
     qint64 bins() const;                            // whole bins, and the one being filled

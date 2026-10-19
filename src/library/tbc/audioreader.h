@@ -25,6 +25,8 @@ struct AudioTrackInfo {
     qint32 bits = 16;
     double startSeconds = 0.0;  // the moment of the capture where the first sample of the track is (audio decoded from a part of the EFM, or that came late)
 };
+class AudioRing;
+
 
 // Reads the audio of a capture as 16-bit stereo samples (a left and a right for each sample, in turn), whatever it is kept as:
 // a pcm track of an LDX file (16 bits, or the 24 bits of a CVBS capture, which are brought to 16 for playing), the .pcm file
@@ -46,6 +48,10 @@ public:
     void openMemory(const QVector<qint16> &samples, double sampleRate);
     // A raw 16-bit stereo file that another program is still writing (audio being decoded): samples() grows with refresh()
     bool openGrowing(const QString &fileName, double sampleRate, QString &error);
+    // Audio that is arriving, of which a ring keeps the last part (a live input): samples() is the number of the next one to come, and
+    // firstSample() the oldest that is held (what is read before it is not there)
+    void openRing(std::shared_ptr<AudioRing> ring);
+    qint64 firstSample() const;
     void refresh();
 
     qint64 samples() const;             // pairs of samples

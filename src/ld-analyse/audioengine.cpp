@@ -61,6 +61,8 @@ protected:
         }
         qint16 *out = reinterpret_cast<qint16 *>(data);
         std::memset(data, 0, static_cast<size_t>(pairs) * 4);
+        // (audio that is arriving in a ring and was let go before it was played: from the oldest that is held)
+        if (reader && reader->firstSample() > position) position = reader->firstSample();
         qint64 advance = pairs;
         if (reader && position + pairs > 0) {
             // (a start before the audio begins gives silence up to its first sample)
@@ -150,7 +152,8 @@ bool AudioEngine::selectTrack(qint32 index)
     QString error;
     bool ok = true;
     const bool decoded = available[index].trackId <= -2;
-    if (decoded) ok = opened->openGrowing(available[index].where, available[index].sampleRate, error);
+    if (decoded && rings.contains(-2 - available[index].trackId)) opened->openRing(rings.value(-2 - available[index].trackId));
+    else if (decoded) ok = opened->openGrowing(available[index].where, available[index].sampleRate, error);
     else if (available[index].source == "import" && available[index].trackId == -1) opened->openMemory(importedSamples, importedRate);
     else ok = opened->open(available[index], error);
     if (!ok) {
@@ -382,6 +385,7 @@ qint32 AudioEngine::addGrowing(qint32 slot, const QString &source, const QString
 
 void AudioEngine::removeDecoded(qint32 slot)
 {
+    rings.remove(slot);
     for (qint32 i = 0; i < available.size(); i++) {
         if (available[i].trackId != -2 - slot) continue;
         if (i == chosen) {
@@ -403,6 +407,11 @@ void AudioEngine::extend()
     reader->refresh();
     const qint64 total = reader->samples();
     qint64 done = audioPeaks.samples();
+    // (a ring has let go of what was too old: that part of the shape is silence)
+    if (reader->firstSample() > done) {
+        audioPeaks.addSilence(reader->firstSample() - done);
+        done = reader->firstSample();
+    }
     while (done < total) {
         const QVector<qint16> block = reader->read(done, qMin<qint64>(65536, total - done));
         if (block.isEmpty()) break;
@@ -441,4 +450,11 @@ void AudioEngine::setGrowingStart(qint32 slot, double startSeconds)
 double AudioEngine::trackStartSeconds() const
 {
     return chosen >= 0 && chosen < available.size() ? available[chosen].startSeconds : 0.0;
+}
+
+qint32 AudioEngine::addRing(qint32 slot, const QString &source, std::shared_ptr<AudioRing> ring, const QString &label, double startSeconds)
+{
+    const qint32 index = addGrowing(slot, source, QString(), label, ring->rate(), startSeconds);
+    rings.insert(slot, std::move(ring));
+    return index;
 }

@@ -121,3 +121,23 @@ void mixStereo(const qint16 *in, qint16 *out, qint64 pairs, const AudioMix &mix)
         out[2 * i + 1] = outRight;
     }
 }
+
+void AudioPeaks::addSilence(qint64 pairs)
+{
+    QMutexLocker locker(&lock);
+    while (pairs > 0) {
+        if (peaks.isEmpty() || filled >= binSamples) {
+            peaks.append(Peak());
+            filled = 0;
+        }
+        const qint64 take = std::min<qint64>(pairs, binSamples - filled);
+        Peak &peak = peaks.last();
+        peak.minLeft = std::min<qint16>(peak.minLeft, 0);
+        peak.maxLeft = std::max<qint16>(peak.maxLeft, 0);
+        peak.minRight = std::min<qint16>(peak.minRight, 0);
+        peak.maxRight = std::max<qint16>(peak.maxRight, 0);
+        filled += static_cast<qint32>(take);
+        added += take;
+        pairs -= take;
+    }
+}

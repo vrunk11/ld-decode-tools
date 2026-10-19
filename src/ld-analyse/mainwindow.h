@@ -268,8 +268,8 @@ private:
     void stopEfmDecoders();
     void showWaveform(bool shown);
     // A live input's other tracks: its audio (a growing file read as the waveform and the sound) and its EFM (kept, and given to the decoders)
-    std::unique_ptr<QTemporaryFile> liveAnalogue;
-    std::unique_ptr<QTemporaryFile> liveEfm;
+    std::shared_ptr<AudioRing> liveAnalogue;        // (the last part of the audio of a live input: a ring)
+    std::unique_ptr<EfmByteRing> liveEfm;           // (the last part of its EFM)
     QTimer *liveAudioTimer = nullptr;
     QMap<quint32, QString> liveKinds;
     quint32 livePcmTrack = 0;
