@@ -184,6 +184,8 @@ The left part of the panel has, from the top: **the source** (Analogue, EFM digi
 * **EFM**: decodes the EFM of the capture (the EFM track of an LDX file, or the `.efm` beside a `.tbc`) from the program, with either of the two decoders the project has: the **efm-decoder suite** (`efm-decoder-f2 | efm-decoder-d24 | efm-decoder-audio`, run as piped programs) or **ld-process-efm**. Options: EFM without timecodes (the usual one of a LaserDisc), conceal the errors, begin the audio at disc time 00:00. The audio is decoded as it goes: the waveform and the sound follow the decoder, and you can go on with what is decoded already. One decoder runs at a time: it is chosen in a drop-down of the tab, a setting of its own that is kept and has nothing to do with the choice of the source (the source menu of the panel says EFM digital, and asks for the EFM to be decoded by that decoder if it has not been); starting one decoder stops the other. A box of statistics shows the sound (the track played, how far the sound is from the picture, how long it waited for audio that had not come) and each decoder (audio decoded and how fast, how far ahead of the sound, and, when it ends, the errors, corrections and concealed samples it reports, which only the programs know when they end). The programs are those beside ld-analyse. The audio of EFM begins where the decoding begins: use the offset to line it up with the video.
 
 
+When a capture has EFM, its audio is decoded and it is the one that is heard (the analogue audio is chosen again if the EFM gives none); **Config > Audio panel > Output > Hear the digital audio (decoded from the EFM) first** turns that off, and then the analogue audio is the one that plays. The D/A key of the remote and the source list of the waveform panel change it at any time.
+
 ## Audio and EFM beside the capture
 
 When a capture is opened, the files in its folder that have its name are looked at: `capture.wav`, `capture.flac`, `capture.mp3`, `capture.aiff`... any file that ffmpeg finds sound in, whatever its extension, is a source of audio (the Imported source of the panel; a recording used as a reference, or the audio of a decoder that is not part of this project). They are decoded by ffmpeg in the background, as tracks that grow, so a long recording does not make the capture wait. The RF samples of a capture (`.lds`, `.ldf`, or a FLAC at a rate that is not one of sound, such as 40000 Hz) are not taken for audio. A `capture.efm` is decoded in the background by the decoder chosen in the Audio panel (as long as the capture has not already the audio of its EFM), and is there in the source menu as EFM digital. The sound that was played stays: nothing is switched by itself. The audio of another recording will not be exactly in step: use the offset of the Audio panel (Import tab). This is switched off with the box **Open the audio files and the EFM beside the capture** of the Output tab (it takes effect when a capture is opened).
@@ -194,7 +196,7 @@ On `... | ld-analyse -` with an LDX stream (see below), the audio and the EFM of
 
 # Keyboard: jog, shuttle and shortcuts
 
-The keys seek like the controls of a laserdisc player (Playback > Seek). The arrows are a **jog**: each press steps one frame (one field in the field view), and held, the key repeats. With Shift they go ten, with Alt one second, and the page keys go a minute (Page Up back, Page Down forward); Home and End go to the start and the end. A seek stops the playback, as the buttons do (a live input can not be sought while it plays).
+The keys seek like the controls of a laserdisc player (the [remote control](#remote-control) has the same commands as buttons). The arrows are a **jog**: each press steps one frame (one field in the field view), and held, the key repeats. With Shift they go ten, with Alt one second, and the page keys go a minute (Page Up back, Page Down forward); Home and End go to the start and the end. A seek stops the playback, as the buttons do (a live input can not be sought while it plays).
 
 J, K and L are a **shuttle**: L plays forward (the normal speed), and each further press doubles the speed (2x, 4x, 8x, 16x, 32x); J goes backward, from 1x to 32x; a key against the movement goes the other way at the normal speed; K stops. The fast speeds scan: the pictures that are due are shown as the clock goes, without the colour while the scan lasts (the colour comes back when it stops), and without sound.
 
@@ -206,9 +208,54 @@ J, K and L are a **shuttle**: L plays forward (the normal speed), and each furth
 | Page Up, Page Down | Back, forward one minute |
 | Home, End | Go to the start, to the end |
 | J, K, L | Shuttle backward, stop, forward |
+| Ctrl+Left, Ctrl+Right | The chapter before (or the start of this one), the next chapter |
+| M | One-shot memory: keep the place, then go back to it |
+| D | Digital / analogue sound |
+| S | Still with sound |
+| I | Show or hide the disc numbers over the picture |
+| Ctrl+Shift+R | Remote control |
+| F11 | Full screen (Escape leaves it) |
 | Space | Play, pause |
 
-**Config > Keyboard shortcuts...** lists every command that has a place in the menus, with its keys, the menu it is in and its default. Click the shortcut of a command and press the keys to have; Backspace clears it, Reset gives back the one it had; Reset all does it for all. A key that two commands have is shown in red, with the name of the other. Search finds a command, a menu or a key. OK keeps the changes for the next time (in the `[shortcuts]` group of `ld-analyse.ini`).
+**Config > Keyboard shortcuts...** lists every command that has a place in the menus or on the remote control, with its keys, the menu it is in and its default. Click the shortcut of a command and press the keys to have; Backspace clears it, Reset gives back the one it had; Reset all does it for all. A key that two commands have is shown in red, with the name of the other. Search finds a command, a menu or a key. OK keeps the changes for the next time (in the `[shortcuts]` group of `ld-analyse.ini`).
+## Chapters and stop codes
+
+The slider of the main window, and the bar of the full screen, have a small mark where each chapter of the disc begins (from the VBI of the capture; there are none for a capture without chapters). **Playback > Pause at CAV stop codes** (on by default) makes the playback pause on a frame that has a picture stop code, as a player does; a message in the status bar says where, and playing again goes on from there. It does not pause while scanning or going backward, and the frame where the playback begins is not a stop.
+
+# Remote control
+
+**View > Remote control** or **Window > Remote control** (Ctrl+Shift+R) opens a remote of a laserdisc player: the keys of the playback, a display, and a jog and shuttle wheel. It is a window that can be left open beside the main one (its place is kept), and every key has a tooltip. The keys do what the commands of the keyboard do, so the two can be mixed.
+
+| Keys | |
+| --- | --- |
+| 0 to 9, +10, C | The number to search: C clears it, +10 adds ten (ten seconds for a time) |
+| The mode (top left of the display) | What the number is for the CHP/TM search: a **chapter**, a **picture** (CAV picture number) or a **time** (CLV, typed as hours, minutes and seconds: 1230 is 12 minutes 30 seconds). Each press goes to the next one the disc has. |
+| CHP/TM | Search: go to the chapter, picture or time that was typed. The numbers of a disc are looked for in the VBI of the capture: one it does not have is answered NOT FOUND. A search made while playing goes on playing. |
+| FRAME | Search: go to the frame of the capture that has the number that was typed (whatever the mode is) |
+| PGM | A small window with the chapters of the disc, each with its time (the time or the picture number of the disc, the frame and the time in the capture); the button of the window (or a double click) goes to the start of the chapter that is chosen |
+| FILTER | The ffmpeg video filters of Window > Video filter... on or off (the Filters button of the window); off when the build has none |
+| SKIP | The start of the chapter that is in (or of the one before it, when at the start), and the start of the next one; with no chapters in the VBI, the ends |
+| PLAY, PAUSE | Play at the normal speed; stop on the picture |
+| STEP | One picture back or on (the frame, or the field in the field view); held, it repeats |
+| MULTI-SPEED − and + | The speed of the keys below: 1/4, 1/2, 1, 2, 4, 8, 16 or 32 times |
+| The two arrows | Go backward or forward at that speed. Forward up to 4x it is the playback (with the colour, and the sound at 1x); the others scan, as the shuttle keys do |
+| JOG MODE | The wheel jogs when it is lit (see below), and is a shuttle ring when it is not |
+| DISPLAY | The numbers of the disc, in a window that floats over the picture (the same as **View > Disc numbers over the picture**, I) |
+| D/A | The sound that is heard: the one decoded from the EFM, or the analogue one (lit and DIG on the display for the digital one, ANA for the analogue). The EFM is decoded if it was not yet (with the decoder chosen in the Audio panel) |
+| RAW | The picture as captured, without the colour decoded (lit); a press decodes the colour again (the Source/Chroma button) |
+| MUTE | The sound off (lit); the mute button of the waveform panel is the same |
+| FRAM (frame mode) | The view of the picture: FRAM (frame), SPLT (split), FLD (field), DEIN (deinterlaced); each press goes to the next |
+| REPEAT A, B | A marks the start of a part, B its end: the part plays again and again. A press of a key that is set clears it |
+| ONE-SHOT MEMORY | Keeps the place; the next press goes back to it |
+| STILL WITH SOUND | The picture stays, the sound goes on from it; any key of the transport ends it |
+| CX, DISC SIDE | Lamps that follow the VBI of the picture (CX on the disc, the side). CX is not decoded. |
+
+**The wheel.** In the jog mode a step of its turn (12 degrees) is a picture: clockwise goes forward. The wheel of the mouse over it does the same, a notch a picture. In the shuttle mode its angle from the centre is the speed (still near the centre, then 1/4x up to 32x at the end of its travel, the sign being the way), and it springs back to the centre, and the picture stops, when it is let go.
+
+# Full screen
+
+**View > Full screen** (F11; Escape goes back) shows the picture over all the screen: the menus, the bars and the waveform go, and the picture is cropped to the **active area** (the lines and the width the video parameters give, without the blanking) and fitted to the screen, at 4:3 or 16:9 as the display aspect ratio is set. The remote and the numbers of the disc (the time code, the chapter, the picture, the frame, the sound) are windows that float over it, where you put them (their places are kept). A **bar of the position** is at the bottom of the picture, with the time and the length: the skip buttons (chapters) and a play/pause button are at its left, a click goes to that place, and a drag goes through the capture; a button at its right leaves the full screen; it goes away with the others, and stays while the mouse is on it. They are shown when the full screen begins, and the View menu turns them off or on; when it ends they are as they were before. The colour is decoded and the picture is the deinterlaced view (where the video filters are available) while the full screen lasts; the Source/Chroma and view settings you had come back when it ends. The numbers are in the Window menu too. When the mouse has not moved for a few seconds the remote and the bar go away, with the pointer, as the controls of a video player do; they come back when it moves. The numbers of the disc are the screen of the player: they stay. The remote and the numbers are windows with their own title bar: a drawing pin (pressed in: the window stays when the other controls go away; the numbers are pinned by default, the remote is not) and a button that closes it. The bar moves the window; the settings are kept. They stay while the pointer is on one of them, and while a number is being typed. The digits, Enter (search), Backspace (clear) and + of the keyboard are the keys of the remote in the full screen, and all the shortcuts keep working. Clicking the picture does not pick a scan line in the full screen.
+
 # Video filters
 
 Config > Video filter... shows the picture through ffmpeg filters (libavfilter). There are three kinds, which are independent of each other and run in this order:
@@ -303,6 +350,10 @@ When checked, the frame is scaled to fit the window whenever the window is resiz
 ## Toggle chroma during seek
 
 When checked, chroma decoding is switched off while the next/previous frame buttons are held down, which makes seeking much faster; the colour comes back when the button is released.
+
+## Remote control, Disc numbers over the picture, Full screen
+
+See [Remote control](#remote-control) and [Full screen](#full-screen).
 
 ## Theme
 

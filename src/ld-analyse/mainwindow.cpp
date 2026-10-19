@@ -25,6 +25,8 @@
 #include "cvbs.h"
 
 #include <QActionGroup>
+#include <QDialog>
+#include <QVBoxLayout>
 
 MainWindow::MainWindow(QString inputFilenameParam, const TbcSource::StreamInput *streamInput, QWidget *parent) :
     QMainWindow(parent),
@@ -233,6 +235,8 @@ MainWindow::~MainWindow()
     configuration.setClosedCaptionDialogGeometry(closedCaptionDialog->saveGeometry());
     configuration.setVideoParametersDialogGeometry(videoParametersDialog->saveGeometry());
     configuration.setChromaDecoderConfigDialogGeometry(chromaDecoderConfigDialog->saveGeometry());
+    if (remoteWindow) configuration.setPlaybackValue("remoteGeometry", remoteWindow->saveGeometry());
+    if (infoPanel) configuration.setPlaybackValue("infoGeometry", infoPanel->saveGeometry());
     configuration.writeConfiguration();
 
     // Close the source video if open
@@ -309,6 +313,7 @@ void MainWindow::setFiltersEnabled(bool enabled)
     }
     updateFiltersButton();
     videoFilterDialog->setFiltersOn(enabled);
+    updateRemote();
 
     const QString problem = updateVideoFilterGraph();
     if (!problem.isEmpty()) {
@@ -751,6 +756,14 @@ void MainWindow::setupPlayback()
     actionWeave->setChecked(configuration.playbackValue("weave", false).toBool());
     connect(actionWeave, &QAction::toggled, this, [this](bool on) { configuration.setPlaybackValue("weave", on); configuration.writeConfiguration(); });
 
+    // The picture stop codes of a CAV disc (what a player does: it stops at one, and goes on when it is told to play)
+    actionStopCodes = menu->addAction(tr("Pause at CAV &stop codes"));
+    actionStopCodes->setObjectName("actionStopCodes");
+    actionStopCodes->setCheckable(true);
+    actionStopCodes->setToolTip(tr("A CAV disc can have a picture stop code on a frame: the playback pauses there, and goes on when it is played again."));
+    actionStopCodes->setChecked(configuration.playbackValue("stopCodes", true).toBool());
+    connect(actionStopCodes, &QAction::toggled, this, [this](bool on) { configuration.setPlaybackValue("stopCodes", on); configuration.writeConfiguration(); });
+
     // Speed relative to the real speed of the video
     speedSeparator = menu->addSeparator();
     speedActions = new QActionGroup(this);
@@ -760,16 +773,8 @@ void MainWindow::setupPlayback()
         action->setChecked(speed == 1.0);
         if (speed == 1.0) speedNormalAction = action;
         speedActions->addAction(action);
-        connect(action, &QAction::triggered, this, [this, speed]() {
-            playback->setSpeed(speed);
-#ifdef LDDECODE_HAVE_AUDIO
-            // The sound plays at the speed of the video only: at another speed it is off
-            if (playback->isPlaying()) {
-                audioStop();
-                if (speed == 1.0) audioStart(playbackDue);
-            }
-#endif
-        });
+        action->setData(speed);
+        connect(action, &QAction::triggered, this, [this, speed]() { applyPlaybackSpeed(speed); });
     }
 
     updatePlaybackState(false);
@@ -807,6 +812,7 @@ void MainWindow::updatePlayButtonIcon()
 void MainWindow::updatePlaybackState(bool playing)
 {
     playbackShowsPause = playing;
+    if (playing) lastFrameHadStop = tbcSource.getIsFrameVbiValid() && tbcSource.getFrameVbi().picStop;
     if (!playing && weaveActive) {
         // The weaves were a trick of the playback: what stays on show is the real frame
         weaveActive = false;
@@ -821,6 +827,12 @@ void MainWindow::updatePlaybackState(bool playing)
 #endif
     updatePlayButtonIcon();
     actionPlayPause->setText(playing ? tr("&Pause") : tr("&Play"));
+    // A slow or fast speed that the remote set is not kept for the next time the playback begins (the speed chosen in the Playback menu is)
+    if (!playing && speedFromRemote) {
+        speedFromRemote = false;
+        applyPlaybackSpeed(1.0);
+    }
+    updateRemote();
     updateLiveControls();
 
     // Say if the machine could not keep up, so a jerky video is not mistaken for a bad capture
@@ -869,8 +881,16 @@ void MainWindow::togglePlayback()
         ui->posNumberSpinBox->setValue(shown);
         ui->posHorizontalSlider->setValue(shown);
     }
-    const qint32 lastPosition = weaveActive ? tbcSource.getNumberOfFields() - 1 : (isFieldView ? tbcSource.getNumberOfFields() : tbcSource.getNumberOfFrames());
-    const qint32 firstPosition = isLive ? (isFieldView || weaveActive ? 2 * tbcSource.getFirstAvailableFrame() - 1 : tbcSource.getFirstAvailableFrame()) : 1;
+    qint32 lastPosition = weaveActive ? tbcSource.getNumberOfFields() - 1 : (isFieldView ? tbcSource.getNumberOfFields() : tbcSource.getNumberOfFrames());
+    qint32 firstPosition = isLive ? (isFieldView || weaveActive ? 2 * tbcSource.getFirstAvailableFrame() - 1 : tbcSource.getFirstAvailableFrame()) : 1;
+    // A part that is repeated (A and B of the remote): that is the range, and it loops
+    const bool repeating = repeatStartFrame > 0 && repeatEndFrame > repeatStartFrame && !isLive;
+    if (repeating) {
+        const bool byFields = isFieldView || weaveActive;
+        firstPosition = qMax(firstPosition, byFields ? 2 * repeatStartFrame - 1 : repeatStartFrame);
+        lastPosition = qMin(lastPosition, byFields ? 2 * repeatEndFrame - (weaveActive ? 1 : 0) : repeatEndFrame);
+    }
+    playback->setLoop(repeating || actionLoop->isChecked());
     playback->setLive(isLive, isLive && tbcSource.getIsLiveEnded());
     playback->setRange(firstPosition, lastPosition);
     playbackFirstPosition = firstPosition;
@@ -879,7 +899,7 @@ void MainWindow::togglePlayback()
     // Start decoding ahead; the clock starts once the first image is ready
     playbackStartPosition = isFieldView || weaveActive ? currentFieldNumber : currentFrameNumber;
     // (a live stream plays on at its end: there is more to come)
-    if (playbackStartPosition >= lastPosition && !isLive) playbackStartPosition = 1;
+    if (playbackStartPosition >= lastPosition && !isLive) playbackStartPosition = firstPosition;
     playbackStartPosition = qMax(playbackStartPosition, firstPosition);
     playbackDue = playbackStartPosition;
     renderGeneration = tbcSource.getSettingsGeneration();
@@ -971,6 +991,7 @@ void MainWindow::showRenderedImage()
         const QSignalBlocker sliderBlocker(ui->posHorizontalSlider);
         ui->posNumberSpinBox->setValue(frame);
         ui->posHorizontalSlider->setValue(frame);
+        checkStopCode();
         return;
     }
     tbcSource.setPrerenderedImage(position, image);
@@ -983,6 +1004,22 @@ void MainWindow::showRenderedImage()
     ui->posNumberSpinBox->setValue(position);
     // (a live input: the slider stays where it is, at its end, see updateLiveControls)
     if (!tbcSource.getIsLive()) ui->posHorizontalSlider->setValue(position);
+    checkStopCode();
+}
+
+// A picture stop code (CAV): the playback pauses on the frame that has one, the first of a run of frames that have it. It goes on from there when it is
+// played again: the frame it begins on is not a stop to be obeyed (see updatePlaybackState). Not while scanning or going backward.
+void MainWindow::checkStopCode()
+{
+    if (!actionStopCodes || !actionStopCodes->isChecked() || !playback->isPlaying()) return;
+    const bool stop = tbcSource.getIsFrameVbiValid() && tbcSource.getFrameVbi().picStop;
+    const bool begins = stop && !lastFrameHadStop;
+    lastFrameHadStop = stop;
+    if (!begins) return;
+    pausePlayback();
+    const VbiDecoder::Vbi vbi = tbcSource.getFrameVbi();
+    statusBar()->showMessage(vbi.picNo != -1 ? tr("Picture stop code at picture %1 (frame %2): paused").arg(vbi.picNo).arg(currentFrameNumber)
+                                             : tr("Picture stop code at frame %1: paused").arg(currentFrameNumber), 8000);
 }
 
 // The row of media controls and options is crowded: when it has not the room for the field order
@@ -1113,6 +1150,17 @@ void MainWindow::resetGui()
 // Method to update the GUI when a file is loaded
 void MainWindow::updateGuiLoaded()
 {
+    updateChapterMarks();
+    // (what the remote kept of another capture is of no use; a change of the view keeps it)
+    if (remoteSource != tbcSource.getCurrentSourceFilename()) {
+        remoteSource = tbcSource.getCurrentSourceFilename();
+        memoryFrame = repeatStartFrame = repeatEndFrame = -1;
+    }
+    keypad.clear();
+    keypad.setMode(tbcSource.hasChapters() ? SearchMode::Chapter : (tbcSource.hasPictureNumbers() ? SearchMode::Picture : (tbcSource.hasTimes() ? SearchMode::Time : SearchMode::Chapter)));
+    refreshChapterList();
+    endStill();
+    updateRemote();
     // Enable the GUI controls
     setGuiEnabled(true);
 #ifdef LDDECODE_HAVE_AUDIO
@@ -1190,6 +1238,11 @@ void MainWindow::updateGuiLoaded()
 // Method to update the GUI when a file is unloaded
 void MainWindow::updateGuiUnloaded()
 {
+    updateChapterMarks();
+    memoryFrame = repeatStartFrame = repeatEndFrame = -1;
+    keypad.clear();
+    endStill();
+    updateRemote();
 #ifdef LDDECODE_HAVE_AUDIO
     unloadAudio();
 #endif
@@ -1377,6 +1430,8 @@ void MainWindow::showImage()
 
     // Update the field/frame image
     updateImage();
+    updateInfoPanel();
+    updateSeekPanel();
 
     // Update the closed caption dialog
     closedCaptionDialog->addData(currentFrameNumber, tbcSource.getCcData0(), tbcSource.getCcData1());
@@ -1402,6 +1457,32 @@ void MainWindow::updateImage()
     }
 }
 
+// In the full screen the picture is its active area: what the lines and the width of the video parameters say, without the blanking
+QImage MainWindow::activeAreaOf(const QImage &image)
+{
+    if (!fullScreenOn || image.isNull() || !tbcSource.getIsSourceLoaded()) return image;
+    const LdDecodeMetaData::VideoParameters &parameters = tbcSource.getVideoParameters();
+    // (the field view that is stretched, as it is by default, is the size of a frame: with its lines doubled, and the lines of the other field one lower
+    // -- the bob -- it has the lines of a frame)
+    const bool field = tbcSource.getFieldViewEnabled() && !tbcSource.getStretchField();
+    const qint32 firstLine = field ? parameters.firstActiveFieldLine : parameters.firstActiveFrameLine;
+    const qint32 lastLine = field ? parameters.lastActiveFieldLine : parameters.lastActiveFrameLine;
+    const QRect area(parameters.activeVideoStart, firstLine, parameters.activeVideoEnd - parameters.activeVideoStart, lastLine - firstLine);
+    // (a picture that is not of the size of the video, or parameters that are not known: it is shown whole)
+    if (area.width() <= 0 || area.height() <= 0 || !image.rect().contains(area)) return image;
+    return image.copy(area);
+}
+
+// The width a picture is shown at (times the scale): the aspect ratio that was chosen, the adjustment of the whole picture, or in the full
+// screen the shape of the active area (4:3 or 16:9, a field being half a frame in height)
+double MainWindow::displayedWidth(const QImage &image)
+{
+    if (!fullScreenOn) return image.width() + getAspectAdjustment();
+    if (!displayAspectRatio) return image.width();
+    const double ratio = tbcSource.getIsWidescreen() ? 16.0 / 9.0 : 4.0 / 3.0;
+    return image.height() * (tbcSource.getFieldViewEnabled() && !tbcSource.getStretchField() ? 2 : 1) * ratio;
+}
+
 // Return the width adjustment for the current aspect mode
 qint32 MainWindow::getAspectAdjustment() {
     // Using source aspect ratio? No adjustment
@@ -1421,9 +1502,9 @@ qint32 MainWindow::getAspectAdjustment() {
 // Redraw the viewer (for example, when scaleFactor has been changed)
 void MainWindow::updateImageViewer()
 {
-    QImage image = tbcSource.getImage();
+    QImage image = activeAreaOf(tbcSource.getImage());
 
-    if (ui->mouseModePushButton->isChecked() && !image.isNull() && image.width() > 0 && image.height() > 0) {
+    if (!fullScreenOn && ui->mouseModePushButton->isChecked() && !image.isNull() && image.width() > 0 && image.height() > 0) {
         // Create a painter object
         QPainter imagePainter;
         imagePainter.begin(&image);
@@ -1437,9 +1518,8 @@ void MainWindow::updateImageViewer()
         imagePainter.end();
     }
 
-    // Get the aspect ratio adjustment if required
-    qint32 adjustment = getAspectAdjustment();
-    const int width = static_cast<int>(scaleFactor * (image.width() + adjustment));
+    // The width it is shown at, for the aspect ratio that was chosen
+    const int width = static_cast<int>(scaleFactor * displayedWidth(image));
     const int height = static_cast<int>(scaleFactor * image.height());
 
     // Through the video filters, which can size the picture to what is shown
@@ -2199,14 +2279,13 @@ void MainWindow::resizeFrameToWindow()
 	}
 	
 	// Get the original image size
-	QImage originalImage = tbcSource.getImage();
+	QImage originalImage = activeAreaOf(tbcSource.getImage());
 	if (originalImage.isNull()) {
 		return;
 	}
 
 	// Calculate scale factor to fit image within available space while maintaining aspect ratio
-	qint32 adjustment = getAspectAdjustment();
-	double scaleX = static_cast<double>(availableSize.width()) / static_cast<double>(originalImage.width() + adjustment);
+	double scaleX = static_cast<double>(availableSize.width()) / displayedWidth(originalImage);
 	double scaleY = static_cast<double>(availableSize.height()) / static_cast<double>(originalImage.height());
 	
 	// Use the smaller scale factor to maintain aspect ratio
@@ -2512,7 +2591,8 @@ void MainWindow::vectorscopeChangedSignalHandler()
 // Mouse press event handler
 void MainWindow::mousePressEvent(QMouseEvent *event)
 {
-    if (!tbcSource.getIsSourceLoaded()) return;
+    // (the full screen shows the active area only: its coordinates are not the scope's)
+    if (!tbcSource.getIsSourceLoaded() || fullScreenOn) return;
 
     // Get the mouse position relative to our scene
     QPoint origin = ui->imageViewerLabel->mapFromGlobal(QCursor::pos());
@@ -3183,6 +3263,8 @@ void MainWindow::showAudioConfig()
         audioConfig->setWell(configuration.audioValue("well", true).toBool());
         audioConfig->setSidecars(configuration.audioValue("sidecars", true).toBool());
         connect(audioConfig, &AudioConfigDialog::sidecarsChanged, this, [this](bool on) { configuration.setAudioValue("sidecars", on); });
+        audioConfig->setPreferDigital(configuration.audioValue("preferDigital", true).toBool());
+        connect(audioConfig, &AudioConfigDialog::preferDigitalChanged, this, [this](bool on) { configuration.setAudioValue("preferDigital", on); });
         audioConfig->setSoloChannel(configuration.audioValue("soloChannel", false).toBool());
         connect(audioConfig, &AudioConfigDialog::soloChannelChanged, this, [this](bool on) {
             waveform->setSoloChannel(on);
@@ -3304,6 +3386,7 @@ void MainWindow::startEfmDecoding(qint32 decoder, bool noTimecodes, bool conceal
     const QString source = efmSourceName();
     if (source.isEmpty()) return;
     const double playingAt = audio->isPlaying() ? audio->videoSecondsNow() : -1.0;
+    const bool chosenByDefault = efmByDefault;
     const EfmDecoding::Backend backend = decoder == 0 ? EfmDecoding::Backend::Suite : EfmDecoding::Backend::ProcessEfm;
     // One decoder at a time: the other one is stopped, and its track goes
     const qint32 other = 1 - decoder;
@@ -3360,13 +3443,16 @@ void MainWindow::startEfmDecoding(qint32 decoder, bool noTimecodes, bool conceal
     if (select) {
         waveform->setTracks(audio->tracks(), index);
         audio->selectTrack(index);
-        actionWaveform->setEnabled(true);
-        {
-            const QSignalBlocker blocker(actionWaveform);
-            actionWaveform->setChecked(true);
+        // (chosen for the person on opening: the waveform is shown or not as they left it)
+        if (!chosenByDefault) {
+            actionWaveform->setEnabled(true);
+            {
+                const QSignalBlocker blocker(actionWaveform);
+                actionWaveform->setChecked(true);
+            }
+            waveformWanted = true;
+            showWaveform(true);
         }
-        waveformWanted = true;
-        showWaveform(true);
         audioFollowVideo(playingAt);
     } else {
         // (decoded in the background: the track is there to be chosen, and what is played stays)
@@ -3381,8 +3467,21 @@ void MainWindow::startEfmDecoding(qint32 decoder, bool noTimecodes, bool conceal
         audio->extend();
         if (audioConfig) audioConfig->setDecodeStatus(decoder, tr("Decoding: %1 seconds").arg(decoding->seconds(), 0, 'f', 1), true);
     });
-    connect(decoding, &EfmDecoding::finished, this, [this, decoder](bool, const QString &message) {
+    connect(decoding, &EfmDecoding::finished, this, [this, decoder, decoding, chosenByDefault](bool ok, const QString &message) {
         audio->extend();
+        // The digital audio was chosen for the person and the EFM gave none: the analogue audio is heard again
+        if (chosenByDefault && (!ok || decoding->seconds() <= 0.0)) {
+            const QVector<AudioTrackInfo> &tracks = audio->tracks();
+            const qint32 current = audio->currentTrack();
+            if (current >= 0 && current < tracks.size() && tracks[current].source == QLatin1String("efm")) {
+                for (qint32 i = 0; i < tracks.size(); i++) {
+                    if (tracks[i].source == QLatin1String("analogue")) {
+                        chooseAudioTrack(i);
+                        break;
+                    }
+                }
+            }
+        }
         if (audioConfig) audioConfig->setDecodeStatus(decoder, message, false);
         statusBar()->showMessage(message, 8000);
         waveform->refresh();
@@ -3460,10 +3559,16 @@ void MainWindow::loadAudio()
         unloadAudio();
         return;
     }
-    // The analogue audio of the capture first, if it has some
+    // The digital audio first if there is some (decoded from the EFM, in the file) and that is what is wanted, else the analogue audio of the capture
+    const bool preferDigital = configuration.audioValue("preferDigital", true).toBool();
     qint32 first = 0;
     for (qint32 i = 0; i < tracks.size(); i++) {
         if (tracks[i].source == "analogue") { first = i; break; }
+    }
+    if (preferDigital) {
+        for (qint32 i = 0; i < tracks.size(); i++) {
+            if (tracks[i].source == "efm") { first = i; break; }
+        }
     }
     // The analogue audio is cut to the fields: the metadata say where each field begins in it
     {
@@ -3486,7 +3591,10 @@ void MainWindow::loadAudio()
         bool hasEfmAudio = false;
         for (const AudioTrackInfo &track: audio->tracks()) hasEfmAudio |= track.source == "efm";
         if (!hasEfmAudio && !efmSourceName().isEmpty()) {
-            startEfmDecoding(audioConfig ? audioConfig->currentDecoder() : configuration.audioValue("decoder", 1).toInt(), true, true, false, false);
+            // (the audio it gives is the one that is heard, when that is wanted: if it gives none the analogue audio is chosen again)
+            efmByDefault = preferDigital;
+            startEfmDecoding(audioConfig ? audioConfig->currentDecoder() : configuration.audioValue("decoder", 1).toInt(), true, true, false, preferDigital);
+            efmByDefault = false;
         }
     }
 }
@@ -3764,6 +3872,7 @@ qint32 MainWindow::seekUnitsPerSecond()
 void MainWindow::seekTo(qint32 position)
 {
     if (!tbcSource.getIsSourceLoaded()) return;
+    endStill();
     // (a live input can not be sought while it plays)
     if (tbcSource.getIsLive() && playback->isPlaying()) return;
     pausePlayback();
@@ -3791,7 +3900,7 @@ void MainWindow::startScan(double speed)
 #ifdef LDDECODE_HAVE_AUDIO
     audioStop();
 #endif
-    if (scanSpeed == 0.0 && tbcSource.getChromaDecoder()) {
+    if (!scanChromaSuppressed && qAbs(speed) > 2.0 && tbcSource.getChromaDecoder()) {
         scanChromaSuppressed = true;
         tbcSource.setChromaDecoder(false);
     }
@@ -3800,6 +3909,7 @@ void MainWindow::startScan(double speed)
     scanClock.start();
     scanTimer->start();
     statusBar()->showMessage(tr("Scan %1%2x").arg(speed < 0 ? QString("-") : QString("+")).arg(qAbs(speed)), 0);
+    updateRemote();
 }
 
 void MainWindow::stopScan()
@@ -3813,6 +3923,7 @@ void MainWindow::stopScan()
         tbcSource.setChromaDecoder(true);
         showImage();
     }
+    updateRemote();
 }
 
 void MainWindow::scanTick()
@@ -3865,9 +3976,10 @@ void MainWindow::setupSeekActions()
     scanTimer->setTimerType(Qt::PreciseTimer);
     connect(scanTimer, &QTimer::timeout, this, &MainWindow::scanTick);
 
-    QMenu *seek = playbackMenu ? playbackMenu->addMenu(tr("&Seek")) : new QMenu(tr("&Seek"), this);
-    const auto add = [this, seek](const QString &id, const QString &text, const QKeySequence &key, auto &&handler) {
-        QAction *action = seek->addAction(text);
+    const auto add = [this](const QString &id, const QString &text, const QKeySequence &key, auto &&handler) {
+        QAction *action = new QAction(text, this);
+        addAction(action);                    // (not in a menu: it works wherever the window is, as the remote control has the keys too)
+        remoteActions.append(action);
         action->setObjectName(id);
         action->setShortcut(key);
         action->setAutoRepeat(true);          // (held, a key goes on: a jog)
@@ -3876,7 +3988,6 @@ void MainWindow::setupSeekActions()
     };
     add("seekStepBack", tr("Step back"), Qt::Key_Left, [this]() { stopScan(); seekBy(-1); });
     add("seekStepForward", tr("Step forward"), Qt::Key_Right, [this]() { stopScan(); seekBy(1); });
-    seek->addSeparator();
     add("seekBack10", tr("Back 10"), Qt::SHIFT | Qt::Key_Left, [this]() { stopScan(); seekBy(-10); });
     add("seekForward10", tr("Forward 10"), Qt::SHIFT | Qt::Key_Right, [this]() { stopScan(); seekBy(10); });
     add("seekBackSecond", tr("Back one second"), Qt::ALT | Qt::Key_Left, [this]() { stopScan(); seekBy(-seekUnitsPerSecond()); });
@@ -3885,10 +3996,878 @@ void MainWindow::setupSeekActions()
     add("seekForwardMinute", tr("Forward one minute"), Qt::Key_PageDown, [this]() { stopScan(); seekBy(60 * seekUnitsPerSecond()); });
     add("seekStart", tr("Go to the start"), Qt::Key_Home, [this]() { stopScan(); seekTo(seekFirst()); });
     add("seekEnd", tr("Go to the end"), Qt::Key_End, [this]() { stopScan(); seekTo(seekLast()); });
-    seek->addSeparator();
     add("shuttleBackward", tr("Shuttle backward (each press faster)"), Qt::Key_J, [this]() { shuttle(-1); })->setAutoRepeat(false);
     add("shuttleStop", tr("Shuttle stop"), Qt::Key_K, [this]() { shuttleStop(); })->setAutoRepeat(false);
     add("shuttleForward", tr("Shuttle forward (each press faster)"), Qt::Key_L, [this]() { shuttle(1); })->setAutoRepeat(false);
+    // What the remote control has besides: the chapters, the memory, the sound
+    add("chapterPrevious", tr("Chapter before (or the start of this one)"), Qt::CTRL | Qt::Key_Left, [this]() { skipChapter(-1); })->setAutoRepeat(false);
+    add("chapterNext", tr("Next chapter"), Qt::CTRL | Qt::Key_Right, [this]() { skipChapter(1); })->setAutoRepeat(false);
+    add("rememberPlace", tr("One-shot memory (remember the place, then go back to it)"), Qt::Key_M, [this]() { toggleMemory(); })->setAutoRepeat(false);
+    add("digitalAnalogue", tr("Digital / analogue sound"), Qt::Key_D, [this]() { toggleDigitalAnalog(); })->setAutoRepeat(false);
+    add("stillWithSound", tr("Still with sound (the picture stays, the sound goes on)"), Qt::Key_S, [this]() { toggleStillWithSound(); })->setAutoRepeat(false);
+    setupRemote();
+}
+
+// The remote control ------------------------------------------------------------------------------------------------------------------
+// A remote of a laserdisc player, in a window of its own (View > Remote control) or, when the picture fills the screen, over the picture
+// at its left. The numbers of the disc (the time, the chapter, the picture) can be over the picture too, at its right. In the full screen both
+// go away after a few seconds without the mouse moving, and come back with it.
+
+void MainWindow::setupRemote()
+{
+    remote = new RemoteWidget();
+    // (the windows have no frame of the system: their own title bar has the pin, which keeps them when the others go away, and the close button)
+    remoteWindow = new QDialog(this, Qt::Tool | Qt::FramelessWindowHint);
+    remoteWindow->setObjectName("remoteWindow");
+    remoteWindow->setWindowTitle(tr("Remote control"));
+    remoteWindow->setStyleSheet("QDialog#remoteWindow { background: #26262a; border: 1px solid #0c0c0e; border-radius: 6px; }");
+    QVBoxLayout *remoteLayout = new QVBoxLayout(remoteWindow);
+    remoteLayout->setContentsMargins(1, 1, 1, 1);
+    remoteLayout->setSpacing(0);
+    remoteTitleBar = new PinTitleBar(tr("Remote control"), remoteWindow);
+    remoteTitleBar->setPinToolTip(tr("Pinned: the remote stays when the other controls go away in the full screen. Not pinned: it goes with them."));
+    remoteTitleBar->setPinned(configuration.playbackValue("remotePinned", false).toBool());
+    connect(remoteTitleBar, &PinTitleBar::pinToggled, this, [this](bool pinned) { configuration.setPlaybackValue("remotePinned", pinned); });
+    connect(remoteTitleBar, &PinTitleBar::closeRequested, remoteWindow, &QDialog::reject);
+    remoteLayout->addWidget(remoteTitleBar);
+    remoteLayout->addWidget(remote);
+    // (the keys of the keyboard work when the remote is the window that has them)
+    for (QAction *action: remoteActions) remoteWindow->addAction(action);
+    // (not narrower than its keys are: a window kept from before could be squeezed)
+    remote->setMinimumSize(250, 540);
+    remoteWindow->adjustSize();
+    remoteWindow->restoreGeometry(configuration.playbackValue("remoteGeometry").toByteArray());
+
+    // The numbers of the disc: a window of its own too, which floats where it is put (in the full screen as well)
+    infoPanel = new InfoPanel(this);
+    infoPanel->setWindowFlags(Qt::Tool | Qt::FramelessWindowHint);
+    infoPanel->setWindowTitle(tr("Disc numbers"));
+    infoPanel->setAttribute(Qt::WA_ShowWithoutActivating);
+    remoteWindow->setAttribute(Qt::WA_ShowWithoutActivating);
+    setupSeekPanel();
+    infoPanel->hide();
+    infoPanel->setMinimumWidth(230);
+    if (!infoPanel->restoreGeometry(configuration.playbackValue("infoGeometry").toByteArray())) infoPanel->move(geometry().topRight() - QPoint(280, -80));
+    connect(infoPanel, &InfoPanel::closed, this, [this]() { actionInfoDisplay->setChecked(false); });
+    // (it stays on screen unless the person asked for it to go with the others)
+    infoPanel->setAutoHide(configuration.playbackValue("infoAutoHide", false).toBool());
+    connect(infoPanel, &InfoPanel::autoHideChanged, this, [this](bool on) {
+        configuration.setPlaybackValue("infoAutoHide", on);
+        if (fullScreenOn) showOverlays();
+    });
+
+    overlayTimer = new QTimer(this);
+    overlayTimer->setSingleShot(true);
+    overlayTimer->setInterval(2500);
+    connect(overlayTimer, &QTimer::timeout, this, &MainWindow::hideOverlays);
+    cursorPoll = new QTimer(this);
+    cursorPoll->setInterval(100);
+    connect(cursorPoll, &QTimer::timeout, this, &MainWindow::pollCursor);
+    searchMessageTimer = new QTimer(this);
+    searchMessageTimer->setSingleShot(true);
+    searchMessageTimer->setInterval(2000);
+    connect(searchMessageTimer, &QTimer::timeout, this, [this]() { searchMessage.clear(); updateRemote(); });
+
+    // The View menu: the remote, the numbers over the picture, the full screen
+    ui->menuView->addSeparator();
+    actionRemote = ui->menuView->addAction(tr("&Remote control"));
+    actionRemote->setObjectName("actionRemote");
+    actionRemote->setCheckable(true);
+    actionRemote->setShortcut(Qt::CTRL | Qt::SHIFT | Qt::Key_R);
+    actionInfoDisplay = ui->menuView->addAction(tr("Disc &numbers over the picture"));
+    actionInfoDisplay->setObjectName("actionInfoDisplay");
+    actionInfoDisplay->setCheckable(true);
+    actionInfoDisplay->setShortcut(Qt::Key_I);
+    actionFullScreen = ui->menuView->addAction(tr("&Full screen"));
+    actionFullScreen->setObjectName("actionFullScreen");
+    actionFullScreen->setCheckable(true);
+    actionFullScreen->setShortcut(Qt::Key_F11);
+    // (the remote is in the Window menu too)
+    ui->menuWindow->addSeparator();
+    ui->menuWindow->addAction(actionRemote);
+    ui->menuWindow->addAction(actionInfoDisplay);
+    remoteWindow->addAction(actionRemote);
+    remoteWindow->addAction(actionInfoDisplay);
+    remoteWindow->addAction(actionFullScreen);
+
+    // (in the full screen they go away when the mouse is still: overlaysHiddenNow)
+    connect(actionRemote, &QAction::toggled, this, [this](bool on) {
+        remoteWindow->setVisible(on && !(overlaysHiddenNow && !remoteTitleBar->pinned()));
+        if (!fullScreenOn) configuration.setPlaybackValue("remoteShown", on);
+    });
+    connect(remoteWindow, &QDialog::rejected, this, [this]() { actionRemote->setChecked(false); });
+    connect(actionInfoDisplay, &QAction::toggled, this, [this](bool on) {
+        remote->setDisplayOn(on);
+        infoPanel->setVisible(on && !(overlaysHiddenNow && infoPanel->autoHide()));
+        updateInfoPanel();
+        if (!fullScreenOn) configuration.setPlaybackValue("infoDisplay", on);
+    });
+    connect(actionFullScreen, &QAction::toggled, this, &MainWindow::setFullScreen);
+
+    // The keys of the remote
+    connect(remote, &RemoteWidget::digitPressed, this, [this](qint32 digit) { keypad.digit(digit); searchMessage.clear(); updateRemote(); });
+    connect(remote, &RemoteWidget::plusTenPressed, this, [this]() { keypad.plusTen(); searchMessage.clear(); updateRemote(); });
+    connect(remote, &RemoteWidget::clearPressed, this, [this]() { keypad.clear(); searchMessage.clear(); updateRemote(); });
+    connect(remote, &RemoteWidget::modePressed, this, [this]() {
+        keypad.setMode(RemoteKeypad::nextMode(keypad.mode(), tbcSource.hasChapters(), tbcSource.hasPictureNumbers(), tbcSource.hasTimes()));
+        searchMessage.clear();
+        updateRemote();
+    });
+    connect(remote, &RemoteWidget::searchPressed, this, [this]() { remoteSearch(false); });
+    connect(remote, &RemoteWidget::frameSearchPressed, this, [this]() { remoteSearch(true); });
+    connect(remote, &RemoteWidget::programPressed, this, &MainWindow::showChapterList);
+    connect(remote, &RemoteWidget::filterPressed, this, [this]() { setFiltersEnabled(!filtersEnabled); });
+    connect(remote, &RemoteWidget::playPressed, this, [this]() { moveAt(1.0); });
+    connect(remote, &RemoteWidget::pausePressed, this, [this]() { endStill(); stopScan(); pausePlayback(); updateRemote(); });
+    connect(remote, &RemoteWidget::stepPressed, this, [this](qint32 direction) { stopScan(); seekBy(direction); });
+    connect(remote, &RemoteWidget::skipPressed, this, &MainWindow::skipChapter);
+    connect(remote, &RemoteWidget::multiSpeedPressed, this, [this](qint32 direction) {
+        multiSpeed = RemoteSpeed::step(multiSpeed, direction);
+        const double now = scanSpeed != 0.0 ? scanSpeed : (playback->isPlaying() ? playback->getSpeed() : 0.0);
+        if (now != 0.0) moveAt(now < 0 ? -multiSpeed : multiSpeed);
+        statusBar()->showMessage(tr("Speed %1").arg(RemoteSpeed::text(multiSpeed)), 2000);
+        updateRemote();
+    });
+    connect(remote, &RemoteWidget::directionPressed, this, [this](qint32 direction) { moveAt(direction * multiSpeed); });
+    connect(remote, &RemoteWidget::jogged, this, [this](qint32 steps) { stopScan(); seekBy(steps); });
+    connect(remote, &RemoteWidget::shuttled, this, [this](double deflection) {
+        const double speed = RemoteSpeed::fromDeflection(deflection);
+        if (speed == shuttleSpeedNow) return;
+        shuttleSpeedNow = speed;
+        if (speed == 0.0) {
+            stopScan();
+            pausePlayback();
+            updateRemote();
+        } else {
+            moveAt(speed);
+        }
+    });
+    connect(remote, &RemoteWidget::jogModeChanged, this, [this](bool jog) { configuration.setPlaybackValue("jogMode", jog); });
+    connect(remote, &RemoteWidget::displayPressed, this, [this]() { actionInfoDisplay->toggle(); });
+    connect(remote, &RemoteWidget::digitalAnalogPressed, this, &MainWindow::toggleDigitalAnalog);
+    connect(remote, &RemoteWidget::repeatAPressed, this, [this]() { markRepeat(false); });
+    connect(remote, &RemoteWidget::repeatBPressed, this, [this]() { markRepeat(true); });
+    connect(remote, &RemoteWidget::memoryPressed, this, &MainWindow::toggleMemory);
+    connect(remote, &RemoteWidget::stillWithSoundPressed, this, &MainWindow::toggleStillWithSound);
+    connect(remote, &RemoteWidget::chromaPressed, this, [this]() { on_videoPushButton_clicked(); updateRemote(); });
+    connect(remote, &RemoteWidget::viewModePressed, this, [this]() { on_viewPushButton_clicked(); updateRemote(); });
+    connect(remote, &RemoteWidget::mutePressed, this, [this]() {
+#ifdef LDDECODE_HAVE_AUDIO
+        const bool muted = !waveform->muted();
+        waveform->setMuted(muted);
+        audio->setMuted(muted);
+        configuration.setAudioValue("muted", muted);
+#endif
+        updateRemote();
+    });
+
+    // What was set the last time
+    remote->setJogMode(configuration.playbackValue("jogMode", true).toBool());
+    QTimer::singleShot(0, this, [this]() {
+        actionInfoDisplay->setChecked(configuration.playbackValue("infoDisplay", false).toBool());
+        if (configuration.playbackValue("remoteShown", false).toBool()) actionRemote->setChecked(true);
+    });
+#ifdef LDDECODE_HAVE_AUDIO
+    // (the sounds that can be chosen come and go: the choice of the remote is kept up to date)
+    if (audioStatsTimer) connect(audioStatsTimer, &QTimer::timeout, this, [this]() { if (remote && remote->isVisible()) updateRemote(); });
+#endif
+    updateRemote();
+}
+
+// The bar of the position, at the bottom of the picture in the full screen: it is clicked or dragged to go through the capture, and goes away
+// with the remote
+void MainWindow::setupSeekPanel()
+{
+    seekPanel = new QFrame(ui->centralWidget);
+    seekPanel->setObjectName("seekPanel");
+    seekPanel->setStyleSheet("QFrame#seekPanel { background: rgba(12, 12, 14, 205); border: 1px solid rgba(255, 255, 255, 40); border-radius: 6px; }"
+                             "QLabel { color: #e6e6ea; background: transparent; font-family: monospace; font-size: 13px; }");
+    QHBoxLayout *row = new QHBoxLayout(seekPanel);
+    row->setContentsMargins(14, 6, 14, 6);
+    row->setSpacing(12);
+    seekPlayButton = new QToolButton(seekPanel);
+    seekPlayButton->setFocusPolicy(Qt::NoFocus);
+    seekPlayButton->setFixedSize(30, 26);
+    seekPlayButton->setToolTip(tr("Play / pause"));
+    seekPlayButton->setStyleSheet("QToolButton { color: #e6e6ea; background: transparent; border: none; font-size: 17px; }"
+                                  "QToolButton:hover { color: #f2b84a; }");
+    seekPlayButton->setText(QString(QChar(0x25B6)));
+    connect(seekPlayButton, &QToolButton::clicked, this, [this]() {
+        if (playback->isPlaying() || scanSpeed != 0.0 || stillWithSound) {
+            endStill();
+            stopScan();
+            pausePlayback();
+            updateRemote();
+        } else {
+            moveAt(1.0);
+        }
+        showOverlays();
+    });
+    // The skips, as on the remote: the start of the chapter that is in (or the one before), and of the next
+    const auto skipButton = [this](const QString &iconName, const QString &tip, qint32 direction) {
+        QToolButton *button = new QToolButton(seekPanel);
+        button->setFocusPolicy(Qt::NoFocus);
+        button->setFixedSize(30, 26);
+        button->setToolTip(tip);
+        // (the icons of the buttons of the main window: not a symbol of the font, which some systems draw as a coloured emoji)
+        button->setIcon(QIcon(iconName));
+        button->setIconSize(QSize(22, 22));
+        button->setStyleSheet("QToolButton { background: transparent; border: none; border-radius: 4px; }"
+                              "QToolButton:hover { background: rgba(255, 255, 255, 40); }");
+        connect(button, &QToolButton::clicked, this, [this, direction]() { skipChapter(direction); showOverlays(); });
+        return button;
+    };
+    QToolButton *skipBackButton = skipButton(QStringLiteral(":/icons/Graphics/start-frame.svg"), tr("The start of the chapter, or the one before"), -1);
+    QToolButton *skipForwardButton = skipButton(QStringLiteral(":/icons/Graphics/end-frame.svg"), tr("The start of the next chapter"), 1);
+    seekTimeLabel = new QLabel(QStringLiteral("0:00:00"), seekPanel);
+    seekTotalLabel = new QLabel(QStringLiteral("0:00:00"), seekPanel);
+    seekBar = new SeekBar(seekPanel);
+    seekMarks = new ChapterMarks(seekBar);
+    sliderMarks = new ChapterMarks(ui->posHorizontalSlider);
+    row->addWidget(skipBackButton);
+    row->addWidget(seekPlayButton);
+    row->addWidget(skipForwardButton);
+    row->addWidget(seekTimeLabel);
+    row->addWidget(seekBar, 1);
+    row->addWidget(seekTotalLabel);
+    // The button that leaves the full screen, at the right of the bar
+    QToolButton *leaveButton = new QToolButton(seekPanel);
+    leaveButton->setFocusPolicy(Qt::NoFocus);
+    leaveButton->setFixedSize(30, 26);
+    leaveButton->setToolTip(tr("Leave the full screen (Esc or F11)"));
+    {
+        // (four corners that point to the middle, drawn: a symbol of the font could be an emoji)
+        QPixmap pixmap(44, 44);
+        pixmap.fill(Qt::transparent);
+        QPainter painter(&pixmap);
+        painter.setRenderHint(QPainter::Antialiasing);
+        painter.setPen(QPen(QColor(0xe6, 0xe6, 0xea), 3, Qt::SolidLine, Qt::SquareCap, Qt::MiterJoin));
+        painter.drawPolyline(QPolygon({ QPoint(5, 17), QPoint(17, 17), QPoint(17, 5) }));
+        painter.drawPolyline(QPolygon({ QPoint(27, 5), QPoint(27, 17), QPoint(39, 17) }));
+        painter.drawPolyline(QPolygon({ QPoint(5, 27), QPoint(17, 27), QPoint(17, 39) }));
+        painter.drawPolyline(QPolygon({ QPoint(27, 39), QPoint(27, 27), QPoint(39, 27) }));
+        painter.end();
+        leaveButton->setIcon(QIcon(pixmap));
+        leaveButton->setIconSize(QSize(20, 20));
+    }
+    leaveButton->setStyleSheet("QToolButton { background: transparent; border: none; border-radius: 4px; }"
+                               "QToolButton:hover { background: rgba(255, 255, 255, 40); }");
+    connect(leaveButton, &QToolButton::clicked, this, [this]() { actionFullScreen->setChecked(false); });
+    row->addWidget(leaveButton);
+    seekPanel->hide();
+    ui->centralWidget->installEventFilter(this);
+
+    // A drag asks for many pictures: they are asked for at most every few milliseconds, the last place being the one that is gone to
+    scrubTimer = new QTimer(this);
+    scrubTimer->setSingleShot(true);
+    scrubTimer->setInterval(40);
+    connect(scrubTimer, &QTimer::timeout, this, [this]() { seekTo(scrubValue); });
+    connect(seekBar, &SeekBar::scrubbed, this, [this](qint32 value) {
+        scrubValue = value;
+        stopScan();
+        if (!scrubTimer->isActive()) scrubTimer->start();
+        showOverlays();
+    });
+    connect(seekBar, &SeekBar::scrubFinished, this, [this]() {
+        scrubTimer->stop();
+        seekTo(scrubValue);
+    });
+}
+
+void MainWindow::layoutSeekPanel()
+{
+    if (!seekPanel) return;
+    static constexpr qint32 MARGIN = 24;
+    const QSize area = ui->centralWidget->size();
+    const qint32 height = seekPanel->sizeHint().height();
+    seekPanel->setGeometry(MARGIN, area.height() - height - MARGIN, qMax(120, area.width() - 2 * MARGIN), height);
+    seekPanel->raise();
+}
+
+// The marks of the chapters on the slider of the window and on the bar of the full screen: where each chapter of the disc begins (in the units of the
+// controls: fields in the field view)
+void MainWindow::updateChapterMarks()
+{
+    if (!sliderMarks) return;
+    QVector<qint32> values;
+    if (tbcSource.getIsSourceLoaded() && !tbcSource.getIsLive()) {
+        const bool byFields = tbcSource.getFieldViewEnabled();
+        for (const qint32 frame: tbcSource.chapterStartFrames()) values.append(byFields ? 2 * frame - 1 : frame);
+    }
+    sliderMarks->setMarks(values);
+    seekMarks->setMarks(values);
+}
+
+// Where the picture is in the capture (its time, and the end of it), unless the person is moving it
+void MainWindow::updateSeekPanel()
+{
+    if (!seekPanel || !seekPanel->isVisible() || seekBar->isScrubbing() || !tbcSource.getIsSourceLoaded()) return;
+    const qint32 first = seekFirst();
+    const qint32 last = qMax(first, seekLast());
+    const qint32 position = seekPosition();
+    const double perSecond = seekUnitsPerSecond();
+    {
+        const QSignalBlocker blocker(seekBar);
+        seekBar->setRange(first, last);
+        seekBar->setValue(position);
+    }
+    seekBar->setEnabled(!tbcSource.getIsLive());
+    seekTimeLabel->setText(clockText(static_cast<qint64>(qMax(0, position - 1) / perSecond)));
+    seekTotalLabel->setText(clockText(static_cast<qint64>(last / perSecond)));
+}
+
+bool MainWindow::eventFilter(QObject *watched, QEvent *event)
+{
+    if (watched == ui->centralWidget && event->type() == QEvent::Resize) layoutSeekPanel();
+    return QMainWindow::eventFilter(watched, event);
+}
+
+// What the keys show: the number, the state, the lamps
+void MainWindow::updateRemote()
+{
+    if (!remote) return;
+    // (the play button of the bar of the full screen shows what a press does: pause while it plays or scans)
+    if (seekPlayButton) seekPlayButton->setText(playback->isPlaying() || scanSpeed != 0.0 ? QString(QChar(0x275A)).repeated(2) : QString(QChar(0x25B6)));
+    const bool loaded = tbcSource.getIsSourceLoaded();
+    remote->setSourceLoaded(loaded);
+    if (!loaded) {
+        remote->setDisplay(RemoteKeypad::modeName(keypad.mode()), keypad.text(), QString());
+        return;
+    }
+    const bool scanning = scanSpeed != 0.0;
+    QString state;
+    if (!searchMessage.isEmpty()) state = searchMessage;
+    else if (scanning) state = tr("SCAN %1").arg(RemoteSpeed::text(scanSpeed));
+    else if (stillWithSound) state = tr("STILL + SOUND");
+    else if (playback->isPlaying()) state = playback->getSpeed() == 1.0 ? tr("PLAY") : tr("PLAY %1").arg(RemoteSpeed::text(playback->getSpeed()));
+    else state = tr("PAUSE");
+    remote->setDisplay(RemoteKeypad::modeName(keypad.mode()), keypad.text(), state);
+    remote->setTransport(scanning ? QStringLiteral("scan") : (playback->isPlaying() ? QStringLiteral("play") : QStringLiteral("pause")));
+    remote->setMemoryStored(memoryFrame > 0);
+    remote->setRepeatPoints(repeatStartFrame > 0, repeatEndFrame > 0);
+    remote->setStillWithSound(stillWithSound);
+    remote->setFilter(filtersEnabled, VideoFilter::isAvailable());
+    remote->setRaw(!tbcSource.getChromaDecoder());
+    {
+        QString viewName = tr("FRAM");
+        if (tbcSource.getViewMode() == TbcSource::ViewMode::SPLIT_VIEW) viewName = tr("SPLT");
+        else if (tbcSource.getViewMode() == TbcSource::ViewMode::FIELD_VIEW) viewName = tr("FLD");
+        else if (deinterlacedView) viewName = tr("DEIN");
+        remote->setViewMode(viewName);
+    }
+#ifdef LDDECODE_HAVE_AUDIO
+    remote->setMuted(waveform && waveform->muted());
+#endif
+    remote->setSearchAvailable(tbcSource.hasChapters(), tbcSource.hasPictureNumbers(), tbcSource.hasTimes());
+#ifdef LDDECODE_HAVE_AUDIO
+    bool digitalThere = !efmSourceName().isEmpty(), analogueThere = false, digital = false;
+    if (audio) {
+        const QVector<AudioTrackInfo> &tracks = audio->tracks();
+        for (const AudioTrackInfo &track: tracks) {
+            if (track.source == QLatin1String("efm")) digitalThere = true;
+            if (track.source == QLatin1String("analogue")) analogueThere = true;
+        }
+        const qint32 chosen = audio->currentTrack();
+        digital = chosen >= 0 && chosen < tracks.size() && tracks[chosen].source == QLatin1String("efm");
+    }
+    remote->setAudioChoice(digitalThere, analogueThere, digital);
+#else
+    remote->setAudioChoice(false, false, false);
+#endif
+}
+
+// The numbers of the disc for the picture on show (the time code, the chapter, the picture number...), and the lamps of the remote that
+// come from the VBI (the side, CX)
+void MainWindow::updateInfoPanel()
+{
+    if (!infoPanel || !tbcSource.getIsSourceLoaded()) return;
+    const bool showPanel = infoPanel->isVisible();
+    const bool showRemote = remote && remote->isVisible();
+    if (!showPanel && !showRemote) return;
+
+    const bool vbiValid = tbcSource.getIsFrameVbiValid();
+    const VbiDecoder::Vbi vbi = vbiValid ? tbcSource.getFrameVbi() : VbiDecoder::Vbi();
+    if (showRemote) {
+        remote->setCx(vbiValid && vbi.cx);
+        remote->setSide(vbiValid && vbi.type != VbiDecoder::unknownDiscType ? (vbi.side ? 0 : 1) : -1);
+    }
+    if (!showPanel) return;
+
+    QString headline;
+    if (vbi.clvHr != -1) headline = clockText(vbi.clvHr * 3600 + vbi.clvMin * 60 + vbi.clvSec);
+    else if (vbi.picNo != -1) headline = QString("%1").arg(vbi.picNo, 5, 10, QChar('0'));
+    else headline = QString::number(currentFrameNumber);
+
+    InfoPanel::Rows rows;
+    if (vbiValid && vbi.type != VbiDecoder::unknownDiscType) rows.append({ tr("Disc"), vbi.type == VbiDecoder::cav ? tr("CAV") : tr("CLV") });
+    if (vbi.chNo != -1) rows.append({ tr("Chapter"), QString::number(vbi.chNo) });
+    if (vbi.picNo != -1) rows.append({ tr("Picture"), QString::number(vbi.picNo) });
+    if (tbcSource.getIsFrameVitcValid()) {
+        const VitcDecoder::Vitc vitc = tbcSource.getFrameVitc();
+        rows.append({ tr("VITC"), QString("%1:%2:%3%4%5").arg(vitc.hour, 2, 10, QChar('0')).arg(vitc.minute, 2, 10, QChar('0'))
+                                      .arg(vitc.second, 2, 10, QChar('0')).arg(vitc.isDropFrame ? QChar(';') : QChar(':')).arg(vitc.frame, 2, 10, QChar('0')) });
+    }
+    if (tbcSource.getFieldViewEnabled()) rows.append({ tr("Field"), tr("%1 / %2").arg(currentFieldNumber).arg(tbcSource.getNumberOfFields()) });
+    else rows.append({ tr("Frame"), tr("%1 / %2").arg(currentFrameNumber).arg(tbcSource.getNumberOfFrames()) });
+    if (vbiValid && vbi.cx) rows.append({ tr("CX"), tr("on the disc") });
+    if (scanSpeed != 0.0) rows.append({ tr("Scan"), RemoteSpeed::text(scanSpeed) });
+    else if (playback->isPlaying()) rows.append({ tr("Speed"), RemoteSpeed::text(playback->getSpeed()) });
+#ifdef LDDECODE_HAVE_AUDIO
+    if (audio && audio->currentTrack() >= 0 && audio->currentTrack() < audio->tracks().size()) {
+        const AudioTrackInfo &track = audio->tracks()[audio->currentTrack()];
+        rows.append({ tr("Sound"), track.source == QLatin1String("efm") ? tr("digital (EFM)") : (track.source == QLatin1String("analogue") ? tr("analogue") : tr("imported")) });
+    }
+#endif
+    infoPanel->setRows(headline, rows);
+}
+
+// A frame (from 1), shown: the position of the controls is in fields in the field view
+void MainWindow::seekToFrame(qint32 frame)
+{
+    seekTo(tbcSource.getFieldViewEnabled() ? 2 * frame - 1 : frame);
+}
+
+// A search by the number that was typed: a chapter, a picture, a time or a frame
+void MainWindow::remoteSearch(bool asFrame)
+{
+    if (!tbcSource.getIsSourceLoaded() || tbcSource.getIsLive() || keypad.isEmpty()) return;
+    // (the frame search takes the digits as the number of a frame, whatever the mode of the other search is)
+    const SearchMode mode = asFrame ? SearchMode::Frame : keypad.mode();
+    const qint64 number = asFrame ? keypad.number() : keypad.value();
+    qint32 frame = -1;
+    switch (mode) {
+    case SearchMode::Chapter: frame = tbcSource.frameOfChapter(static_cast<qint32>(number)); break;
+    case SearchMode::Picture: frame = tbcSource.frameOfPicture(static_cast<qint32>(number)); break;
+    case SearchMode::Time: frame = tbcSource.frameOfTime(static_cast<qint32>(number)); break;
+    case SearchMode::Frame: frame = number >= 1 && number <= tbcSource.getNumberOfFrames() ? static_cast<qint32>(number) : -1; break;
+    }
+    if (frame < 1) {
+        searchMessage = tr("NOT FOUND");
+        searchMessageTimer->start();
+        statusBar()->showMessage(tr("%1 %2 is not in this capture").arg(RemoteKeypad::modeName(mode).toLower(), asFrame ? QString::number(number) : keypad.text()), 4000);
+        updateRemote();
+        return;
+    }
+    const bool resume = playback->isPlaying();
+    stopScan();
+    seekToFrame(frame);
+    if (resume) togglePlayback();
+    keypad.clear();
+    updateRemote();
+}
+
+// PGM: a small window with the chapters of the disc, each with its time, and a button to go to one
+void MainWindow::showChapterList()
+{
+    if (!chapterListDialog) {
+        chapterListDialog = new ChapterListDialog(this);
+        connect(chapterListDialog, &ChapterListDialog::goToFrame, this, [this](qint32 frame) {
+            if (!tbcSource.getIsSourceLoaded() || tbcSource.getIsLive()) return;
+            const bool resume = playback->isPlaying();
+            stopScan();
+            seekToFrame(frame);
+            if (resume) togglePlayback();
+        });
+    }
+    refreshChapterList();
+    chapterListDialog->show();
+    chapterListDialog->raise();
+}
+
+// The list is made again from the chapters of the capture (and the one the picture is in is chosen)
+void MainWindow::refreshChapterList()
+{
+    if (!chapterListDialog) return;
+    QVector<ChapterListDialog::Row> rows;
+    if (tbcSource.getIsSourceLoaded() && !tbcSource.getIsLive()) {
+        const double frameRate = tbcSource.getSystem() == PAL ? 25.0 : 30000.0 / 1001.0;
+        for (const TbcSource::ChapterEntry &entry: tbcSource.chapterList()) {
+            ChapterListDialog::Row row;
+            row.chapter = entry.chapter;
+            row.frame = entry.frame;
+            row.picture = entry.picture;
+            row.discSeconds = entry.seconds;
+            row.captureSeconds = static_cast<qint32>((entry.frame - 1) / frameRate);
+            rows.append(row);
+        }
+    }
+    chapterListDialog->setChapters(rows, currentFrameNumber);
+}
+
+// The skip keys: the start of the chapter that comes (or of the one that is in, or before it); with no chapters, the ends
+void MainWindow::skipChapter(qint32 direction)
+{
+    if (!tbcSource.getIsSourceLoaded() || tbcSource.getIsLive()) return;
+    qint32 target = direction > 0 ? tbcSource.chapterStartAfter(currentFrameNumber) : tbcSource.chapterStartBefore(currentFrameNumber);
+    if (target < 0) target = direction > 0 ? tbcSource.getNumberOfFrames() : 1;
+    const bool resume = playback->isPlaying();
+    stopScan();
+    seekToFrame(target);
+    if (resume) togglePlayback();
+}
+
+// The speed of the picture (negative: backward). Up to four times forward is the playback, which has the colour and, at the normal speed,
+// the sound; the others are a scan.
+void MainWindow::moveAt(double speed)
+{
+    if (!tbcSource.getIsSourceLoaded() || tbcSource.getIsLive()) return;
+    endStill();
+    if (speed > 0.0 && speed <= 4.0) {
+        stopScan();
+        applyPlaybackSpeed(speed);
+        speedFromRemote = speed != 1.0;
+        if (!playback->isPlaying()) togglePlayback();
+    } else {
+        startScan(speed);
+    }
+    updateRemote();
+}
+
+// The speed of the playback, which is in the Playback menu too
+void MainWindow::applyPlaybackSpeed(double speed)
+{
+    for (QAction *action: speedActions->actions()) {
+        if (qFuzzyCompare(action->data().toDouble(), speed)) action->setChecked(true);
+    }
+    playback->setSpeed(speed);
+#ifdef LDDECODE_HAVE_AUDIO
+    // The sound plays at the speed of the video only: at another speed it is off
+    if (playback->isPlaying()) {
+        audioStop();
+        if (speed == 1.0) audioStart(playbackDue);
+    }
+#endif
+}
+
+// The picture stays and the sound goes on: the end of that (any other key of the transport does it)
+void MainWindow::endStill()
+{
+    if (!stillWithSound) return;
+    stillWithSound = false;
+#ifdef LDDECODE_HAVE_AUDIO
+    audioStop();
+#endif
+    if (remote) remote->setStillWithSound(false);
+}
+
+void MainWindow::toggleStillWithSound()
+{
+    if (!tbcSource.getIsSourceLoaded() || tbcSource.getIsLive()) return;
+    if (stillWithSound) {
+        endStill();
+        updateRemote();
+        return;
+    }
+#ifdef LDDECODE_HAVE_AUDIO
+    if (!audio || !audio->hasAudio() || audio->currentTrack() < 0) {
+        statusBar()->showMessage(tr("There is no sound to go on with"), 3000);
+        return;
+    }
+    stopScan();
+    pausePlayback();
+    // (the sound alone: the clock of the video is left as it is)
+    const double at = positionSeconds(tbcSource.getFieldViewEnabled() ? currentFieldNumber : currentFrameNumber);
+    if (!audio->start(at)) return;
+    stillWithSound = true;
+    updateRemote();
+#else
+    statusBar()->showMessage(tr("This build has no sound"), 3000);
+#endif
+}
+
+// One-shot memory: the first press keeps the place, the next one goes back to it
+void MainWindow::toggleMemory()
+{
+    if (!tbcSource.getIsSourceLoaded() || tbcSource.getIsLive()) return;
+    if (memoryFrame < 1) {
+        memoryFrame = currentFrameNumber;
+        statusBar()->showMessage(tr("Memory: frame %1 kept").arg(memoryFrame), 3000);
+    } else {
+        const qint32 frame = memoryFrame;
+        memoryFrame = -1;
+        const bool resume = playback->isPlaying();
+        stopScan();
+        seekToFrame(frame);
+        if (resume) togglePlayback();
+    }
+    updateRemote();
+}
+
+// A and B: the first A press marks where a repeated part begins, B where it ends (it then plays again and again); a press of a key that
+// is set clears the part
+void MainWindow::markRepeat(bool endPoint)
+{
+    if (!tbcSource.getIsSourceLoaded() || tbcSource.getIsLive()) return;
+    if (!endPoint) {
+        if (repeatStartFrame > 0) {
+            clearRepeat();
+            return;
+        }
+        repeatStartFrame = currentFrameNumber;
+        repeatEndFrame = -1;
+        statusBar()->showMessage(tr("Repeat: start at frame %1, now mark the end").arg(repeatStartFrame), 3000);
+    } else {
+        if (repeatStartFrame < 1) {
+            statusBar()->showMessage(tr("Mark the start of the part with A first"), 3000);
+            return;
+        }
+        if (repeatEndFrame > 0) {
+            clearRepeat();
+            return;
+        }
+        if (currentFrameNumber <= repeatStartFrame) {
+            statusBar()->showMessage(tr("The end must be after the start"), 3000);
+            return;
+        }
+        repeatEndFrame = currentFrameNumber;
+        stopScan();
+        pausePlayback();
+        seekToFrame(repeatStartFrame);
+        togglePlayback();
+        statusBar()->showMessage(tr("Repeating frames %1 to %2").arg(repeatStartFrame).arg(repeatEndFrame), 3000);
+    }
+    updateRemote();
+}
+
+void MainWindow::clearRepeat()
+{
+    const bool wasRepeating = repeatEndFrame > 0;
+    repeatStartFrame = repeatEndFrame = -1;
+    statusBar()->showMessage(tr("Repeat cleared"), 2000);
+    // (the playback goes on from here over the whole capture)
+    if (wasRepeating && playback->isPlaying()) {
+        pausePlayback();
+        togglePlayback();
+    }
+    updateRemote();
+}
+
+// DIGITAL / ANALOG: the sound decoded from the EFM, or the analogue one. The EFM is decoded if that was not done yet.
+void MainWindow::toggleDigitalAnalog()
+{
+#ifdef LDDECODE_HAVE_AUDIO
+    if (!audio || !tbcSource.getIsSourceLoaded()) return;
+    const QVector<AudioTrackInfo> &tracks = audio->tracks();
+    const qint32 chosen = audio->currentTrack();
+    const bool digitalNow = chosen >= 0 && chosen < tracks.size() && tracks[chosen].source == QLatin1String("efm");
+    const QString wanted = digitalNow ? QStringLiteral("analogue") : QStringLiteral("efm");
+    for (qint32 index = 0; index < tracks.size(); index++) {
+        if (tracks[index].source == wanted) {
+            chooseAudioTrack(index);
+            updateRemote();
+            return;
+        }
+    }
+    if (wanted == QLatin1String("efm") && !efmSourceName().isEmpty()) {
+        if (audioConfig) startEfmDecoding(audioConfig->currentDecoder(), audioConfig->efmWithoutTimecodes(), audioConfig->efmConceal(), audioConfig->efmPad());
+        else startEfmDecoding(configuration.audioValue("decoder", 1).toInt(), true, true, false);
+        statusBar()->showMessage(tr("Decoding the EFM: the digital sound is heard as it comes"), 4000);
+    } else {
+        statusBar()->showMessage(wanted == QLatin1String("efm") ? tr("This capture has no EFM") : tr("This capture has no analogue sound"), 3000);
+    }
+#else
+    statusBar()->showMessage(tr("This build has no sound"), 3000);
+#endif
+}
+
+#ifdef LDDECODE_HAVE_AUDIO
+// A sound chosen from here (as the list of the waveform panel does), the panel being told
+void MainWindow::chooseAudioTrack(qint32 index)
+{
+    const double at = audio->isPlaying() ? audio->videoSecondsNow() : -1.0;
+    waveform->setMessage(QString());
+    audio->selectTrack(index);
+    waveform->setTracks(audio->tracks(), index);
+    waveform->refresh();
+    audioFollowVideo(at);
+}
+#else
+void MainWindow::chooseAudioTrack(qint32) {}
+#endif
+
+// The view of the picture as the view button sets it (the full screen sets it too): the playback goes on in the new one
+void MainWindow::setViewState(TbcSource::ViewMode mode, bool deinterlaced)
+{
+    const bool wasPlaying = playback->isPlaying();
+    pausePlayback();
+    tbcSource.setViewMode(mode);
+    if (mode == TbcSource::ViewMode::FIELD_VIEW) tbcSource.setStretchField(true);
+    deinterlacedView = deinterlaced && mode == TbcSource::ViewMode::FRAME_VIEW && VideoFilter::isAvailable();
+    const QString problem = updateVideoFilterGraph();
+    if (deinterlacedView && !problem.isEmpty()) {
+        deinterlacedView = false;
+        updateVideoFilterGraph();
+        statusBar()->showMessage(tr("The deinterlacer could not be used: %1").arg(problem), 10000);
+    }
+    setViewValues();
+    updateGuiLoaded();
+    showImage();
+    if (wasPlaying) togglePlayback();
+}
+
+// The full screen: the picture (its active area) takes all of the screen, and the bars and the menus go. The remote and the numbers of the
+// disc are windows that float over it, where they were put; they go away when the mouse does not move, and come back with it.
+void MainWindow::setFullScreen(bool on)
+{
+    if (on == fullScreenOn) return;
+    if (on) {
+        fullScreenWasMaximized = isMaximized();
+        // (the shortcuts of the menus go on working with the menu bar hidden: the actions are the window's too)
+        for (const ShortcutCommand &command: shortcutCommands()) addAction(command.action);
+        hiddenInFullScreen.clear();
+        QVector<QWidget *> bars = { ui->menuBar, ui->statusBar, ui->mediaControl_frame };
+#ifdef LDDECODE_HAVE_AUDIO
+        bars.append(waveform);
+#endif
+        for (QWidget *bar: bars) {
+            if (bar && bar->isVisible()) {
+                bar->hide();
+                hiddenInFullScreen.append(bar);
+            }
+        }
+        // The picture is made to fit the screen, as the window did
+        scaleBeforeFull = scaleFactor;
+        fitWasOn = resizeFrameWithWindow;
+        if (!fitWasOn) ui->actionResizeFrameWithWindow->setChecked(true);
+        // (black round the picture, as a screen is)
+        centralStyleBefore = ui->centralWidget->styleSheet();
+        ui->centralWidget->setStyleSheet("QWidget { background-color: black; }");
+        fullScreenOn = true;
+        // The remote and the numbers are there when it begins (what they were is given back when it ends)
+        // The colour and the deinterlaced view, as a screen is for (given back when it ends)
+        chromaBeforeFull = tbcSource.getChromaDecoder();
+        viewBeforeFull = tbcSource.getViewMode();
+        deinterlacedBeforeFull = deinterlacedView;
+        if (tbcSource.getIsSourceLoaded()) {
+            if (!chromaBeforeFull) {
+                tbcSource.setChromaDecoder(true);
+                ui->videoPushButton->setText(tr("Chroma"));
+            }
+            if (viewBeforeFull != TbcSource::ViewMode::FRAME_VIEW || !deinterlacedView) setViewState(TbcSource::ViewMode::FRAME_VIEW, true);
+            else showImage();
+        }
+        remoteWasOn = actionRemote->isChecked();
+        infoWasOn = actionInfoDisplay->isChecked();
+        actionRemote->setChecked(true);
+        actionInfoDisplay->setChecked(true);
+        showFullScreen();
+        lastCursor = QCursor::pos();
+        cursorPoll->start();
+        showOverlays();
+    } else {
+        fullScreenOn = false;
+        cursorPoll->stop();
+        overlayTimer->stop();
+        overlaysHiddenNow = false;
+        unsetCursor();
+        for (QWidget *bar: hiddenInFullScreen) bar->show();
+        hiddenInFullScreen.clear();
+        if (fullScreenWasMaximized) showMaximized(); else showNormal();
+        if (!fitWasOn) ui->actionResizeFrameWithWindow->setChecked(false);
+        ui->centralWidget->setStyleSheet(centralStyleBefore);
+        seekPanel->hide();
+        // (the picture was fitted to the screen: it goes back to the size it had, and is fitted again if the window fits it)
+        scaleFactor = scaleBeforeFull;
+        if (tbcSource.getIsSourceLoaded()) {
+            if (!chromaBeforeFull && tbcSource.getChromaDecoder()) {
+                tbcSource.setChromaDecoder(false);
+                ui->videoPushButton->setText(tr("Source"));
+            }
+            if (tbcSource.getViewMode() != viewBeforeFull || deinterlacedView != deinterlacedBeforeFull) setViewState(viewBeforeFull, deinterlacedBeforeFull);
+            else showImage();
+        }
+        actionRemote->setChecked(remoteWasOn);
+        actionInfoDisplay->setChecked(infoWasOn);
+        remoteWindow->setVisible(actionRemote->isChecked());
+        infoPanel->setVisible(actionInfoDisplay->isChecked());
+        updateRemote();
+    }
+    // (the picture is the active area only in the full screen: it is drawn again, and fitted when the window has its size)
+    if (tbcSource.getIsSourceLoaded()) {
+        updateImageViewer();
+        resizeTimer->start();
+    }
+}
+
+bool MainWindow::overlaysVisible() const
+{
+    return fullScreenOn && !overlaysHiddenNow;
+}
+
+// The remote and the numbers come back (and the pointer), and go after a few seconds of the mouse being still
+void MainWindow::showOverlays()
+{
+    if (!fullScreenOn) return;
+    overlaysHiddenNow = false;
+    unsetCursor();
+    remoteWindow->setVisible(actionRemote->isChecked());
+    infoPanel->setVisible(actionInfoDisplay->isChecked());
+    seekPanel->setVisible(tbcSource.getIsSourceLoaded());
+    layoutSeekPanel();
+    updateRemote();
+    updateInfoPanel();
+    updateSeekPanel();
+    overlayTimer->start();
+}
+
+void MainWindow::hideOverlays()
+{
+    if (!fullScreenOn) return;
+    // Each one goes by itself: the bar unless it is being dragged, the remote unless it is pinned or the mouse is on it or a number is being
+    // typed, the numbers if their pin is off (and the mouse is not on them). What is kept is looked at again later.
+    bool kept = false;
+    // (a drag whose mouse release never came is over: the bar is not held when no button is down)
+    if (seekBar->isScrubbing() && !(QGuiApplication::mouseButtons() & Qt::LeftButton)) seekBar->cancelScrub();
+    // The bar goes after the time without a move of the mouse, as the controls of a video player do, even if the pointer is on it (a move brings it
+    // back); only a drag holds it
+    if (seekBar->isScrubbing()) kept = true;
+    else seekPanel->hide();
+    if (!remoteTitleBar->pinned()) {
+        if (remoteWindow->underMouse() || !keypad.isEmpty()) kept = true;
+        else remoteWindow->hide();
+    }
+    // (the display of the numbers is the screen of the player: it stays, unless the pin says it goes too)
+    if (infoPanel->autoHide()) {
+        if (infoPanel->underMouse()) kept = true;
+        else infoPanel->hide();
+    }
+    if (kept) overlayTimer->start();
+    // The pointer goes with the bar (the windows have a pointer of their own)
+    if (!seekPanel->isVisible()) {
+        overlaysHiddenNow = true;
+        setCursor(Qt::BlankCursor);
+    }
+}
+
+// A move of the mouse over the picture brings the overlays back. A move on another screen does not, nor one over the remote or the numbers
+// (those are not the picture: the mouse is there to use them)
+void MainWindow::pollCursor()
+{
+    const QPoint now = QCursor::pos();
+    if (now == lastCursor) return;
+    lastCursor = now;
+    const auto over = [now](const QWidget *widget) { return widget->isVisible() && widget->frameGeometry().contains(now); };
+    if (over(remoteWindow) || over(infoPanel)) return;
+    if (frameGeometry().contains(now)) showOverlays();
+}
+
+// In the full screen the digits and the other keys of the remote are the keyboard's, and Escape goes back to the window
+void MainWindow::keyPressEvent(QKeyEvent *event)
+{
+    if (fullScreenOn) {
+        if (event->key() == Qt::Key_Escape) {
+            actionFullScreen->setChecked(false);
+            return;
+        }
+        const qint32 code = event->key();
+        if ((code >= Qt::Key_0 && code <= Qt::Key_9) || code == Qt::Key_Return || code == Qt::Key_Enter || code == Qt::Key_Backspace
+            || code == Qt::Key_Delete || code == Qt::Key_Plus) {
+            QCoreApplication::sendEvent(remote, event);
+            showOverlays();
+            return;
+        }
+    }
+    QMainWindow::keyPressEvent(event);
 }
 
 // The keys of the program ------------------------------------------------------------------------------------------------------------
@@ -3922,6 +4901,18 @@ QVector<ShortcutCommand> MainWindow::shortcutCommands()
     };
     for (QAction *top: ui->menuBar->actions()) {
         if (QMenu *menu = top->menu()) walk(menu, plain(menu->title()));
+    }
+    // The keys of the remote control: no menu has them
+    for (QAction *action: remoteActions) {
+        if (seen.contains(action)) continue;
+        seen.insert(action);
+        ShortcutCommand command;
+        command.text = plain(action->text());
+        command.menu = tr("Remote control");
+        command.action = action;
+        command.id = action->objectName();
+        command.defaults = shortcutDefaults.value(action);
+        commands.append(command);
     }
     return commands;
 }

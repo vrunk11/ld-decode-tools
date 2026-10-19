@@ -8,6 +8,14 @@ set(ld-analyse_SOURCES
     main.cpp
     mainwindow.cpp mainwindow.ui
     shortcutsdialog.cpp
+    remotelogic.cpp
+    remotewidget.cpp
+    jogwheel.cpp
+    infopanel.cpp
+    pintitlebar.cpp
+    chaptermarks.cpp
+    chapterlistdialog.cpp
+    seekbar.cpp
     oscilloscopedialog.cpp oscilloscopedialog.ui
     vectorscopedialog.cpp vectorscopedialog.ui
     aboutdialog.cpp aboutdialog.ui

@@ -249,6 +249,27 @@ public:
 
     qint32 startOfNextChapter(qint32 currentFrameNumber);
     qint32 startOfChapter(qint32 currentFrameNumber);
+    // What a search by number finds (a frame from 1, or -1): the chapter, the picture number (CAV), the time in seconds (CLV)
+    qint32 frameOfChapter(qint32 chapter) const;
+    qint32 frameOfPicture(qint32 picture) const;
+    qint32 frameOfTime(qint32 seconds) const;
+    bool hasChapters() const { return !chapterStarts.isEmpty(); }
+    bool hasPictureNumbers() const { return !pictureFrames.isEmpty(); }
+    bool hasTimes() const { return !timeFrames.isEmpty(); }
+    // The start of the chapter that comes after a frame, and of the one before it (-1 if there is none)
+    qint32 chapterStartAfter(qint32 frame) const;
+    qint32 chapterStartBefore(qint32 frame) const;
+    // The first frame of every chapter, in order (empty if the capture has no chapters)
+    QVector<qint32> chapterStartFrames() const;
+    // A chapter of the disc as the VBI gives it: its number, the frame of the capture where it begins, and what the disc says there (the picture number
+    // of a CAV disc, the time in seconds of a CLV disc; -1 if it does not)
+    struct ChapterEntry {
+        qint32 chapter = -1;
+        qint32 frame = -1;
+        qint32 picture = -1;
+        qint32 seconds = -1;
+    };
+    QVector<ChapterEntry> chapterList() const;
 
 signals:
     void busy(QString information);
@@ -357,6 +378,9 @@ private:
 
     // Chapter map
     QVector<qint32> chapterMap;
+    // The first frame of each chapter (by its number), of each picture number and of each second of the time of the disc
+    QMap<qint32, qint32> chapterStarts, pictureFrames, timeFrames;
+    QMap<qint32, ChapterEntry> chapterDetails;
 
     void resetState();
     void invalidateImageCache();

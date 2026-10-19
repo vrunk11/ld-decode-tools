@@ -42,6 +42,7 @@ public:
     void setWell(bool on);
     void setSoloChannel(bool on);
     void setSidecars(bool on);
+    void setPreferDigital(bool on);
     void setDensity(qint32 density);
     void setSidePanel(bool shown);
     void setMix(bool left, bool right, qint32 volume);
@@ -69,6 +70,7 @@ signals:
     void wellChanged(bool on);
     void soloChannelChanged(bool on);
     void sidecarsChanged(bool on);
+    void preferDigitalChanged(bool on);
     void densityChosen(qint32 density);
     void sidePanelChanged(bool shown);
     void mixChanged(bool left, bool right, qint32 volume);
@@ -94,6 +96,7 @@ private:
     QCheckBox *wellCheck;
     QCheckBox *soloCheck;
     QCheckBox *sidecarsCheck;
+    QCheckBox *preferDigitalCheck = nullptr;
     QComboBox *densityCombo;
     QCheckBox *sideCheck;
     QToolButton *leftButton, *rightButton;

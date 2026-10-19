@@ -57,6 +57,10 @@ AudioConfigDialog::AudioConfigDialog(QWidget *parent) : QDialog(parent)
     sidecarsCheck->setChecked(true);
     sidecarsCheck->setToolTip(tr("A file with the name of the capture (capture.wav, capture.flac, ...: anything ffmpeg reads as sound, but not RF samples) is a source of audio, and capture.efm is decoded. Takes effect when a capture is opened."));
     form->addRow(QString(), sidecarsCheck);
+    preferDigitalCheck = new QCheckBox(tr("Hear the digital audio (decoded from the EFM) first"), output);
+    preferDigitalCheck->setChecked(true);
+    preferDigitalCheck->setToolTip(tr("When a capture is opened and it has EFM, it is decoded and its audio is the one that is heard, instead of the analogue audio (which is chosen again if the EFM gives no audio). Takes effect when a capture is opened."));
+    form->addRow(QString(), preferDigitalCheck);
 
     sideCheck = new QCheckBox(tr("Show the controls beside the waveform"), output);
     sideCheck->setChecked(true);
@@ -204,6 +208,7 @@ AudioConfigDialog::AudioConfigDialog(QWidget *parent) : QDialog(parent)
     connect(deviceCombo, &QComboBox::currentIndexChanged, this, [this]() { emit deviceChosen(deviceCombo->currentData().toByteArray()); });
     connect(waveformCheck, &QCheckBox::toggled, this, &AudioConfigDialog::waveformShownChanged);
     connect(sidecarsCheck, &QCheckBox::toggled, this, &AudioConfigDialog::sidecarsChanged);
+    connect(preferDigitalCheck, &QCheckBox::toggled, this, &AudioConfigDialog::preferDigitalChanged);
     connect(muteButton, &QToolButton::toggled, this, &AudioConfigDialog::mutedChanged);
     connect(densityCombo, &QComboBox::currentIndexChanged, this, [this]() { emit densityChosen(densityCombo->currentData().toInt()); });
     connect(wellCheck, &QCheckBox::toggled, this, &AudioConfigDialog::wellChanged);
@@ -406,4 +411,10 @@ void AudioConfigDialog::setSidecars(bool on)
 {
     const QSignalBlocker blocker(sidecarsCheck);
     sidecarsCheck->setChecked(on);
+}
+
+void AudioConfigDialog::setPreferDigital(bool on)
+{
+    const QSignalBlocker blocker(preferDigitalCheck);
+    preferDigitalCheck->setChecked(on);
 }

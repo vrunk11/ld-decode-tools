@@ -12,6 +12,7 @@
 #include <limits>
 
 #include "tbcsource.h"
+#include <algorithm>
 #include "stackproject.h"
 #include "ldxcapture.h"
 #include "ldxstream.h"
@@ -963,6 +964,58 @@ qint32 TbcSource::startOfChapter(qint32 currentFrameNumber)
 // Private methods ----------------------------------------------------------------------------------------------------
 
 // Re-initialise state for a new source video
+// The frame (from 1) where a chapter, a picture number or a time (in seconds) of the disc is, or -1 if the capture has none
+qint32 TbcSource::frameOfChapter(qint32 chapter) const
+{
+    return chapterStarts.value(chapter, -1);
+}
+
+qint32 TbcSource::frameOfPicture(qint32 picture) const
+{
+    return pictureFrames.value(picture, -1);
+}
+
+qint32 TbcSource::frameOfTime(qint32 seconds) const
+{
+    // (a second the disc has no time for -- the numbers are not in every frame -- is the next one that it has, if that is near)
+    static constexpr qint32 NEAR_SECONDS = 10;
+    const auto it = timeFrames.lowerBound(seconds);
+    return it != timeFrames.cend() && it.key() - seconds <= NEAR_SECONDS ? it.value() : -1;
+}
+
+// The first frame of the chapter that comes after a frame, and of the one before it (-1 if there is none)
+qint32 TbcSource::chapterStartAfter(qint32 frame) const
+{
+    qint32 found = -1;
+    for (auto it = chapterStarts.cbegin(); it != chapterStarts.cend(); ++it) {
+        if (it.value() > frame && (found == -1 || it.value() < found)) found = it.value();
+    }
+    return found;
+}
+
+qint32 TbcSource::chapterStartBefore(qint32 frame) const
+{
+    qint32 found = -1;
+    for (auto it = chapterStarts.cbegin(); it != chapterStarts.cend(); ++it) {
+        if (it.value() < frame && it.value() > found) found = it.value();
+    }
+    return found;
+}
+
+QVector<TbcSource::ChapterEntry> TbcSource::chapterList() const
+{
+    QVector<ChapterEntry> entries = chapterDetails.values().toVector();
+    std::sort(entries.begin(), entries.end(), [](const ChapterEntry &a, const ChapterEntry &b) { return a.frame < b.frame; });
+    return entries;
+}
+
+QVector<qint32> TbcSource::chapterStartFrames() const
+{
+    QVector<qint32> frames = chapterStarts.values().toVector();
+    std::sort(frames.begin(), frames.end());
+    return frames;
+}
+
 void TbcSource::resetState()
 {
     liveSnr.reset();
@@ -1306,6 +1359,12 @@ void TbcSource::generateData()
     whiteSnrGraphData.resize(ldDecodeMetaData.getNumberOfFrames());
 
     bool ignoreChapters = false;
+    bool ignoreVbi = false;
+    bool vbiSeen = false;
+    chapterStarts.clear();
+    chapterDetails.clear();
+    pictureFrames.clear();
+    timeFrames.clear();
     qint32 lastChapter = -1;
     qint32 giveUpCounter = 0;
     chapterMap.clear();
@@ -1421,16 +1480,34 @@ void TbcSource::generateData()
         blackSnrGraphData[frameNumber] = blackSnrTotal / blackSnrPoints; // Calc average for frame
         whiteSnrGraphData[frameNumber] = whiteSnrTotal / whiteSnrPoints; // Calc average for frame
 
-        if (ignoreChapters) continue;
+        if (ignoreVbi) continue;
 
         // Decode the VBI
         VbiDecoder::Vbi vbi = vbiDecoder.decodeFrame(
             firstField.vbi.vbiData[0], firstField.vbi.vbiData[1], firstField.vbi.vbiData[2],
             secondField.vbi.vbiData[0], secondField.vbi.vbiData[1], secondField.vbi.vbiData[2]);
 
+        // What a search by number can find: the chapter, the picture (CAV) and the time (CLV) of a frame (the first frame that has them)
+        const qint32 frame = frameNumber + 1;
+        if (vbi.chNo != -1 && !chapterStarts.contains(vbi.chNo)) {
+            chapterStarts.insert(vbi.chNo, frame);
+            ChapterEntry entry;
+            entry.chapter = vbi.chNo;
+            entry.frame = frame;
+            entry.picture = vbi.picNo;
+            entry.seconds = vbi.clvHr != -1 ? vbi.clvHr * 3600 + vbi.clvMin * 60 + vbi.clvSec : -1;
+            chapterDetails.insert(vbi.chNo, entry);
+        }
+        if (vbi.picNo != -1 && !pictureFrames.contains(vbi.picNo)) pictureFrames.insert(vbi.picNo, frame);
+        if (vbi.clvHr != -1) {
+            const qint32 seconds = vbi.clvHr * 3600 + vbi.clvMin * 60 + vbi.clvSec;
+            if (!timeFrames.contains(seconds)) timeFrames.insert(seconds, frame);
+        }
+        if (vbi.chNo != -1 || vbi.picNo != -1 || vbi.clvHr != -1) vbiSeen = true;
+
         // Get the chapter number
         qint32 currentChapter = vbi.chNo;
-        if (currentChapter != -1) {
+        if (!ignoreChapters && currentChapter != -1) {
             if (currentChapter != lastChapter) {
                 lastChapter = currentChapter;
                 chapterMap.append(frameNumber);
@@ -1441,6 +1518,8 @@ void TbcSource::generateData()
             tbcDebugStream() << "Not seeing valid chapter numbers, giving up chapter mapping";
             ignoreChapters = true;
         }
+        // (a disc with no numbers in its first frames has none: the rest is not decoded)
+        if (frameNumber == 100 && !vbiSeen) ignoreVbi = true;
     }
 }
 

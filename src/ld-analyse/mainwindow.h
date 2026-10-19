@@ -48,6 +48,14 @@
 #include "chromadecoderconfigdialog.h"
 #include "configuration.h"
 #include "shortcutsdialog.h"
+#include "remotelogic.h"
+#include "remotewidget.h"
+#include "infopanel.h"
+#include "seekbar.h"
+#include "pintitlebar.h"
+#include "chaptermarks.h"
+#include "chapterlistdialog.h"
+#include <QToolButton>
 #include "tbcsource.h"
 #include "playbackcontroller.h"
 #include "playbackrenderer.h"
@@ -251,6 +259,85 @@ private:
     bool scanChromaSuppressed = false;
     QHash<QAction *, QList<QKeySequence>> shortcutDefaults;
     QAction *actionKeyboardShortcuts = nullptr;
+    // The remote control (in a window of its own, or over the picture in the full screen), the numbers of the disc over the picture, and what they work with
+    QVector<QAction *> remoteActions;      // (the actions of the keys: they are in no menu, and are in the list of the shortcuts)
+    RemoteWidget *remote = nullptr;
+    QDialog *remoteWindow = nullptr;
+    PinTitleBar *remoteTitleBar = nullptr;
+    InfoPanel *infoPanel = nullptr;
+    QAction *actionRemote = nullptr;
+    QAction *actionInfoDisplay = nullptr;
+    QAction *actionFullScreen = nullptr;
+    RemoteKeypad keypad;
+    double multiSpeed = 2.0;              // the speed of the keys of direction (times the normal speed)
+    double shuttleSpeedNow = 0.0;
+    bool efmByDefault = false;            // (the decoding being started is the one that opening a capture asks for: see loadAudio)
+    bool speedFromRemote = false;         // the speed of the playback is one that the remote (the shuttle, the arrows) set: it goes back to normal when the playback stops
+    qint32 memoryFrame = -1;              // the place that one-shot memory keeps
+    qint32 repeatStartFrame = -1, repeatEndFrame = -1;     // the part that is repeated (A and B)
+    bool stillWithSound = false;
+    QString searchMessage;                // what the display says for a moment (not found...)
+    QTimer *searchMessageTimer = nullptr;
+    bool fullScreenOn = false;
+    bool fullScreenWasMaximized = false;
+    bool overlaysHiddenNow = false;
+    bool remoteWasOn = false;
+    bool infoWasOn = false;
+    QString centralStyleBefore;
+    bool chromaBeforeFull = false;
+    TbcSource::ViewMode viewBeforeFull = TbcSource::ViewMode::FRAME_VIEW;
+    bool deinterlacedBeforeFull = false;
+    QString remoteSource;                 // (the capture the memory and the repeat of the remote are of)
+    // The bar of the position at the bottom of the picture in the full screen (it goes away with the remote)
+    QFrame *seekPanel = nullptr;
+    SeekBar *seekBar = nullptr;
+    QToolButton *seekPlayButton = nullptr;
+    QLabel *seekTimeLabel = nullptr;
+    QLabel *seekTotalLabel = nullptr;
+    QTimer *scrubTimer = nullptr;
+    ChapterMarks *sliderMarks = nullptr;      // (the marks of the chapters on the slider of the window, and on the bar of the full screen)
+    ChapterMarks *seekMarks = nullptr;
+    void updateChapterMarks();
+    // The picture stop codes of a CAV disc: the playback pauses at one (Playback menu)
+    QAction *actionStopCodes = nullptr;
+    bool lastFrameHadStop = false;
+    void checkStopCode();
+    qint32 scrubValue = 0;
+    double scaleBeforeFull = 1.0;
+    void layoutSeekPanel();
+    void updateSeekPanel();
+    bool eventFilter(QObject *watched, QEvent *event) override;
+    void setViewState(TbcSource::ViewMode mode, bool deinterlaced);
+    QTimer *cursorPoll = nullptr;         // (the mouse is looked at while the picture fills the screen, to show the overlays when it moves)
+    QPoint lastCursor;
+    bool fitWasOn = false;
+    QVector<QWidget *> hiddenInFullScreen;
+    QTimer *overlayTimer = nullptr;
+    void setupRemote();
+    void setupSeekPanel();
+    void updateRemote();
+    void updateInfoPanel();
+    void remoteSearch(bool asFrame);
+    void showChapterList();
+    void refreshChapterList();
+    ChapterListDialog *chapterListDialog = nullptr;
+    void seekToFrame(qint32 frame);
+    void skipChapter(qint32 direction);
+    void moveAt(double speed);
+    void applyPlaybackSpeed(double speed);
+    void endStill();
+    void toggleStillWithSound();
+    void toggleMemory();
+    void markRepeat(bool endPoint);
+    void clearRepeat();
+    void toggleDigitalAnalog();
+    void chooseAudioTrack(qint32 index);
+    void setFullScreen(bool on);
+    void showOverlays();
+    void hideOverlays();
+    bool overlaysVisible() const;
+    void pollCursor();
+    void keyPressEvent(QKeyEvent *event) override;
     void setupSeekActions();
     qint32 seekPosition();
     qint32 seekLast();
@@ -362,6 +449,8 @@ private:
     void showImage();
     void updateImage();
     qint32 getAspectAdjustment();
+    QImage activeAreaOf(const QImage &image);
+    double displayedWidth(const QImage &image);
     void updateImageViewer();
     void hideImage();
     void resizeFrameToWindow();

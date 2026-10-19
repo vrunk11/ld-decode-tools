@@ -9,6 +9,7 @@
  ******************************************************************************/
 
 #include <QApplication>
+#include <QCheckBox>
 #include <QLineEdit>
 #include <QProcess>
 #include <QThread>
@@ -54,6 +55,26 @@ int main(int argc, char *argv[])
     QApplication app(argc, argv);
     QTemporaryDir directory;
     CHECK(directory.isValid());
+
+    // The Audio panel opens with its settings, and the ones that are changed are said (the digital audio first, the files beside the capture)
+    {
+        AudioConfigDialog panel;
+        bool digitalFirst = true, besideCapture = true;
+        QObject::connect(&panel, &AudioConfigDialog::preferDigitalChanged, [&](bool on) { digitalFirst = on; });
+        QObject::connect(&panel, &AudioConfigDialog::sidecarsChanged, [&](bool on) { besideCapture = on; });
+        panel.show();
+        QCheckBox *digital = nullptr, *beside = nullptr;
+        for (QCheckBox *box: panel.findChildren<QCheckBox *>()) {
+            if (box->text().contains("digital audio")) digital = box;
+            if (box->text().contains("beside the capture")) beside = box;
+        }
+        CHECK(digital && beside && digital->isChecked());
+        digital->click();
+        beside->click();
+        CHECK(!digitalFirst && !besideCapture);
+        panel.setPreferDigital(true);
+        CHECK(digital->isChecked());
+    }
 
     // Two seconds of audio beside a .tbc: a sine on the left, silence on the right
     const qint32 rate = 44100;
