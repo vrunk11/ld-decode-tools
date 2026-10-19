@@ -469,7 +469,9 @@ bool MainWindow::filterImage(QImage &image, qint32 displayWidth, qint32 displayH
 {
     if (!videoFilter.isActive() || image.isNull()) return true;
 
-    const bool isFieldView = tbcSource.getFieldViewEnabled();
+    // (the weave of fields plays at the rate of the fields: its images are numbered by the field, or two of them would have the same
+    // position, and the second would not be taken for the one that follows the first, so the filter would start again for each)
+    const bool isFieldView = tbcSource.getFieldViewEnabled() || weaveActive;
     const qint32 position = isFieldView ? currentFieldNumber : currentFrameNumber;
 
     VideoFilter::Format format;

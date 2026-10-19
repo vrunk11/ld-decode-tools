@@ -91,6 +91,31 @@ int main(int argc, char *argv[])
     }
     step("weaves in colour done");
 
+    // What showing a picture costs the window (WEAVE_TIMES=1): the pixmap, and the smooth scaling to the size it is shown at
+    if (std::getenv("WEAVE_TIMES")) {
+        source.setChromaDecoder(false);
+        source.load(300, 599);
+        const QImage native = source.getImage();
+        for (const double scale: { 1.0, 1.5, 2.0 }) {
+            const qint32 w = static_cast<qint32>(native.width() * scale), h = static_cast<qint32>(native.height() * scale);
+            QElapsedTimer timer;
+            timer.start();
+            for (qint32 i = 0; i < 30; i++) {
+                const QPixmap pixmap = QPixmap::fromImage(native);
+                const QPixmap shown = pixmap.scaled(w, h, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+                if (shown.isNull()) return 1;
+            }
+            const double smooth = timer.elapsed() / 30.0;
+            timer.restart();
+            for (qint32 i = 0; i < 30; i++) {
+                const QImage scaled = native.scaled(w, h, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+                if (scaled.isNull()) return 1;
+            }
+            const double imageScaling = timer.elapsed() / 30.0;
+            std::fprintf(stderr, "testweave: shown at %dx%d: pixmap and smooth scaling %.1f ms; the image scaled alone %.1f ms\n", w, h, smooth, imageScaling);
+        }
+    }
+
     // What a picture costs (WEAVE_TIMES=1): a frame and a weave of fields, in colour, with the comb filter in 2 and in 3 dimensions
     if (std::getenv("WEAVE_TIMES")) {
         for (const qint32 dimensions: { 2, 3 }) {
