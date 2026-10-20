@@ -124,6 +124,10 @@ and command lines working (see §2 and §10).
   has no place for). The goal is compatibility: read what ld-decode and decode-orc write, and write
   what decode-orc reads; the specification is the guideline. Video output stays in the input's
   container (`checkSameVideoContainer`); `ld-tbc-to-cvbs` and `ld-cvbs-to-tbc` convert.
+- Formats that belong to this project (the `.stack` stacking session, the `.ldx` container and its tracks and parameters, and any other that has a
+  specification in `docs/Specifications/`) are specified there, and the specification is kept true: **a change to how one of them is read, written or
+  behaves (a field, a parameter, a default, the way a session is interpreted) updates the specification in the same change**, with the tools' pages in `docs/`
+  that describe it. Behaviour that is not in the specification yet is added to it.
 - Any change to the on-disk format (TBC, `.tbc.db`, EFM, PCM output) is a compatibility
   change: call it out in the PR and ask before making it (§10).
 
