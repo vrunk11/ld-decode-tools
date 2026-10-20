@@ -18,6 +18,7 @@
 #include <cstdlib>
 
 #include "audiopeaks.h"
+#include "sourceaudio.h"
 #include "audioreader.h"
 #include "audioring.h"
 #include "ldxcapture.h"
@@ -72,6 +73,32 @@ int main(int argc, char *argv[])
         CHECK(out[0] == 500 && out[1] == -1000);
         mixStereo(in, in, 2, mix);         // (in place)
         CHECK(in[2] == 1500);
+    }
+
+    // The audio of a capture that has less than was asked for: what is there is read, and the rest is silence (it used to stop the program)
+    {
+        const QVector<qint16> audio = ramp(1000, 11);
+        const QString pcm = directory.path() + "/short.pcm";
+        QFile file(pcm);
+        CHECK(file.open(QIODevice::WriteOnly));
+        file.write(reinterpret_cast<const char *>(audio.constData()), static_cast<qint64>(audio.size()) * 2);
+        file.close();
+        QFile tbc(directory.path() + "/short.tbc");
+        CHECK(tbc.open(QIODevice::WriteOnly));
+        tbc.close();
+        SourceAudio source;
+        CHECK(source.open(QFileInfo(directory.path() + "/short.tbc")));
+        CHECK(source.getNumberOfSamples() == 1000);
+        bool shortRead = true;
+        SourceAudio::Data inside = source.getAudioDataPadded(100, 50, &shortRead);
+        CHECK(!shortRead && inside.size() == 100 && inside[0] == audio[200] && inside[99] == audio[299]);
+        SourceAudio::Data across = source.getAudioDataPadded(990, 30, &shortRead);
+        CHECK(shortRead && across.size() == 60);
+        CHECK(across[0] == audio[1980] && across[19] == audio[1999] && across[20] == 0 && across[59] == 0);
+        SourceAudio::Data beyond = source.getAudioDataPadded(5000, 10, &shortRead);
+        CHECK(shortRead && beyond.size() == 20);
+        for (const qint16 value: beyond) CHECK(value == 0);
+        source.close();
     }
 
     // The peaks: bins, ranges, adding in pieces gives the same as all at once

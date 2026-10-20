@@ -67,6 +67,7 @@ private:
     void padDiscMap(DiscMap &discMap);
     void rewriteFrameNumbers(DiscMap &discMap);
     void deleteUnmappableFrames(DiscMap &discMap);
+    void markUnmappableFrames(DiscMap &discMap);
 
     bool saveDiscMap(DiscMap &discMap);
 };

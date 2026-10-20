@@ -12,6 +12,7 @@
 
 #include <QFileInfo>
 
+#include "cvbs.h"
 #include "ldxcapture.h"
 
 namespace TbcFiles {
@@ -46,6 +47,54 @@ bool isChromaFile(const QString &fileName)
 bool isLumaFile(const QString &fileName)
 {
     return endsWith(fileName, ".tbcy");
+}
+
+namespace {
+
+// The extension of a name that has a mapping: .tbc or .cvbs (with its dot, as it is written), or empty
+QString mappableExtension(const QString &fileName)
+{
+    for (const char *extension: { ".tbc", ".cvbs" }) {
+        if (endsWith(fileName, extension)) return fileName.right(static_cast<qsizetype>(qstrlen(extension)));
+    }
+    return QString();
+}
+
+} // namespace
+
+bool isMappedFileName(const QString &fileName)
+{
+    const QString extension = mappableExtension(fileName);
+    return !extension.isEmpty() && without(fileName, extension.length()).endsWith(QLatin1String("_map"), Qt::CaseInsensitive);
+}
+
+QString mappedFileName(const QString &fileName)
+{
+    const QString extension = mappableExtension(fileName);
+    // (the chroma file of a Y/C pair has none of its own: ld-discmap takes a luma or composite file)
+    if (extension.isEmpty() || isMappedFileName(fileName) || isChromaFile(fileName)) return QString();
+    return without(fileName, extension.length()) + QStringLiteral("_map") + extension;
+}
+
+QString originalFileName(const QString &fileName)
+{
+    if (!isMappedFileName(fileName)) return fileName;
+    const QString extension = mappableExtension(fileName);
+    return without(fileName, extension.length() + 4) + extension;
+}
+
+bool isCaptureFileName(const QString &fileName)
+{
+    if (LdxCapture::isLdxName(fileName)) return true;
+    return endsWith(fileName, ".tbc") || endsWith(fileName, ".tbcy") || endsWith(fileName, ".tbcc") || Cvbs::isDataFileName(fileName);
+}
+
+bool isStackSourceName(const QString &fileName)
+{
+    if (!isCaptureFileName(fileName)) return false;
+    if (LdxCapture::isLdxName(fileName)) return !LdxCapture::isChromaTrack(fileName);
+    if (endsWith(fileName, ".cvbsc")) return false;
+    return !isChromaFile(fileName);
 }
 
 QString baseName(const QString &fileName)

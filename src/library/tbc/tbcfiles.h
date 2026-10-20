@@ -47,6 +47,21 @@ QString chromaFileName(const QString &fileName);
 // naming, and the file name as it is for any other
 QString metadataBaseName(const QString &fileName);
 
+// Whether a file that is dropped on a program is a capture it can open: a TBC file (<name>.tbc, .tbcy, .tbcc, _chroma.tbc), a CVBS file (.cvbs, .cvbsy,
+// .cvbsc) or an LDX file (with or without the track after it: capture.ldx#3), whatever the case of the name
+bool isCaptureFileName(const QString &fileName);
+
+// Whether it is a capture that can be a source of a stack: a composite or luma capture of those, not the chroma file of a pair (which goes with its luma)
+bool isStackSourceName(const QString &fileName);
+
+// The file of the mapping of a capture (ld-discmap) that is kept beside it: <name>_map.tbc for <name>.tbc, <name>_map.cvbs for <name>.cvbs, with whatever
+// case the extension has. Empty for any other name, and for a name that is one of a mapping already.
+QString mappedFileName(const QString &fileName);
+// The file that a mapping is of: <name>.tbc for <name>_map.tbc. The file name as it is if it is not one.
+QString originalFileName(const QString &fileName);
+// Whether the name is that of a mapping
+bool isMappedFileName(const QString &fileName);
+
 } // namespace TbcFiles
 
 #endif // TBCFILES_H

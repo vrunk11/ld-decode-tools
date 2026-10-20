@@ -20,7 +20,9 @@ Options:
   -m, --maponly                        Only perform mapping - No output TBC
                                        file required
   -s, --nostrict                       No strict checking on pulldown frames
-  -u, --delete-unmappable-frames       Delete unmappable frames
+  -u, --delete-unmappable-frames       Delete unmappable frames (by default
+                                       they are kept, given a number and
+                                       marked as dropouts)
   -n, --no-audio                       Do not process analogue audio
   --meta, --metadata-format <db|json>  Metadata format to use: db (SQLite
                                        <input>.db) or json (<input>.json).
@@ -30,6 +32,16 @@ Arguments:
   input                                Specify input TBC file
   output                               Specify output TBC file
 ```
+
+## Unmappable frames
+
+A frame that has no number and cannot be given one (the VBI is unreadable over several frames) does not make ld-discmap fail. It is **kept**, given a number and **marked as a dropout**:
+
+- it takes the next number that is free after the frame before it, if there is room before the number of the frame after it, so it stays where it was and no other frame shifts;
+- if there is no room, it takes the number 0, which no real frame has, and goes before the first frame, as a lead-in does (a CAV frame 0 is a lead-in frame to ld-discmap and to the stack);
+- its fields are written with a dropout over their whole width on every line, so that the stack leaves the frame out as it does a dropout.
+
+The log says how many frames were numbered in place and how many were numbered 0. `--delete-unmappable-frames` deletes them instead: they are dropped from the map and their place is padded like any other gap.
 
 ## LDX files
 

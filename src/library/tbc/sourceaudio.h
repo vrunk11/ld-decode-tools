@@ -55,6 +55,11 @@ public:
 
     // Data handling methods
     Data getAudioData(qint32 startSample, qint32 numberOfSamples);
+    // The same, for a file that may hold less audio than was asked for (the metadata can describe more than the file has): what is there is read, and the rest
+    // is silence, so the result always has numberOfSamples samples (a left and a right each). shortRead says whether some of it was silence that was not in the file.
+    Data getAudioDataPadded(qint32 startSample, qint32 numberOfSamples, bool *shortRead = nullptr);
+    // How many samples (a left and a right each) the file holds
+    qint64 getNumberOfSamples() const { return audioFileByteLength / 4; }
 
 private:
     QFile inputAudioFile;

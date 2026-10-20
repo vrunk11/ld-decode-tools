@@ -57,6 +57,10 @@ public:
 
     qint32 vbiFrameNumber(qint32 frameNumber) const;
     void setVbiFrameNumber(qint32 frameNumber, qint32 vbiFrameNumber);
+    // Leave out the frames whose fields are not in the video file (the metadata can describe more than the file holds): the number left out
+    qint32 limitToAvailableFields(qint32 availableFields);
+    bool isUnmappable(qint32 frameNumber) const;
+    void setUnmappable(qint32 frameNumber);
     qint32 seqFrameNumber(qint32 frameNumber) const;
     bool isPulldown(qint32 frameNumber) const;
     qint32 numberOfPulldowns() const;

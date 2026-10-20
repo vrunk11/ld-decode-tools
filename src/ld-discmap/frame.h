@@ -50,6 +50,7 @@ public:
     double frameQuality() const;
     bool isPadded() const;
     bool isClvOffset() const;
+    bool isUnmappable() const;
     qint32 firstField() const;
     qint32 secondField() const;
     qint32 firstFieldPhase() const;
@@ -65,6 +66,7 @@ public:
     void frameQuality(double value);
     void isPadded(bool value);
     void isClvOffset(bool value);
+    void isUnmappable(bool value);
     void firstField(qint32 value);
     void secondField(qint32 value);
     void firstFieldPhase(qint32 value);
@@ -83,6 +85,7 @@ private:
     double m_frameQuality;
     bool m_isPadded;
     bool m_isClvOffset;
+    bool m_isUnmappable = false;    // it had no number and could not be given one: it is kept, with a number that is made up, and marked as a dropout
     qint32 m_firstField;
     qint32 m_secondField;
     qint32 m_firstFieldPhase;

@@ -31,7 +31,7 @@ ld-discmap [options] <input.tbc> <output.tbc>
 - `-r, --reverse`: Reverse the field order to second/first (default first/second)
 - `-m, --maponly`: Only perform mapping - No output TBC file required
 - `-s, --nostrict`: No strict checking on pulldown frames
-- `-u, --delete-unmappable-frames`: Delete unmappable frames
+- `-u, --delete-unmappable-frames`: Delete unmappable frames (by default they are kept, given a number and marked as dropouts: see below)
 - `-n, --no-audio`: Do not process analogue audio (for a CVBS capture this is the `capture_audio_0.wav` file, which is mapped like the `.pcm` of a TBC capture, and skipped if it does not exist)
 
 #### Verbosity
@@ -79,8 +79,9 @@ ld-discmap -n input.tbc output.tbc
 - Some discs have poor VBI data quality
 
 ### Unmappable frames
-- Use --delete-unmappable-frames to remove them
-- Or keep them and handle in downstream tools
+- A frame that has no number and cannot be given one is kept, and the mapping does not fail: it takes the next free number after the frame before it, where there is room before the number of the frame after it (so it stays where it was and nothing shifts), and is written with a dropout over the whole of each field, so that the stack leaves it out. A frame with no room takes the number 0 and goes before the first frame, as a lead-in does
+- `--delete-unmappable-frames` deletes them instead (their place is then padded like any other gap)
+- The log says how many there were; check the result in ld-analyse
 - Check source disc quality
 
 ### Field order issues

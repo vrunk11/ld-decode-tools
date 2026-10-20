@@ -80,7 +80,7 @@ int main(int argc, char *argv[])
 
     // Option to delete unmappable frames (-u / --delete-unmappable-frames)
     QCommandLineOption setDeleteUnmappableOption(QStringList() << "u" << "delete-unmappable-frames",
-                                       QCoreApplication::translate("main", "Delete unmappable frames"));
+                                       QCoreApplication::translate("main", "Delete unmappable frames (by default they are kept, given a number and marked as dropouts)"));
     parser.addOption(setDeleteUnmappableOption);
 
     // Option to not process analogue audio (-n / --no-audio)

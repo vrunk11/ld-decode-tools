@@ -23,6 +23,9 @@
 ************************************************************************/
 
 #include "discmapper.h"
+
+#include <QSet>
+#include <limits>
 #include "tbc/logging.h"
 #include "cvbsaudio.h"
 #include "targetvideo.h"
@@ -75,6 +78,23 @@ bool DiscMapper::process(QFileInfo _inputFileInfo, QFileInfo _inputMetadataFileI
     }
     tbcDebugStream() << discMap;
 
+    // The metadata can describe more fields than the video file holds (a capture that was cut short, or metadata written for a longer one): the frames past the
+    // end of the file cannot be read, and are left out of the map instead of being asked for
+    {
+        SourceVideo probe;
+        if (probe.open(inputFileInfo.filePath(), discMap.getVideoFieldLength())) {
+            const qint32 available = probe.getNumberOfAvailableFields();
+            probe.close();
+            const qint32 left = available > 0 ? discMap.limitToAvailableFields(available) : 0;
+            if (left > 0) {
+                qInfo() << "";
+                qInfo() << "Warning: the metadata describe frames that are not in the video file (it holds" << available << "fields):";
+                qInfo() << "the" << left << "frames past its end are left out, and the disc map has" << discMap.numberOfFrames() << "frames";
+                qInfo() << "";
+            }
+        }
+    }
+
     // Show the disc type and video format:
     qInfo().noquote() << "Input TBC is a" << discMap.discType() << "disc using" << discMap.discFormat();
 
@@ -96,17 +116,17 @@ bool DiscMapper::process(QFileInfo _inputFileInfo, QFileInfo _inputMetadataFileI
     // Verify that there are no frames without frame numbers in the map
     // otherwise reordering will fail
     if (!verifyFrameNumberPresence(discMap)) {
-        if (!deleteUnmappable) {
-            qInfo() << "";
-            qInfo() << "Disc mapping has failed as there are unmappable frames in the disc map!";
-            qInfo() << "It is possible that running ld-discmap again with the --delete-unmappable-frames";
-            qInfo() << "option set could recitfy this issue.";
-            return false;
+        qInfo() << "";
+        if (deleteUnmappable) {
+            // --delete-unmappable-frames: they are dropped from the map, and their place is padded like any other gap
+            qInfo() << "Verification has failed, there are unmappable frames...";
+            qInfo() << "--delete-unmappable-frames is set, so the unmappable frames will be deleted";
+            deleteUnmappableFrames(discMap);
+        } else {
+            // Otherwise they are kept, given a number and marked as dropouts, and the mapping goes on
+            qInfo() << "Verification has failed, there are unmappable frames: they are kept, given a number, and marked as dropouts";
+            markUnmappableFrames(discMap);
         }
-
-        qInfo() << "Verification has failed, there are unmappable frames...";
-        qInfo() << "--delete-unmappable-frames is set, so the unmappable frames will be deleted";
-        deleteUnmappableFrames(discMap);
     }
 
     // Reorder the frames according to VBI frame number order in the disc map
@@ -404,8 +424,7 @@ void DiscMapper::removeDuplicateNumberedFrames(DiscMap &discMap)
                 qInfo() << "";
                 qInfo() << "Warning:";
                 qInfo() << "There are frames without a frame number in the duplicate frame list.  Since numberless frames are";
-                qInfo() << "usually unmappable, disc mapping will likely fail unless the --delete-unmappable-frames option is";
-                qInfo() << "used.";
+                qInfo() << "usually unmappable, they will be given a number and marked as dropouts (or deleted, with --delete-unmappable-frames).";
                 qInfo() << "";
             }
         }
@@ -498,6 +517,8 @@ void DiscMapper::padDiscMap(DiscMap &discMap)
     QVector<qint32> startFrame;
     QVector<qint32> paddingLength;
     for (qint32 frameNumber = 0; frameNumber < discMap.numberOfFrames() - 1; frameNumber++) {
+        // (the frames that could not be numbered and have the number 0 are together before the first, as a lead-in is: they are not a sequence to look for gaps in)
+        if (discMap.isUnmappable(frameNumber) && discMap.vbiFrameNumber(frameNumber) == 0) continue;
         if (discMap.vbiFrameNumber(frameNumber) + 1 != discMap.vbiFrameNumber(frameNumber + 1)) {
             // Is the current frame a pulldown?
             if (discMap.isPulldown(frameNumber)) {
@@ -549,13 +570,16 @@ void DiscMapper::padDiscMap(DiscMap &discMap)
                             qInfo() << "has failed due to badly corrupted VBI frame number data in the source TBC file.";
                         }
 
-                        numberOfGaps++;
-                        qint32 missingFrames = discMap.vbiFrameNumber(frameNumber + 1) - discMap.vbiFrameNumber(frameNumber) - 1;
-                        totalMissingFrames += missingFrames;
+                        const qint32 missingFrames = discMap.vbiFrameNumber(frameNumber + 1) - discMap.vbiFrameNumber(frameNumber) - 1;
+                        // (two frames with the same number are not a gap: nothing is missing)
+                        if (missingFrames > 0) {
+                            numberOfGaps++;
+                            totalMissingFrames += missingFrames;
 
-                        // Add to the gap list
-                        startFrame.append(frameNumber);
-                        paddingLength.append(missingFrames);
+                            // Add to the gap list
+                            startFrame.append(frameNumber);
+                            paddingLength.append(missingFrames);
+                        }
                     } else {
                         // CLV offset frame
                         clvOffsetFrames++;
@@ -638,6 +662,51 @@ void DiscMapper::deleteUnmappableFrames(DiscMap &discMap)
     discMap.flush();
 
     qInfo() << "Deletion successful";
+}
+
+// Method to keep the frames that have no number and cannot be given one. Each takes the next number that is free after the frame before it, if there is
+// one before the number of the frame after it (so that it stays where it was and nothing shifts); if there is none it takes the number 0, which no real
+// frame has, and goes before the first, as a lead-in does. They are marked, and written with a dropout over the whole of each field, so that the stack
+// leaves them out as it does a dropout and the mapping does not fail.
+void DiscMapper::markUnmappableFrames(DiscMap &discMap)
+{
+    const qint32 total = discMap.numberOfFrames();
+    QSet<qint32> used;
+    for (qint32 frameNumber = 0; frameNumber < total; frameNumber++) {
+        if (discMap.vbiFrameNumber(frameNumber) >= 0) used.insert(discMap.vbiFrameNumber(frameNumber));
+    }
+    // The number of the next frame that has one, for each frame
+    QVector<qint32> nextNumber(total + 1, std::numeric_limits<qint32>::max());
+    for (qint32 frameNumber = total - 1; frameNumber >= 0; frameNumber--) {
+        const qint32 number = discMap.vbiFrameNumber(frameNumber);
+        nextNumber[frameNumber] = number >= 0 ? number : nextNumber[frameNumber + 1];
+    }
+
+    qint32 previous = -1;
+    qint32 placed = 0, lead = 0;
+    for (qint32 frameNumber = 0; frameNumber < total; frameNumber++) {
+        const qint32 number = discMap.vbiFrameNumber(frameNumber);
+        if (number >= 0) {
+            previous = number;
+            continue;
+        }
+        if (discMap.isPulldown(frameNumber)) continue;
+        // The next number that is free after the frame before it
+        qint32 candidate = previous >= 0 ? previous + 1 : -1;
+        while (candidate >= 0 && used.contains(candidate)) candidate++;
+        if (candidate >= 0 && candidate < nextNumber[frameNumber]) {
+            discMap.setVbiFrameNumber(frameNumber, candidate);
+            used.insert(candidate);
+            previous = candidate;
+            placed++;
+        } else {
+            discMap.setVbiFrameNumber(frameNumber, 0);
+            lead++;
+        }
+        discMap.setUnmappable(frameNumber);
+        tbcDebugStream() << "Frame" << frameNumber << "is unmappable: it is kept as frame" << discMap.vbiFrameNumber(frameNumber) << "and marked as a dropout";
+    }
+    qInfo() << placed << "unmappable frames were given the next free number, where they were," << lead << "had none free and were numbered 0 (before the first frame)";
 }
 
 // Method to save the current disc map
@@ -786,6 +855,7 @@ bool DiscMapper::saveDiscMap(DiscMap &discMap)
     // Create the output video file
     SourceVideo::Data sourceFirstField;
     SourceVideo::Data sourceSecondField;
+    bool audioShortWarned = false;
     SourceAudio::Data sourceAudioFirstField;
     SourceAudio::Data sourceAudioSecondField;
 
@@ -831,10 +901,16 @@ bool DiscMapper::saveDiscMap(DiscMap &discMap)
                 if ((discMap.getFirstFieldAudioDataLength(frameNumber) > 0) &&
                         (discMap.getSecondFieldAudioDataLength(frameNumber) > 0)) {
                     // Read the audio
-                    sourceAudioFirstField = sourceAudio.getAudioData(discMap.getFirstFieldAudioDataStart(frameNumber),
-                                                                     discMap.getFirstFieldAudioDataLength(frameNumber));
-                    sourceAudioSecondField = sourceAudio.getAudioData(discMap.getSecondFieldAudioDataStart(frameNumber),
-                                                                      discMap.getSecondFieldAudioDataLength(frameNumber));
+                    // (the audio file can hold less than the metadata say: what is missing is silence)
+                    bool shortFirst = false, shortSecond = false;
+                    sourceAudioFirstField = sourceAudio.getAudioDataPadded(discMap.getFirstFieldAudioDataStart(frameNumber),
+                                                                           discMap.getFirstFieldAudioDataLength(frameNumber), &shortFirst);
+                    sourceAudioSecondField = sourceAudio.getAudioDataPadded(discMap.getSecondFieldAudioDataStart(frameNumber),
+                                                                            discMap.getSecondFieldAudioDataLength(frameNumber), &shortSecond);
+                    if ((shortFirst || shortSecond) && !audioShortWarned) {
+                        audioShortWarned = true;
+                        qInfo() << "Warning: the analogue audio file holds less audio than the metadata say (from frame" << frameNumber << "of the output): the audio that is missing is silence";
+                    }
 
                     // Write the audio
                     if (!putAudio(sourceAudioFirstField)) writeFail = true;

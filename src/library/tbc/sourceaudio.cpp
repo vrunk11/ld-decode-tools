@@ -27,6 +27,7 @@
 #include "ldxcapture.h"
 
 #include <QDataStream>
+#include <QtEndian>
 #include "tbc/logging.h"
 
 SourceAudio::SourceAudio()
@@ -85,6 +86,31 @@ void SourceAudio::close()
     // Close the audio source data file
     inputAudioFile.close();
     audioFileByteLength = 0;
+}
+
+SourceAudio::Data SourceAudio::getAudioDataPadded(qint32 startSample, qint32 numberOfSamples, bool *shortRead)
+{
+    Data result;
+    if (shortRead) *shortRead = false;
+    if (numberOfSamples < 1) return result;
+    const qint64 available = audioFileByteLength / 4;
+    const qint64 start = qMax<qint64>(0, startSample);
+    const qint64 readable = start >= available ? 0 : qMin<qint64>(numberOfSamples, available - start);
+    if (readable > 0) {
+        if (ldx) {
+            result = ldx->getAudio(start, readable);
+        } else if (inputAudioFile.seek(start * 4)) {
+            // (the samples are read as they are in the file: 16-bit, little-endian, a left and a right for each)
+            const QByteArray bytes = inputAudioFile.read(readable * 4);
+            const qsizetype count = bytes.size() / 2;
+            result.resize(count);
+            for (qsizetype i = 0; i < count; i++) result[i] = qFromLittleEndian<qint16>(bytes.constData() + 2 * i);
+        }
+    }
+    if (readable < numberOfSamples && shortRead) *shortRead = true;
+    // (what the file does not have is silence)
+    result.resize(static_cast<qsizetype>(numberOfSamples) * 2);
+    return result;
 }
 
 // Get audio data for a single field from the audio source file

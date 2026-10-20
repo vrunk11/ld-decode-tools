@@ -23,6 +23,8 @@
 ************************************************************************/
 
 #include "discmap.h"
+
+#include <algorithm>
 #include "tbc/logging.h"
 #include "cvbsaudio.h"
 
@@ -432,6 +434,33 @@ void DiscMap::setVbiFrameNumber(qint32 frameNumber, qint32 vbiFrameNumber)
     m_frames[frameNumber].vbiFrameNumber(vbiFrameNumber);
 }
 
+qint32 DiscMap::limitToAvailableFields(qint32 availableFields)
+{
+    qint32 left = 0;
+    for (qint32 frameNumber = 0; frameNumber < m_numberOfFrames; frameNumber++) {
+        if (m_frames[frameNumber].firstField() > availableFields || m_frames[frameNumber].secondField() > availableFields) {
+            m_frames[frameNumber].isMarkedForDeletion(true);
+            left++;
+        }
+    }
+    if (left > 0) flush();
+    return left;
+}
+
+// A frame that had no number and could not be given one: it is kept with a number that is made up (see DiscMapper::markUnmappableFrames), and
+// written with a dropout over the whole of each of its fields
+bool DiscMap::isUnmappable(qint32 frameNumber) const
+{
+    if (frameNumber < 0 || frameNumber >= m_numberOfFrames) return false;
+    return m_frames[frameNumber].isUnmappable();
+}
+
+void DiscMap::setUnmappable(qint32 frameNumber)
+{
+    if (frameNumber < 0 || frameNumber >= m_numberOfFrames) return;
+    m_frames[frameNumber].isUnmappable(true);
+}
+
 // Method to return the original sequential frame number (which maps to the lddecodemetadata VBI)
 qint32 DiscMap::seqFrameNumber(qint32 frameNumber) const
 {
@@ -607,7 +636,8 @@ void DiscMap::sort()
     //
     // Note that the struct has an overloaded < operator that controls the sort comparison
     // (see the .h file)
-    std::sort(m_frames.begin(), m_frames.end());
+    // (stable: the frames of one number, pulldown frames above all, stay in the order they were in)
+    std::stable_sort(m_frames.begin(), m_frames.end());
 
     m_numberOfFrames = m_frames.size();
 }
@@ -841,6 +871,14 @@ bool DiscMap::buildTargetMetadata(LdDecodeMetaData &targetMetadata)
                 firstSourceMetadata.vbi.vbiData[0] = convertFrameToClvPicNo(m_frames[frameNumber].vbiFrameNumber());
                 firstSourceMetadata.vbi.vbiData[1] = convertFrameToClvTimeCode(m_frames[frameNumber].vbiFrameNumber());
                 firstSourceMetadata.vbi.vbiData[2] = convertFrameToClvTimeCode(m_frames[frameNumber].vbiFrameNumber());
+            }
+
+            // A frame that could not be numbered has a dropout over the whole of each field: the stack leaves it out, as it does a dropout
+            if (m_frames[frameNumber].isUnmappable()) {
+                for (LdDecodeMetaData::Field *field: { &firstSourceMetadata, &secondSourceMetadata }) {
+                    field->dropOuts.clear();
+                    for (qint32 line = 1; line <= sourceVideoParameters.fieldHeight; line++) field->dropOuts.append(0, sourceVideoParameters.fieldWidth, line);
+                }
             }
 
             // Append the fields to the metadata

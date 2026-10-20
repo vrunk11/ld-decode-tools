@@ -85,6 +85,16 @@ bool Frame::isLeadInOrOut() const
     return m_isLeadInOrOut;
 }
 
+bool Frame::isUnmappable() const
+{
+    return m_isUnmappable;
+}
+
+void Frame::isUnmappable(bool value)
+{
+    m_isUnmappable = value;
+}
+
 bool Frame::isMarkedForDeletion() const
 {
     return m_isMarkedForDeletion;
@@ -193,8 +203,10 @@ void Frame::secondFieldPhase(qint32 value)
 }
 
 // Override less than operator for sorting
+// (a strict order: the numbers, then a pulldown frame after the frames of its number that are not pulldown. It used to be true both ways for two pulldown
+// frames of the same number, which is not an order, and sorting such a map could crash)
 bool Frame::operator<(const Frame& other) const
 {
-    return (m_vbiFrameNumber < other.m_vbiFrameNumber) ||
-            ((m_vbiFrameNumber == other.m_vbiFrameNumber) && (other.m_isPullDown));
+    if (m_vbiFrameNumber != other.m_vbiFrameNumber) return m_vbiFrameNumber < other.m_vbiFrameNumber;
+    return !m_isPullDown && other.m_isPullDown;
 }
