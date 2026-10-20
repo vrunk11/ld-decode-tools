@@ -26,6 +26,7 @@
 #include <QMimeData>
 #include <QGridLayout>
 #include <QFileDialog>
+#include <QDir>
 #include <QFileInfo>
 #include <QHBoxLayout>
 #include <QMenu>
@@ -364,6 +365,7 @@ void MainWindow::buildUi()
     infoPanel = new SourceInfoPanel;
     infoPanel->setVisible(false);
     connect(infoPanel, &SourceInfoPanel::mapRequested, this, &MainWindow::mapSelectedSource);
+    connect(infoPanel, &SourceInfoPanel::snrUpdateRequested, this, &MainWindow::updateSnrOfSelectedSource);
     connect(infoButton, &QPushButton::toggled, this, [this](bool on) {
         // The window gets wider by the room of the panel when it is shown, and narrower by it when it is hidden (the picture keeps its room), unless the
         // window is maximized or fills the screen
@@ -923,7 +925,7 @@ bool MainWindow::confirmMappingBeforeStack()
 
 // Map the sources with ld-discmap, in the background: a bar in the row of each source shows how it goes (and a window has the log of the tool). A capture that
 // is overwritten has to be let go of first (a file that is open cannot be replaced on Windows) and is read again afterwards.
-bool MainWindow::startMapping(const QVector<qint32> &indexes, bool overwrite, bool thenStack)
+bool MainWindow::startMapping(const QVector<qint32> &indexes, bool overwrite, bool thenStack, MapDialog::Task task, const QString &inputOverride)
 {
     if (mappingBusy || indexes.isEmpty()) return false;
     QVector<MapDialog::Job> jobs;
@@ -932,14 +934,14 @@ bool MainWindow::startMapping(const QVector<qint32> &indexes, bool overwrite, bo
         MapDialog::Job job;
         job.id = project.sources[index].id;
         job.title = sourceTitle(project.sources[index]);
-        job.input = project.sources[index].reference();
+        job.input = inputOverride.isEmpty() ? project.sources[index].reference() : inputOverride;
         jobs.append(job);
         ids << job.id;
     }
     // The sources that are let go of, and read again afterwards: with an overwrite, those that are mapped; and, for a track of an LDX file (the file is
     // written again, whether the track is replaced or the mapping is added), every source that reads that file
     QStringList reload;
-    if (overwrite) reload = ids;
+    if (overwrite || task == MapDialog::UpdateSnr) reload = ids;
     for (const MapDialog::Job &job: jobs) {
         if (!MapDialog::isLdxJob(job)) continue;
         QString path;
@@ -972,7 +974,7 @@ bool MainWindow::startMapping(const QVector<qint32> &indexes, bool overwrite, bo
     }
     mappingBusy = true;
     updateMappingControls();
-    mapDialog = new MapDialog(jobs, overwrite, this);
+    mapDialog = new MapDialog(jobs, overwrite, this, task);
     mapDialog->setAttribute(Qt::WA_DeleteOnClose);
     connect(mapDialog, &MapDialog::jobStarted, this, [this](const QString &id) {
         if (!states.contains(id)) return;
@@ -990,8 +992,9 @@ bool MainWindow::startMapping(const QVector<qint32> &indexes, bool overwrite, bo
         states[id].mapFailed = !ok;
         updateMapBar(id);
     });
-    connect(mapDialog, &MapDialog::allFinished, this, [this, ids, reload, overwrite, thenStack](bool success) {
-        mappingFinished(ids, reload, overwrite, thenStack, success);
+    connect(mapDialog, &MapDialog::allFinished, this, [this, ids, reload, overwrite, thenStack, task](bool success) {
+        // (the sources whose SNR was measured are only read again)
+        mappingFinished(task == MapDialog::UpdateSnr ? QStringList() : ids, reload, overwrite, thenStack, success);
     });
     mapDialog->show();
     mapDialog->start();
@@ -1046,6 +1049,50 @@ void MainWindow::mappingFinished(const QStringList &ids, const QStringList &relo
         return;
     }
     if (thenStack) stackButton->setChecked(true);
+}
+
+// The Update SNR button of the panel: the SNR of the source that is chosen is measured again from its video and written in its metadata
+void MainWindow::updateSnrOfSelectedSource()
+{
+    const QString id = project.selected;
+    const qint32 index = project.indexOfSource(id);
+    if (index < 0 || project.showStack || mappingBusy) return;
+    const QString reference = project.sources[index].reference();
+
+    // The two versions of the capture, when it has a mapping: the SNR is written in the one that is chosen
+    QString mappedVersion, originalVersion;
+    if (LdxCapture::isLdxName(reference)) {
+        const bool isMapped = LdxCapture::isMappedTrack(reference);
+        mappedVersion = isMapped ? reference : LdxCapture::mappedOfOriginal(reference);
+        originalVersion = isMapped ? LdxCapture::originalOfMapped(reference) : reference;
+    } else {
+        const bool isMapped = TbcFiles::isMappedFileName(reference);
+        mappedVersion = isMapped ? reference : TbcFiles::mappedFileName(reference);
+        originalVersion = isMapped ? TbcFiles::originalFileName(reference) : reference;
+        if (mappedVersion.isEmpty() || !QFileInfo::exists(mappedVersion)) mappedVersion.clear();
+        if (originalVersion.isEmpty() || !QFileInfo::exists(originalVersion)) originalVersion.clear();
+    }
+    if (!mappedVersion.isEmpty() && !originalVersion.isEmpty() && mappedVersion != originalVersion) {
+        QMessageBox box(this);
+        box.setIcon(QMessageBox::Question);
+        box.setWindowTitle(tr("Update the SNR"));
+        box.setText(tr("Where is the SNR of %1 written?").arg(sourceTitle(project.sources[index])));
+        box.setInformativeText(tr("The SNR is measured again from the test signals of every field. This capture has a mapped version and the capture it was made from: it is written in the metadata of one of them (the tool keeps a backup of a metadata file; for a track of an LDX file, the new metadata are added to the file)."));
+        QPushButton *inMapped = box.addButton(tr("The mapped version"), QMessageBox::AcceptRole);
+        QPushButton *inOriginal = box.addButton(tr("The original"), QMessageBox::AcceptRole);
+        box.addButton(QMessageBox::Cancel);
+        box.setDefaultButton(reference == mappedVersion ? inMapped : inOriginal);
+        box.exec();
+        if (box.clickedButton() == inMapped) startMapping({ index }, false, false, MapDialog::UpdateSnr, mappedVersion);
+        else if (box.clickedButton() == inOriginal) startMapping({ index }, false, false, MapDialog::UpdateSnr, originalVersion);
+        return;
+    }
+    if (QMessageBox::question(this, tr("Update the SNR"),
+                              tr("The SNR of %1 is measured again from the test signals of every field, and written in its metadata: %2 (the tool keeps a backup of the metadata file; for a track of an LDX file, the new metadata are added to the file). Continue?").arg(sourceTitle(project.sources[index]), QDir::toNativeSeparators(reference)),
+                              QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Yes) != QMessageBox::Yes) {
+        return;
+    }
+    startMapping({ index }, false, false, MapDialog::UpdateSnr);
 }
 
 // The Map button of the panel: the source that is chosen, if it has no mapped version; the Follow map box does not matter, the button was pressed
@@ -1493,6 +1540,11 @@ void MainWindow::updateInfoPanel()
         }
         else if (TbcFiles::mappedFileName(file).isEmpty()) why = tr("ld-discmap maps a .tbc file (not the chroma file of a pair)");
         infoPanel->setMappable(why.isEmpty(), why);
+        // (the SNR is measured for the same captures: TBC ones, and not the chroma track of a pair)
+        QString snrWhy = why;
+        if (snrWhy == tr("The metadata say that this source is mapped already")) snrWhy.clear();
+        if (snrWhy.isEmpty() && LdxCapture::isLdxName(project.sources[index].reference()) && LdxCapture::isChromaTrack(project.sources[index].reference())) snrWhy = tr("The chroma track of a pair has no SNR of its own");
+        infoPanel->setSnrUpdatable(snrWhy.isEmpty(), snrWhy);
     }
 }
 

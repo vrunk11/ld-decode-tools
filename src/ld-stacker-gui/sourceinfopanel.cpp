@@ -58,8 +58,27 @@ SourceInfoPanel::SourceInfoPanel(QWidget *parent) : QFrame(parent)
     mapStatus->setForegroundRole(QPalette::PlaceholderText);
     row->addWidget(mapStatus, 1);
     sectionLayout->addLayout(row);
+
+    // The SNR of the metadata, measured again from the video and written in them (ld-process-vits)
+    QHBoxLayout *snrRow = new QHBoxLayout;
+    snrButton = new QToolButton;
+    snrButton->setIcon(QIcon(QStringLiteral(":/icons/snr.svg")));
+    snrButton->setIconSize(QSize(28, 28));
+    snrButton->setAutoRaise(false);
+    snrButton->setMinimumSize(44, 44);
+    snrButton->setEnabled(false);
+    snrRow->addWidget(snrButton);
+    QLabel *snrName = new QLabel(tr("<b>Update SNR</b>"));
+    snrName->setFont(large);
+    snrRow->addWidget(snrName);
+    snrStatus = new QLabel;
+    snrStatus->setWordWrap(true);
+    snrStatus->setForegroundRole(QPalette::PlaceholderText);
+    snrRow->addWidget(snrStatus, 1);
+    sectionLayout->addLayout(snrRow);
     layout->addWidget(section);
     connect(mapButton, &QToolButton::clicked, this, &SourceInfoPanel::mapRequested);
+    connect(snrButton, &QToolButton::clicked, this, &SourceInfoPanel::snrUpdateRequested);
     setMessage(tr("Choose a source to see what is known of it."));
 }
 
@@ -68,6 +87,13 @@ void SourceInfoPanel::setMappable(bool mappable, const QString &why)
     mapButton->setEnabled(mappable);
     mapButton->setToolTip(mappable ? tr("Map the source with ld-discmap: the frames in the order of the disc, the missing ones padded. You choose to keep a copy beside the capture or to overwrite it.") : why);
     mapStatus->setText(mappable ? tr("Put the frames in the order of the disc") : why);
+}
+
+void SourceInfoPanel::setSnrUpdatable(bool updatable, const QString &why)
+{
+    snrButton->setEnabled(updatable);
+    snrButton->setToolTip(updatable ? tr("Measure the SNR of the test signals of every field again and write it in the metadata of the source (ld-process-vits)") : why);
+    snrStatus->setText(updatable ? tr("Measure it again and write it in the metadata") : why);
 }
 
 void SourceInfoPanel::setMessage(const QString &message)

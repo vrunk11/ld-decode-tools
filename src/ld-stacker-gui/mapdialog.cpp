@@ -58,10 +58,10 @@ QString MapDialog::outputFor(const QString &input, bool overwrite)
     return overwrite ? temporaryFor(input) : TbcFiles::mappedFileName(input);
 }
 
-MapDialog::MapDialog(const QVector<Job> &newJobs, bool overwriteOriginals, QWidget *parent)
-    : QDialog(parent), jobs(newJobs), overwrite(overwriteOriginals)
+MapDialog::MapDialog(const QVector<Job> &newJobs, bool overwriteOriginals, QWidget *parent, Task newTask)
+    : QDialog(parent), jobs(newJobs), overwrite(overwriteOriginals), task(newTask)
 {
-    setWindowTitle(tr("Map sources"));
+    setWindowTitle(task == UpdateSnr ? tr("Update the SNR") : tr("Map sources"));
     resize(640, 360);
     QVBoxLayout *layout = new QVBoxLayout(this);
     summary = new QLabel;
@@ -143,7 +143,7 @@ MapDialog::MapDialog(const QVector<Job> &newJobs, bool overwriteOriginals, QWidg
         }
         progressTimer->stop();
         QString error;
-        const bool placed = isLdxJob(job) ? finishLdx(job, error) : (!overwrite || replaceOriginal(job, error));
+        const bool placed = task == UpdateSnr ? finishSnr(job, error) : (isLdxJob(job) ? finishLdx(job, error) : (!overwrite || replaceOriginal(job, error)));
         if (!placed) {
             cleanUp(job);
             emit jobFinished(job.id, false);
@@ -223,11 +223,15 @@ void MapDialog::runNext()
 {
     current++;
     if (current >= jobs.size()) {
+        if (task == UpdateSnr) {
+            finish(true, tr("Done: the SNR is written in the metadata"));
+            return;
+        }
         finish(true, overwrite ? tr("Done: the sources are mapped, in place of the captures") : tr("Done: the mapping of each source is written beside it (name_map, or a track of its own in an LDX file)"));
         return;
     }
     const Job &job = jobs[current];
-    summary->setText(tr("Mapping %1 of %2: %3").arg(current + 1).arg(jobs.size()).arg(job.title));
+    summary->setText((task == UpdateSnr ? tr("Measuring the SNR %1 of %2: %3") : tr("Mapping %1 of %2: %3")).arg(current + 1).arg(jobs.size()).arg(job.title));
     QString error;
     if (!plan(job, error)) {
         emit jobFinished(job.id, false);
@@ -259,6 +263,7 @@ void MapDialog::startStage()
 bool MapDialog::plan(const Job &job, QString &error)
 {
     stages.clear();
+    if (task == UpdateSnr) return planSnr(job, error);
     if (isLdxJob(job)) return planLdx(job, error);
     // The metadata format of the capture is that of its mapping (ld-discmap writes what it reads)
     const QString metadataFile = LdDecodeMetaData::findMetadataFile(job.input);
@@ -355,6 +360,78 @@ bool MapDialog::planLdx(const Job &job, QString &error)
     return true;
 }
 
+// The SNR of a capture measured again by ld-process-vits, which writes it in the metadata (a track of an LDX file is taken out first, and its new metadata are
+// put back in the file as a block)
+bool MapDialog::planSnr(const Job &job, QString &error)
+{
+    const QString vits = toolPath(QStringLiteral("ld-process-vits"));
+    if (vits.isEmpty()) {
+        error = tr("ld-process-vits was not found beside ld-stacker-gui");
+        return false;
+    }
+    Stage measure;
+    measure.program = vits;
+    if (!isLdxJob(job)) {
+        const QString metadataFile = LdDecodeMetaData::findMetadataFile(job.input);
+        measure.arguments = { QStringLiteral("--meta"), metadataFile.endsWith(QStringLiteral(".json"), Qt::CaseInsensitive) ? QStringLiteral("json") : QStringLiteral("db"), job.input };
+        stages.append(measure);
+        return true;
+    }
+    const QString container = toolPath(QStringLiteral("ld-container"));
+    if (container.isEmpty()) {
+        error = tr("ld-container was not found beside ld-stacker-gui");
+        return false;
+    }
+    qint32 video, metadata, audio;
+    if (!LdxCapture::captureTracks(job.input, video, metadata, audio) || metadata == 0 || LdxCapture::isChromaTrack(job.input) || LdxCapture::isCvbs(job.input)) {
+        error = tr("%1 is not a TBC capture of an LDX file whose SNR can be measured").arg(job.title);
+        return false;
+    }
+    QString path;
+    qint32 requested;
+    LdxCapture::split(job.input, path, requested);
+    const QString folder = workFolder(job);
+    QDir(folder).removeRecursively();
+    if (!QDir().mkpath(folder)) {
+        error = tr("%1: the folder %2 could not be made").arg(job.title, QDir::toNativeSeparators(folder));
+        return false;
+    }
+    const QString capture = folder + QStringLiteral("/capture.tbc");
+    for (const QPair<qint32, QString> &take: { qMakePair(video, capture), qMakePair(metadata, capture + QStringLiteral(".json")) }) {
+        Stage extract;
+        extract.program = container;
+        extract.arguments = { QStringLiteral("extract"), path, QStringLiteral("--id"), QString::number(take.first), QStringLiteral("-o"), take.second };
+        extract.output = take.second;
+        stages.append(extract);
+    }
+    measure.arguments = { QStringLiteral("--meta"), QStringLiteral("json"), capture };
+    stages.append(measure);
+    return true;
+}
+
+bool MapDialog::finishSnr(const Job &job, QString &error)
+{
+    if (!isLdxJob(job)) {
+        log(tr("The SNR of %1 is written in its metadata").arg(job.title));
+        return true;
+    }
+    QFile file(workFolder(job) + QStringLiteral("/capture.tbc.json"));
+    if (!file.open(QIODevice::ReadOnly)) {
+        error = tr("%1: the new metadata could not be read").arg(job.title);
+        return false;
+    }
+    const QByteArray json = file.readAll();
+    file.close();
+    QString writeError;
+    if (!LdxCapture::writeMetadata(job.input, json, writeError)) {
+        error = tr("%1: the metadata could not be written in the file (%2)").arg(job.title, writeError);
+        return false;
+    }
+    QDir(workFolder(job)).removeRecursively();
+    log(tr("The SNR of %1 is written in the metadata of the file").arg(job.title));
+    return true;
+}
+
 // The file with the mapping is put in the place of the LDX file (which is set aside first, so that a failure puts it back)
 bool MapDialog::finishLdx(const Job &job, QString &error)
 {
@@ -383,8 +460,13 @@ bool MapDialog::finishLdx(const Job &job, QString &error)
 // What is left of a job that did not finish
 void MapDialog::cleanUp(const Job &job)
 {
-    if (isLdxJob(job)) QDir(workFolder(job)).removeRecursively();
-    else removeOutput(job);
+    if (task == UpdateSnr) {
+        if (isLdxJob(job)) QDir(workFolder(job)).removeRecursively();
+    } else if (isLdxJob(job)) {
+        QDir(workFolder(job)).removeRecursively();
+    } else {
+        removeOutput(job);
+    }
 }
 
 // What ld-discmap wrote for a job, or the start of it: the mapping and its metadata and audio

@@ -41,7 +41,10 @@ public:
         QString input;     // the TBC file to map
     };
 
-    MapDialog(const QVector<Job> &jobs, bool overwrite, QWidget *parent = nullptr);
+    // Map: ld-discmap. UpdateSnr: ld-process-vits measures the test signals of every field again and writes the SNR in the metadata of the capture (the
+    // metadata file in place, with the backup the tool makes; for a track of an LDX file, a new block of metadata in the file)
+    enum Task { Map, UpdateSnr };
+    MapDialog(const QVector<Job> &jobs, bool overwrite, QWidget *parent = nullptr, Task task = Map);
 
     // Begins the mapping (once the signals are connected)
     void start();
@@ -83,6 +86,8 @@ private:
     };
     bool plan(const Job &job, QString &error);
     bool planLdx(const Job &job, QString &error);
+    bool planSnr(const Job &job, QString &error);
+    bool finishSnr(const Job &job, QString &error);
     void startStage();
     bool finishLdx(const Job &job, QString &error);
     void cleanUp(const Job &job);
@@ -97,6 +102,7 @@ private:
 
     QVector<Job> jobs;
     bool overwrite;
+    Task task = Map;
     qint32 current = -1;
     QStringList done;
     bool allDone = false;

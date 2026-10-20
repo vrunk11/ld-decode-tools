@@ -32,17 +32,22 @@ public:
     void setMessage(const QString &message);
     // Whether the source can be mapped from here (a TBC capture that is not mapped), and why not
     void setMappable(bool mappable, const QString &why);
+    // Whether the SNR of the source can be measured and written in its metadata from here, and why not
+    void setSnrUpdatable(bool updatable, const QString &why);
 
     // The text of the panel for a source (rich text), apart from the widget so that it can be tried
     static QString describe(const SourceInfo &info, const QString &title, bool loaded);
 
 signals:
     void mapRequested();
+    void snrUpdateRequested();
 
 private:
     QTextBrowser *browser;
     QToolButton *mapButton;
     QLabel *mapStatus;
+    QToolButton *snrButton;
+    QLabel *snrStatus;
 };
 
 #endif // SOURCEINFOPANEL_H
