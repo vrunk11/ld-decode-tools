@@ -338,6 +338,9 @@ private:
     bool overlaysVisible() const;
     void pollCursor();
     void keyPressEvent(QKeyEvent *event) override;
+    void dragEnterEvent(QDragEnterEvent *event) override;
+    void dropEvent(QDropEvent *event) override;
+    QString droppedCapture(const QMimeData *data);
     void setupSeekActions();
     qint32 seekPosition();
     qint32 seekLast();

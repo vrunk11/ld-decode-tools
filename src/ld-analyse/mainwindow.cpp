@@ -23,6 +23,11 @@
 #include "ui_mainwindow.h"
 #include "tbc/logging.h"
 #include "cvbs.h"
+#include "stackproject.h"
+#include "tbcfiles.h"
+#include <QDragEnterEvent>
+#include <QDropEvent>
+#include <QMimeData>
 
 #include <QActionGroup>
 #include <QDialog>
@@ -195,6 +200,9 @@ MainWindow::MainWindow(QString inputFilenameParam, const TbcSource::StreamInput 
     actionFieldOrder->setCheckable(true);
     connect(actionFieldOrder, &QAction::triggered, this, &MainWindow::on_fieldOrderPushButton_clicked);
     ui->menuView->addAction(actionFieldOrder);
+
+    // A file dropped on the window opens when nothing is open
+    setAcceptDrops(true);
 
     // Set the GUI to unloaded
     updateGuiUnloaded();
@@ -4952,4 +4960,32 @@ void MainWindow::showShortcuts()
         }
     });
     if (dialog.exec() == QDialog::Accepted) configuration.writeConfiguration();
+}
+
+// A file dropped on the window opens it, when nothing is open (a capture that is open stays: a drop is not meant to take it away). The first
+// file that ld-analyse can open is the one: a TBC, CVBS or LDX capture, or a stacking session.
+QString MainWindow::droppedCapture(const QMimeData *data)
+{
+    if (!isEnabled() || tbcSource.getIsSourceLoaded() || tbcSource.getIsLive() || !data->hasUrls()) return QString();
+    for (const QUrl &url: data->urls()) {
+        const QString path = url.toLocalFile();
+        if (path.isEmpty()) continue;
+        if (TbcFiles::isCaptureFileName(path) || StackProject::isSession(path)) return path;
+    }
+    return QString();
+}
+
+void MainWindow::dragEnterEvent(QDragEnterEvent *event)
+{
+    if (!droppedCapture(event->mimeData()).isEmpty()) event->acceptProposedAction();
+}
+
+void MainWindow::dropEvent(QDropEvent *event)
+{
+    const QString path = droppedCapture(event->mimeData());
+    if (path.isEmpty()) return;
+    event->acceptProposedAction();
+    pausePlayback();
+    lastFilename = path;
+    loadTbcFile(path);
 }

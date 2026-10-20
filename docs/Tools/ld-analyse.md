@@ -53,6 +53,8 @@ To open a TBC file for analysis, click on the File menu and select open
 
 This will display a list of available files filtered by the .tbc extension.  Simply double click on the required TBC file to open it.
 
+You can also **drop a file on the window** when nothing is open: a TBC, CVBS or LDX capture, or a stacking session. If several files are dropped, the first one that ld-analyse can open is opened. A capture that is already open stays: the drop is ignored until it is closed.
+
 If you decoded a videotape using vhs-decode, then you will have two TBC files, one for luma and one for chroma - you can select either of them and ld-analyse will open both automatically.
 
 # The ld-analyse main window
@@ -616,7 +618,7 @@ The help menu contains an about option that displays information about the appli
 
 ## Opening a stacking session
 
-The sources of the session can be TBC or CVBS captures (all of one kind); the status bar says which, for example "NTSC stack (2 sources, CVBS)". A `.stack` stacking session (see [ld-stacker-gui](ld-stacker-gui.md) and [ld-disc-stacker](ld-disc-stacker.md)) can be opened in its place: the stack of its sources is made as the frames are asked for, so it is shown, played and decoded without being written to a file first. It is the same stack that ld-disc-stacker writes for the session, and decoding it gives the same picture as decoding the file. The metadata is that of the first source that is on, with no dropouts (the stack has filled them) and no VITS measurements. The SNR of the stack is therefore measured from the video as soon as the session is opened (Measure from the video is ticked, and the graphs fill as it goes), and gives the values ld-stacker-gui shows for the stack. The metadata of a session cannot be saved.
+The sources of the session can be TBC or CVBS captures (all of one kind); the status bar says which, for example "NTSC stack (2 sources, CVBS)". A `.stack` stacking session (see [ld-stacker-gui](ld-stacker-gui.md) and [ld-disc-stacker](ld-disc-stacker.md)) can be opened in its place: the stack of its sources is made as the frames are asked for, so it is shown, played and decoded without being written to a file first. It is the same stack that ld-disc-stacker writes for the session, and decoding it gives the same picture as decoding the file. The sources are lined up by the numbers of the disc that their VBI gives (then by their offsets), and the stack goes from the earliest frame of any source to the latest of any: where no source has a frame it is a blank, padded frame. A source that has a mapping (the file beside it with _map in its name, or the track of an LDX file that is its mapping) is read from that mapping if its metadata do not say it is mapped already; a source that has none is used as it is (nothing is mapped from here). The metadata is that of the first source that is on for the parameters, and of the first source that has each frame for the fields, with no dropouts (the stack has filled them) and no VITS measurements. The SNR of the stack is therefore measured from the video as soon as the session is opened (Measure from the video is ticked, and the graphs fill as it goes), and gives the values ld-stacker-gui shows for the stack. The metadata of a session cannot be saved.
 
 ## Reading the graphs
 
