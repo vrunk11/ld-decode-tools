@@ -10,7 +10,15 @@
 
 #include "framebackend.h"
 
+#include "stackedvideo.h"
+
 #include <QFileInfo>
+#include <QHash>
+#include <QSet>
+#include "ldxcapture.h"
+#include "vbidecoder.h"
+#include <QThread>
+#include <atomic>
 #include <cmath>
 
 #include "stackercore.h"
@@ -75,6 +83,7 @@ void FrameBackend::addSource(const QString &id, const QString &file, bool revers
     info.cvbs = Cvbs::isDataFileName(StackProject::referenceFile(file));
 
     auto loaded = std::make_shared<Loaded>();
+    loaded->file = file;
 
     const QString metadataFile = LdDecodeMetaData::findMetadataFile(file);
     info.metadataFile = metadataFile;
@@ -101,25 +110,73 @@ void FrameBackend::addSource(const QString &id, const QString &file, bool revers
     info.frames = loaded->metadata.getNumberOfFrames();
     info.whiteSnr.resize(info.frames);
     info.blackSnr.resize(info.frames);
+    info.metadataFormat = info.cvbs ? QStringLiteral("CVBS") : (metadataFile.endsWith(".json", Qt::CaseInsensitive) ? QStringLiteral("JSON") : QStringLiteral("SQLite"));
+    info.isMapped = videoParameters.isMapped;
+    info.sampleRate = videoParameters.sampleRate;
+    info.fsc = videoParameters.fSC;
+    info.blackIre = videoParameters.black16bIre;
+    info.whiteIre = videoParameters.white16bIre;
+    info.tapeFormat = videoParameters.tapeFormat;
+    info.gitCommit = videoParameters.gitCommit;
+    info.fields = loaded->metadata.getNumberOfFields();
+    info.history = LdxCapture::historyOf(file);
+    VbiDecoder vbiDecoder;
+    QSet<qint32> chapterNumbers;
+    qint32 previousPicture = -1, previousSeconds = -1;
     for (qint32 frame = 1; frame <= info.frames; frame++) {
         const qint32 firstNumber = loaded->metadata.getFirstFieldNumber(frame);
         const qint32 secondNumber = loaded->metadata.getSecondFieldNumber(frame);
         info.whiteSnr[frame - 1] = std::nanf("");
         info.blackSnr[frame - 1] = std::nanf("");
         // (a frame whose fields cannot be found has no SNR)
-        if (firstNumber < 1 || secondNumber < 1) continue;
+        if (firstNumber < 1 || secondNumber < 1) {
+            info.paddedFrames++;
+            continue;
+        }
         const LdDecodeMetaData::Field &first = loaded->metadata.getField(firstNumber);
         const LdDecodeMetaData::Field &second = loaded->metadata.getField(secondNumber);
+        if (first.pad || second.pad) info.paddedFrames++;
+
+        // What the VBI says: the type of the disc, the first and the last picture or time, the chapters, and where the numbering jumps
+        const VbiDecoder::Vbi vbi = vbiDecoder.decodeFrame(first.vbi.vbiData[0], first.vbi.vbiData[1], first.vbi.vbiData[2],
+                                                           second.vbi.vbiData[0], second.vbi.vbiData[1], second.vbi.vbiData[2]);
+        if (vbi.picNo != -1 || vbi.clvHr != -1) info.vbiFrames++;
+        if (vbi.chNo != -1) chapterNumbers.insert(vbi.chNo);
+        if (vbi.picNo != -1) {
+            if (info.discType == 0) info.discType = 2;
+            if (info.firstPicture < 0) info.firstPicture = vbi.picNo;
+            info.lastPicture = vbi.picNo;
+            if (previousPicture != -1) {
+                if (vbi.picNo == previousPicture) info.duplicates++;
+                else if (vbi.picNo != previousPicture + 1) info.jumps++;
+            }
+            previousPicture = vbi.picNo;
+        } else if (vbi.clvHr != -1) {
+            if (info.discType == 0) info.discType = 1;
+            const qint32 seconds = vbi.clvHr * 3600 + vbi.clvMin * 60 + vbi.clvSec;
+            if (info.firstSeconds < 0) info.firstSeconds = seconds;
+            info.lastSeconds = seconds;
+            // (a time code lasts a second of frames: it is a jump when it goes back or skips a second)
+            if (previousSeconds != -1 && (seconds < previousSeconds || seconds > previousSeconds + 1)) info.jumps++;
+            previousSeconds = seconds;
+        }
         info.whiteSnr[frame - 1] = frameSnr(first, second, true);
         info.blackSnr[frame - 1] = frameSnr(first, second, false);
     }
 
+    info.chapters = chapterNumbers.size();
+    info.originDisc = StackedVideo::discOrigin(loaded->metadata);
     sources.insert(id, loaded);
     emit sourceLoaded(info);
 }
 
 void FrameBackend::removeSource(const QString &id)
 {
+    // (the handles of the threads that measure the SNR are on the files too: a file that is open cannot be replaced on Windows)
+    snrReaders.clear();
+    snrReadersGeneration = 0;
+    sourceReaders.clear();
+    sourceReadersGeneration = 0;
     sources.remove(id);
 }
 
@@ -181,6 +238,19 @@ QImage FrameBackend::weave(const SourceVideo::Data &first, const SourceVideo::Da
         }
     }
     return image;
+}
+
+QImage FrameBackend::blankPicture(const FrameRequest &request) const
+{
+    for (const FrameRequest::Entry &entry: request.entries) {
+        const auto found = sources.constFind(entry.id);
+        if (found == sources.constEnd() || !(*found)->ok) continue;
+        const LdDecodeMetaData::VideoParameters &videoParameters = (*found)->metadata.getVideoParameters();
+        QImage image(videoParameters.fieldWidth, videoParameters.fieldHeight * 2 - 1, QImage::Format_RGB32);
+        image.fill(Qt::black);
+        return applyView(image, request.viewMode, request.fieldIndex);
+    }
+    return QImage();
 }
 
 void FrameBackend::setChromaConfiguration(const PalColour::Configuration &pal, const Comb::Configuration &ntsc)
@@ -306,6 +376,7 @@ void FrameBackend::render(const FrameRequest &request)
                 result.message = tr("This source is not loaded");
             } else if (frames[i] < 0) {
                 result.message = tr("This source has no frame here");
+                result.image = blankPicture(request);
             } else {
                 Loaded &source = **found;
                 const qint32 first = source.metadata.getFirstFieldNumber(frames[i]);
@@ -332,6 +403,8 @@ void FrameBackend::render(const FrameRequest &request)
     StackedFrame main;
     if (!stackFrame(request, request.frame, result.inStack, main)) {
         result.message = result.inStack ? tr("No source has a frame here") : tr("No source is on");
+        // (a blank frame where nothing is: the timeline goes from the first frame of any source to the last of any)
+        result.image = blankPicture(request);
         emit frameReady(result);
         return;
     }
@@ -369,7 +442,8 @@ void FrameBackend::render(const FrameRequest &request)
 }
 
 // Stack a frame of the timeline from the sources that are on and have it
-bool FrameBackend::stackFrame(const FrameRequest &request, qint32 frame, qint32 inStack, StackedFrame &out, qint32 lines)
+bool FrameBackend::stackFrame(const FrameRequest &request, qint32 frame, qint32 inStack, StackedFrame &out, qint32 lines,
+                             const QMap<QString, SourceVideo *> *videos)
 {
     const qint32 total = request.entries.size();
     QVector<qint32> frames(total, -1);
@@ -394,8 +468,8 @@ bool FrameBackend::stackFrame(const FrameRequest &request, qint32 frame, qint32 
     // Only the first lines, when that is all that is wanted (the stacking sees the fields as that short)
     const qint32 readLines = lines > 0 ? qMin(lines, videoParameters.fieldHeight) : -1;
     if (readLines > 0) videoParameters.fieldHeight = readLines;
-    const auto readField = [readLines](Loaded &source, qint32 field) {
-        return readLines > 0 ? source.video.getVideoField(field, 1, readLines) : source.video.getVideoField(field);
+    const auto readField = [readLines](SourceVideo &video, qint32 field) {
+        return readLines > 0 ? video.getVideoField(field, 1, readLines) : video.getVideoField(field);
     };
 
     QVector<SourceVideo::Data> firstData(total), secondData(total);
@@ -404,18 +478,24 @@ bool FrameBackend::stackFrame(const FrameRequest &request, qint32 frame, qint32 
     QVector<qint32> good;
     for (qint32 i: usable) {
         Loaded &source = *sources.value(request.entries[i].id);
+        // (a thread that has handles of its own reads with them, and a source it has none for is left out: the one of the source is not its to use)
+        SourceVideo *video = &source.video;
+        if (videos) {
+            video = videos->value(request.entries[i].id, nullptr);
+            if (!video) continue;
+        }
         const qint32 first = source.metadata.getFirstFieldNumber(frames[i]);
         const qint32 second = source.metadata.getSecondFieldNumber(frames[i]);
-        const qint32 available = source.video.getNumberOfAvailableFields();
+        const qint32 available = video->getNumberOfAvailableFields();
         // The metadata can name fields that the file does not hold
         if (first < 1 || second < 1 || first > available || second > available) continue;
         // In the order of the file, to save seeking
         if (first < second) {
-            firstData[i] = readField(source, first);
-            secondData[i] = readField(source, second);
+            firstData[i] = readField(*video, first);
+            secondData[i] = readField(*video, second);
         } else {
-            secondData[i] = readField(source, second);
-            firstData[i] = readField(source, first);
+            secondData[i] = readField(*video, second);
+            firstData[i] = readField(*video, first);
         }
         if (firstData[i].size() != expectedSize || secondData[i].size() != expectedSize) continue;
         firstMetadata[i] = source.metadata.getField(first);
@@ -450,51 +530,215 @@ bool FrameBackend::stackFrame(const FrameRequest &request, qint32 frame, qint32 
     return true;
 }
 
-// The SNR of the stack over the whole timeline: for each frame the first lines of the fields of the sources are
-// stacked, which is all the test signals need, so it costs a fraction of stacking the frames
+// The SNR of one frame of the stack, measured from the first lines of the stacked fields (the test signals are on the first 22 lines; a couple
+// more for the neighbours). videos: the handles on the files that this thread has (null: those of the sources, for the thread of the backend)
+StackSnrPoint FrameBackend::measureStackFrame(const FrameRequest &request, qint32 frame, qint32 inStack, const QMap<QString, SourceVideo *> *videos)
+{
+    constexpr qint32 vitsLines = 24;
+    StackSnrPoint point;
+    point.frame = frame;
+    point.white = std::nanf("");
+    point.black = std::nanf("");
+    StackedFrame stacked;
+    if (stackFrame(request, frame, inStack, stacked, vitsLines, videos)) {
+        double whiteTotal = 0, blackTotal = 0;
+        qint32 whitePoints = 0, blackPoints = 0;
+        measureField(stacked.first, stacked.videoParameters, whiteTotal, whitePoints, blackTotal, blackPoints);
+        measureField(stacked.second, stacked.videoParameters, whiteTotal, whitePoints, blackTotal, blackPoints);
+        if (whitePoints) point.white = static_cast<float>(whiteTotal / whitePoints);
+        if (blackPoints) point.black = static_cast<float>(blackTotal / blackPoints);
+    }
+    return point;
+}
+
+// How many threads measure the SNR of the stack: all but one of the machine's (the one that is left is for the pictures and the window), up to eight
+qint32 FrameBackend::snrThreadCount()
+{
+    return qBound(1, QThread::idealThreadCount() - 1, 8);
+}
+
+// Each thread reads the files with a handle of its own (a SourceVideo is not for two threads): opened for a job, and let go of when it is done
+void FrameBackend::openSnrReaders(const FrameRequest &request, qint32 threads, quint64 generation)
+{
+    if (snrReadersGeneration == generation && snrReaders.size() == threads) return;
+    snrReaders.clear();
+    snrReaders.resize(threads);
+    for (qint32 t = 0; t < threads; t++) {
+        for (const FrameRequest::Entry &entry: request.entries) {
+            const auto found = sources.constFind(entry.id);
+            if (found == sources.constEnd() || !(*found)->ok || !entry.enabled) continue;
+            const LdDecodeMetaData::VideoParameters &videoParameters = (*found)->metadata.getVideoParameters();
+            auto video = std::make_shared<SourceVideo>();
+            if (video->open((*found)->file, videoParameters.fieldWidth * videoParameters.fieldHeight, videoParameters.fieldWidth)) {
+                snrReaders[t].insert(entry.id, video);
+            }
+        }
+    }
+    snrReadersGeneration = generation;
+}
+
+// The SNR of the stack over the whole timeline.
+//
+// With one source the stack is that source: the window shows its SNR, and there is nothing to measure here.
+//
+// Otherwise the SNR of the stack is not in any metadata, so it is measured: for each frame the first lines of the fields of the sources are stacked,
+// which is all the test signals need, so it costs a fraction of stacking the frames. The frames are shared between several threads, each with
+// its own handles on the files. A chunk of frames at a time, so that pictures asked for in between are not kept waiting.
 void FrameBackend::computeStackSnr(const FrameRequest &request, qint32 startFrame, quint64 generation)
 {
     if (generation != snrGeneration.load()) return;
 
-    // The timeline is as long as the first source that is on
+    // The timeline goes from the first frame of any source that is on to the last of any (a source begins where its offset puts it)
     qint32 total = 0, inStack = 0;
     for (const FrameRequest::Entry &entry: request.entries) {
         const auto found = sources.constFind(entry.id);
         if (found == sources.constEnd() || !(*found)->ok || !entry.enabled) continue;
-        if (inStack++ == 0) total = (*found)->metadata.getNumberOfFrames();
+        inStack++;
+        total = qMax(total, entry.offset + (*found)->metadata.getNumberOfFrames());
     }
-    if (total < 1) {
+    // One source: the stack is that source, whose SNR the window shows (from its metadata, or measured if that was asked for): nothing to do here
+    if (total < 1 || inStack < 2) {
+        snrReaders.clear();
         emit stackSnrReady(generation, QVector<StackSnrPoint>(), true);
         return;
     }
 
-    constexpr qint32 chunk = 40;
-    constexpr qint32 vitsLines = 24;    // the test signals are on the first 22 lines; a couple more for the neighbours
     QVector<StackSnrPoint> points;
     qint32 frame = startFrame;
-    for (; frame < startFrame + chunk && frame <= total; frame++) {
-        if (generation != snrGeneration.load()) return;
-
-        StackSnrPoint point;
-        point.frame = frame;
-        point.white = std::nanf("");
-        point.black = std::nanf("");
-        StackedFrame stacked;
-        if (stackFrame(request, frame, inStack, stacked, vitsLines)) {
-            double whiteTotal = 0, blackTotal = 0;
-            qint32 whitePoints = 0, blackPoints = 0;
-            measureField(stacked.first, stacked.videoParameters, whiteTotal, whitePoints, blackTotal, blackPoints);
-            measureField(stacked.second, stacked.videoParameters, whiteTotal, whitePoints, blackTotal, blackPoints);
-            if (whitePoints) point.white = static_cast<float>(whiteTotal / whitePoints);
-            if (blackPoints) point.black = static_cast<float>(blackTotal / blackPoints);
+    {
+        const qint32 threads = snrThreadCount();
+        openSnrReaders(request, threads, generation);
+        const qint32 chunk = qMax(40, threads * 12);
+        const qint32 count = qMin(chunk, total - startFrame + 1);
+        points.resize(count);
+        std::atomic<qint32> next{0};
+        QVector<QThread *> workers;
+        for (qint32 t = 0; t < threads; t++) {
+            QMap<QString, SourceVideo *> videos;
+            for (auto it = snrReaders[t].cbegin(); it != snrReaders[t].cend(); ++it) videos.insert(it.key(), it.value().get());
+            QThread *worker = QThread::create([this, &request, &points, &next, videos, count, startFrame, inStack, generation]() {
+                for (;;) {
+                    const qint32 k = next.fetch_add(1);
+                    if (k >= count || generation != snrGeneration.load()) return;
+                    points[k] = measureStackFrame(request, startFrame + k, inStack, &videos);
+                }
+            });
+            workers.append(worker);
+            worker->start();
         }
-        points.append(point);
+        for (QThread *worker: workers) {
+            worker->wait();
+            delete worker;
+        }
+        if (generation != snrGeneration.load()) return;
+        frame = startFrame + count;
     }
 
     const bool finished = frame > total;
     emit stackSnrReady(generation, points, finished);
-    if (!finished) {
+    if (finished) {
+        snrReaders.clear();
+        snrReadersGeneration = 0;
+    } else {
         QMetaObject::invokeMethod(this, "computeStackSnr", Qt::QueuedConnection, Q_ARG(FrameRequest, request),
                                   Q_ARG(qint32, frame), Q_ARG(quint64, generation));
+    }
+}
+
+// The SNR of one frame of a source, measured from the first lines of its own fields, with a handle on the file that the thread has
+StackSnrPoint FrameBackend::measureSourceFrame(Loaded &source, SourceVideo &video, qint32 frame)
+{
+    constexpr qint32 vitsLines = 24;
+    StackSnrPoint point;
+    point.frame = frame;
+    point.white = std::nanf("");
+    point.black = std::nanf("");
+    const qint32 first = source.metadata.getFirstFieldNumber(frame);
+    const qint32 second = source.metadata.getSecondFieldNumber(frame);
+    const qint32 available = video.getNumberOfAvailableFields();
+    if (first < 1 || second < 1 || first > available || second > available) return point;
+    LdDecodeMetaData::VideoParameters videoParameters = source.metadata.getVideoParameters();
+    const qint32 readLines = qMin(vitsLines, videoParameters.fieldHeight);
+    videoParameters.fieldHeight = readLines;
+    const qint32 expectedSize = videoParameters.fieldWidth * readLines;
+    // (in the order of the file, to save seeking)
+    SourceVideo::Data firstData, secondData;
+    if (first < second) {
+        firstData = video.getVideoField(first, 1, readLines);
+        secondData = video.getVideoField(second, 1, readLines);
+    } else {
+        secondData = video.getVideoField(second, 1, readLines);
+        firstData = video.getVideoField(first, 1, readLines);
+    }
+    if (firstData.size() != expectedSize || secondData.size() != expectedSize) return point;
+    double whiteTotal = 0, blackTotal = 0;
+    qint32 whitePoints = 0, blackPoints = 0;
+    measureField(firstData, videoParameters, whiteTotal, whitePoints, blackTotal, blackPoints);
+    measureField(secondData, videoParameters, whiteTotal, whitePoints, blackTotal, blackPoints);
+    if (whitePoints) point.white = static_cast<float>(whiteTotal / whitePoints);
+    if (blackPoints) point.black = static_cast<float>(blackTotal / blackPoints);
+    return point;
+}
+
+// The SNR of one source over its own frames, measured instead of read from the metadata: shared between several threads, each with a handle of its
+// own on the file, a chunk of frames at a time (so that pictures asked for in between are not kept waiting)
+void FrameBackend::computeSourceSnr(const QString &id, qint32 startFrame, quint64 generation)
+{
+    if (generation != sourceSnrGeneration.load()) return;
+    const auto found = sources.constFind(id);
+    if (found == sources.constEnd() || !(*found)->ok || (*found)->metadata.getNumberOfFrames() < startFrame) {
+        sourceReaders.clear();
+        emit sourceSnrReady(id, generation, QVector<StackSnrPoint>(), true);
+        return;
+    }
+    Loaded &source = **found;
+    const qint32 total = source.metadata.getNumberOfFrames();
+    const qint32 threads = snrThreadCount();
+    if (sourceReadersGeneration != generation || sourceReaders.size() != threads) {
+        sourceReaders.clear();
+        const LdDecodeMetaData::VideoParameters &videoParameters = source.metadata.getVideoParameters();
+        for (qint32 t = 0; t < threads; t++) {
+            auto video = std::make_shared<SourceVideo>();
+            if (!video->open(source.file, videoParameters.fieldWidth * videoParameters.fieldHeight, videoParameters.fieldWidth)) break;
+            sourceReaders.append(video);
+        }
+        sourceReadersGeneration = generation;
+        if (sourceReaders.isEmpty()) {
+            emit sourceSnrReady(id, generation, QVector<StackSnrPoint>(), true);
+            return;
+        }
+    }
+
+    const qint32 workers = sourceReaders.size();
+    const qint32 count = qMin(qMax(40, workers * 12), total - startFrame + 1);
+    QVector<StackSnrPoint> points(count);
+    std::atomic<qint32> next{0};
+    QVector<QThread *> threadList;
+    for (qint32 t = 0; t < workers; t++) {
+        SourceVideo *video = sourceReaders[t].get();
+        QThread *worker = QThread::create([this, &source, &points, &next, video, count, startFrame, generation]() {
+            for (;;) {
+                const qint32 k = next.fetch_add(1);
+                if (k >= count || generation != sourceSnrGeneration.load()) return;
+                points[k] = measureSourceFrame(source, *video, startFrame + k);
+            }
+        });
+        threadList.append(worker);
+        worker->start();
+    }
+    for (QThread *worker: threadList) {
+        worker->wait();
+        delete worker;
+    }
+    if (generation != sourceSnrGeneration.load()) return;
+
+    const qint32 frame = startFrame + count;
+    const bool finished = frame > total;
+    emit sourceSnrReady(id, generation, points, finished);
+    if (finished) {
+        sourceReaders.clear();
+        sourceReadersGeneration = 0;
+    } else {
+        QMetaObject::invokeMethod(this, "computeSourceSnr", Qt::QueuedConnection, Q_ARG(QString, id), Q_ARG(qint32, frame), Q_ARG(quint64, generation));
     }
 }

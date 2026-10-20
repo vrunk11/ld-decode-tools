@@ -17,6 +17,8 @@
 
 #include "ldxcapture.h"
 #include "tbcfiles.h"
+#include "lddecodemetadata.h"
+#include "stackedvideo.h"
 #include "stackproject.h"
 #ifdef LDDECODE_WITH_LDX
 #include "ldx.h"
@@ -195,6 +197,64 @@ int main(int argc, char *argv[])
         CHECK(!kept.load(plainFile, error));
     }
 
+    // The mapping of a capture in an LDX file: a track that says which track it is the mapping of, found from each other
+    {
+        Ldx::Writer writer;
+        Ldx::Track original, mapped, other, orphan;
+        original.kind = mapped.kind = other.kind = orphan.kind = Ldx::Kind::Tbc;
+        writer.addTrack(original);
+        mapped.parameters["mappedFrom"] = static_cast<int>(original.number);
+        writer.addTrack(mapped);
+        writer.addTrack(other);
+        orphan.parameters["mappedFrom"] = 9;        // (a track that is not in the file: it is not a mapping)
+        writer.addTrack(orphan);
+        const QString mapFile = base.absoluteFilePath("mapped.ldx");
+        CHECK(writer.open(mapFile, error));
+        for (qint32 id = 1; id <= 4; id++) CHECK(writer.writeBlock(id, 0, QByteArray(10, 'x')));
+        CHECK(writer.finish(error));
+
+        CHECK(LdxCapture::isMappedTrack(mapFile + "#2"));
+        CHECK(!LdxCapture::isMappedTrack(mapFile + "#1") && !LdxCapture::isMappedTrack(mapFile + "#3") && !LdxCapture::isMappedTrack(mapFile + "#4"));
+        CHECK(LdxCapture::mappedOfOriginal(mapFile) == mapFile + "#2");
+        CHECK(LdxCapture::mappedOfOriginal(mapFile + "#1") == mapFile + "#2");
+        CHECK(LdxCapture::mappedOfOriginal(mapFile + "#3").isEmpty());
+        CHECK(LdxCapture::originalOfMapped(mapFile + "#2") == mapFile + "#1");
+        CHECK(LdxCapture::originalOfMapped(mapFile + "#1") == mapFile + "#1");
+        CHECK(LdxCapture::originalOfMapped(mapFile + "#4") == mapFile + "#4");
+        // (a file name that is not an LDX one has none of it)
+        CHECK(!LdxCapture::isMappedTrack("disc.tbc") && LdxCapture::mappedOfOriginal("disc.tbc").isEmpty() && LdxCapture::originalOfMapped("disc.tbc") == "disc.tbc");
+    }
+
+    // The tracks of a capture: its video, the metadata about it and its analogue audio (not the audio decoded from EFM)
+    {
+        Ldx::Writer writer;
+        Ldx::Track video, metadata, audio, second, secondMetadata, efm;
+        video.kind = second.kind = Ldx::Kind::Tbc;
+        metadata.kind = secondMetadata.kind = Ldx::Kind::Metadata;
+        audio.kind = efm.kind = Ldx::Kind::Pcm;
+        writer.addTrack(video);
+        metadata.parameters["track"] = static_cast<int>(video.number);
+        writer.addTrack(metadata);
+        audio.parameters["track"] = static_cast<int>(video.number);
+        writer.addTrack(audio);
+        writer.addTrack(second);
+        secondMetadata.parameters["track"] = static_cast<int>(second.number);
+        writer.addTrack(secondMetadata);
+        efm.parameters["track"] = static_cast<int>(second.number);
+        efm.parameters["source"] = "efm";
+        writer.addTrack(efm);
+        const QString tracksFile = base.absoluteFilePath("tracks.ldx");
+        CHECK(writer.open(tracksFile, error));
+        for (qint32 id = 1; id <= 6; id++) CHECK(writer.writeBlock(id, 0, QByteArray(10, 'x')));
+        CHECK(writer.finish(error));
+        qint32 v = -1, m = -1, a = -1;
+        CHECK(LdxCapture::captureTracks(tracksFile, v, m, a) && v == 1 && m == 2 && a == 3);
+        CHECK(LdxCapture::captureTracks(tracksFile + "#1", v, m, a) && v == 1 && m == 2 && a == 3);
+        CHECK(LdxCapture::captureTracks(tracksFile + "#4", v, m, a) && v == 4 && m == 5 && a == 0);
+        CHECK(!LdxCapture::captureTracks(tracksFile + "#2", v, m, a));
+        CHECK(!LdxCapture::captureTracks("disc.tbc", v, m, a));
+    }
+
     // A Y/C capture in an LDX file: the chroma track is about the luma one, and each is found from the other
     {
         Ldx::Writer writer;
@@ -262,6 +322,97 @@ int main(int argc, char *argv[])
         merger.add("{\"seqNo\":1,\"syncConf\":5}");
         const QJsonObject again = QJsonDocument::fromJson(merger.current()).object();
         CHECK(again.value("fields").toArray().size() == 1 && again.value("fields").toArray()[0].toObject().value("syncConf").toInt() == 5);
+    }
+
+    // The sources are lined up by the numbers of the disc: the timeline goes from the earliest frame to the latest of any source, with padded frames where none has
+    {
+        qint32 total = 0;
+        qint32 discAtStart = 0;
+        // a begins at picture 100 (10 frames), b at 105 (8 frames), c has no numbers (3 frames, offset 1): it begins at the number 0, plus its offset
+        const QVector<qint32> placed = StackedVideo::alignedPositions({ 100, 105, -1 }, { 0, 0, 1 }, { 10, 8, 3 }, total, &discAtStart);
+        CHECK(placed == QVector<qint32>({ 99, 104, 0 }) && total == 112 && discAtStart == 1);
+        // an offset that puts a source before the earliest moves the start of the timeline
+        const QVector<qint32> earlier = StackedVideo::alignedPositions({ 100, 105 }, { 0, -10 }, { 10, 8 }, total, &discAtStart);
+        CHECK(earlier == QVector<qint32>({ 5, 0 }) && total == 15 && discAtStart == 95);
+        const QVector<qint32> none = StackedVideo::alignedPositions({}, {}, {}, total, &discAtStart);
+        CHECK(none.isEmpty() && total == 0);
+
+        // From metadata: the metadata of the session has the frames of both, in the order of the disc
+        const auto writeCapture = [&](const QString &name, qint32 firstPicture, qint32 frames, bool mapped = false) {
+            LdDecodeMetaData metadata;
+            LdDecodeMetaData::VideoParameters parameters;
+            parameters.system = NTSC;
+            parameters.fieldWidth = 910;
+            parameters.fieldHeight = 263;
+            parameters.isMapped = mapped;
+            metadata.setVideoParameters(parameters);
+            for (qint32 frame = 0; frame < frames; frame++) {
+                const qint32 picture = firstPicture + frame;
+                const qint32 bcd = ((picture / 10000) << 16) | (((picture / 1000) % 10) << 12) | (((picture / 100) % 10) << 8) | (((picture / 10) % 10) << 4) | (picture % 10);
+                for (qint32 which = 0; which < 2; which++) {
+                    LdDecodeMetaData::Field field;
+                    field.isFirstField = which == 0;
+                    field.fieldPhaseID = 1;
+                    field.vbi.inUse = true;
+                    field.vbi.vbiData = { 0, 0xF00000 | bcd, 0 };
+                    metadata.appendField(field);
+                }
+            }
+            const QString tbc = base.absoluteFilePath(name + ".tbc");
+            QFile file(tbc);
+            CHECK(file.open(QIODevice::WriteOnly));
+            file.close();
+            CHECK(metadata.write(tbc + ".json"));
+            return tbc;
+        };
+        StackProject session;
+        StackSource first;
+        first.id = "a";
+        first.file = writeCapture("disc-a", 100, 10);
+        StackSource second;
+        second.id = "b";
+        second.file = writeCapture("disc-b", 105, 8);
+        session.sources = { first, second };
+        const QString sessionFile = base.absoluteFilePath("aligned.stack");
+        CHECK(session.save(sessionFile, error));
+        LdDecodeMetaData stacked;
+        CHECK(StackedVideo::readMetadata(sessionFile, stacked, error));
+        CHECK(stacked.getNumberOfFrames() == 13);
+        // (frame 11 to 13 are those of b only, and every frame is whole)
+        for (qint32 frame = 1; frame <= 13; frame++) {
+            CHECK(!stacked.getField(stacked.getFirstFieldNumber(frame)).pad);
+        }
+        // With b moved 10 frames on, there is a gap of padded frames between them
+        session.sources[1].offset = 10;
+        CHECK(session.save(sessionFile, error));
+        LdDecodeMetaData gap;
+        CHECK(StackedVideo::readMetadata(sessionFile, gap, error));
+        CHECK(gap.getNumberOfFrames() == 23);
+        CHECK(!gap.getField(gap.getFirstFieldNumber(10)).pad && gap.getField(gap.getFirstFieldNumber(11)).pad && gap.getField(gap.getSecondFieldNumber(15)).pad);
+        CHECK(!gap.getField(gap.getFirstFieldNumber(16)).pad);
+
+        // A source that has a mapping beside it (name_map) is read from that; one that has none is read as it is
+        StackSource plain;
+        plain.id = "c";
+        plain.file = writeCapture("disc-c", 105, 8);
+        StackProject withoutMap;
+        withoutMap.sources = { plain };
+        CHECK(withoutMap.save(sessionFile, error));
+        LdDecodeMetaData notMapped;
+        CHECK(StackedVideo::readMetadata(sessionFile, notMapped, error) && notMapped.getNumberOfFrames() == 8);
+        writeCapture("disc-c_map", 100, 12, true);
+        LdDecodeMetaData viaMap;
+        CHECK(StackedVideo::readMetadata(sessionFile, viaMap, error) && viaMap.getNumberOfFrames() == 12);
+        // (a source that is mapped already is not replaced by the mapping of it)
+        StackSource done;
+        done.id = "d";
+        done.file = writeCapture("disc-d", 100, 5, true);
+        writeCapture("disc-d_map", 100, 9, true);
+        StackProject mappedAlready;
+        mappedAlready.sources = { done };
+        CHECK(mappedAlready.save(sessionFile, error));
+        LdDecodeMetaData same;
+        CHECK(StackedVideo::readMetadata(sessionFile, same, error) && same.getNumberOfFrames() == 5);
     }
 
     std::fprintf(stderr, "teststackproject: all tests passed\n");

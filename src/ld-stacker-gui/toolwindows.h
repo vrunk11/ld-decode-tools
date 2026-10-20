@@ -34,9 +34,12 @@ public:
     // The colour of the source, which tells its window from the others: a bar at the top, and the window's icon
     void setAccent(const QColor &color);
     void setMarker(qint32 frame);
+    void setMeasure(bool on, bool enabled);
+    void setRange(bool fixed, double low, double high);
 
 signals:
     void frameRequested(qint32 frame);
+    void measureToggled(bool on);
 
 private:
     SnrGraph *graph = nullptr;

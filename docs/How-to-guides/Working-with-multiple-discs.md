@@ -59,7 +59,7 @@ For sources where this occurs it may be possible to use the --nostrict option wh
 
 In certain cases it may not be possible for the disc mapper to map certain frames; for example, if the player gets stuck on a pulldown frame the resulting .tbc will contain repeating frames with no VBI frame number, so the mapper cannot tell where the frames belong.
 
-The normal action when there are un-mappable frames is to abort the disc mapping process and report the error.  It is possible to override this with the --delete-unmappable-frames which will tell the disc mapper to simply delete any frames that can't be successfully mapped.  If you use the --delete-unmappable-frames option be sure to manually check the disc map results in ld-analyse for errors.
+When there are un-mappable frames (frames that have no number and cannot be given one) the disc mapper does not stop: it keeps them, gives each the next free number where it was (or the number 0, before the first frame, if there is no room) and marks it as a dropout over the whole frame, so that the stack leaves it out. The --delete-unmappable-frames option deletes them instead, and pads their place. Be sure to check the disc map results in ld-analyse.
 
 # Stacking multiple discs
 

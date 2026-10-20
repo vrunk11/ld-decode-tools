@@ -33,6 +33,7 @@ SnrWindow::SnrWindow(QWidget *parent)
     graph->setMinimumHeight(180);
     layout->addWidget(graph, 1);
     connect(graph, &SnrGraph::frameRequested, this, &SnrWindow::frameRequested);
+    connect(graph, &SnrGraph::measureToggled, this, &SnrWindow::measureToggled);
 }
 
 void SnrWindow::setAccent(const QColor &color)
@@ -59,6 +60,16 @@ void SnrWindow::setContent(const QString &title, const QVector<float> &white, co
 void SnrWindow::setMarker(qint32 frame)
 {
     graph->setMarker(frame);
+}
+
+void SnrWindow::setMeasure(bool on, bool enabled)
+{
+    graph->setMeasure(on, enabled);
+}
+
+void SnrWindow::setRange(bool fixed, double low, double high)
+{
+    graph->setRange(fixed, low, high);
 }
 
 StackOutputWindow::StackOutputWindow(QWidget *parent)

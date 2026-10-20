@@ -2,6 +2,8 @@ set(ld-stacker-gui_SOURCES
     main.cpp
     mainwindow.cpp
     framebackend.cpp
+    sourceinfopanel.cpp
+    mapdialog.cpp
     snrplot.cpp
     toolwindows.cpp
     optionsdialogs.cpp

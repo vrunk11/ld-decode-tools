@@ -17,6 +17,7 @@
 #include <QString>
 #include <QVector>
 #include <atomic>
+#include <QJsonArray>
 #include <memory>
 
 #include "lddecodemetadata.h"
@@ -43,6 +44,25 @@ struct SourceInfo {
     // Per frame (index 0 is frame 1): the SNR of the metadata, NaN where there is none
     QVector<float> whiteSnr;
     QVector<float> blackSnr;
+    // What the information panel of the source shows
+    QString metadataFormat;       // "SQLite", "JSON" or "CVBS"
+    bool isMapped = false;        // the metadata say the source was mapped (ld-discmap)
+    double sampleRate = 0;
+    double fsc = 0;
+    qint32 blackIre = -1, whiteIre = -1;
+    QString tapeFormat;
+    QString gitCommit;
+    qint32 fields = 0;
+    qint32 paddedFrames = 0;      // frames that have a field that is not there (padded)
+    qint32 vbiFrames = 0;         // frames that have a picture number or a time code
+    qint32 discType = 0;          // 0 not known, 1 CLV, 2 CAV
+    qint32 originDisc = -1;       // the number of the disc (picture, or time in frames) of the first frame of the capture: -1 if the VBI gives none
+    qint32 firstPicture = -1, lastPicture = -1;
+    qint32 firstSeconds = -1, lastSeconds = -1;
+    qint32 chapters = 0;
+    qint32 jumps = 0;             // where the numbering of the pictures (or the times) does not go on by one
+    qint32 duplicates = 0;        // a picture number that comes twice in a row
+    QJsonArray history;           // of an LDX file
 };
 
 // A frame to show: the stack of the sources, or one of them
@@ -106,6 +126,8 @@ public:
     std::atomic<quint64> latest[2] = { 0, 0 };
     // The generation of the stack SNR job that is wanted: a newer one makes the older stop
     std::atomic<quint64> snrGeneration{0};
+    // The same for the SNR of a source that is measured from its fields (one job at a time)
+    std::atomic<quint64> sourceSnrGeneration{0};
 
 public slots:
     void addSource(const QString &id, const QString &file, bool reverseFields);
@@ -116,16 +138,20 @@ public slots:
     // Measure the SNR of the stack over the whole timeline, a chunk of frames at a time so that pictures asked
     // for in between are not kept waiting
     void computeStackSnr(const FrameRequest &request, qint32 startFrame, quint64 generation);
+    // Measure the SNR of one source over its own frames, from the test signal lines of its fields (instead of reading it from its metadata), in the same way
+    void computeSourceSnr(const QString &id, qint32 startFrame, quint64 generation);
 
 signals:
     void sourceLoaded(const SourceInfo &info);
     void frameReady(const FrameResult &result);
     void stackSnrReady(quint64 generation, const QVector<StackSnrPoint> &points, bool finished);
+    void sourceSnrReady(const QString &id, quint64 generation, const QVector<StackSnrPoint> &points, bool finished);
 
 private:
     struct Loaded {
         LdDecodeMetaData metadata;
         SourceVideo video;
+        QString file;                 // what the video was opened from (a thread that measures the SNR opens it again)
         bool ok = false;
     };
 
@@ -134,6 +160,8 @@ private:
     bool isPadded(Loaded &source, qint32 ownFrame);
     // A picture of a frame as one of its fields (lines doubled), or as both of them, one above the other
     static QImage applyView(const QImage &frame, qint32 viewMode, qint32 fieldIndex);
+    // A black picture of the size of the frames, for where a source (or the stack) has no frame
+    QImage blankPicture(const FrameRequest &request) const;
     static QImage weave(const SourceVideo::Data &first, const SourceVideo::Data &second, qint32 width, qint32 fieldHeight);
     // The picture of a frame decoded to colour. For the stack, the two fields stacked are given and
     // replace those of the source the frame is read from.
@@ -148,12 +176,23 @@ private:
     };
     // Stack a frame of the timeline from the sources that have it; false if none does
     // lines > 0: only the first lines of the fields (the test signal lines), which is all the SNR needs
-    bool stackFrame(const FrameRequest &request, qint32 frame, qint32 inStack, StackedFrame &out, qint32 lines = -1);
+    // videos: the handles on the files of a thread that has its own (null: those of the sources)
+    bool stackFrame(const FrameRequest &request, qint32 frame, qint32 inStack, StackedFrame &out, qint32 lines = -1,
+                    const QMap<QString, SourceVideo *> *videos = nullptr);
+    StackSnrPoint measureStackFrame(const FrameRequest &request, qint32 frame, qint32 inStack, const QMap<QString, SourceVideo *> *videos);
+    static qint32 snrThreadCount();
+    StackSnrPoint measureSourceFrame(Loaded &source, SourceVideo &video, qint32 frame);
+    void openSnrReaders(const FrameRequest &request, qint32 threads, quint64 generation);
     QImage chromaPicture(Loaded &source, qint32 ownFrame, const QVector<StackedFrame> *around, qint32 lookBehind);
     void lookRange(VideoSystem system, qint32 &lookBehind, qint32 &lookAhead) const;
     void configureDecoders(LdDecodeMetaData::VideoParameters videoParameters);
 
     QMap<QString, std::shared_ptr<Loaded>> sources;
+    // The handles on the files of the threads that measure the SNR of the stack (one map of source id to handle for each thread), for one job
+    QVector<QMap<QString, std::shared_ptr<SourceVideo>>> snrReaders;
+    quint64 snrReadersGeneration = 0;
+    QVector<std::shared_ptr<SourceVideo>> sourceReaders;
+    quint64 sourceReadersGeneration = 0;
 
     // The chroma decoders, set up for the video parameters of the last picture
     PalColour palColour;

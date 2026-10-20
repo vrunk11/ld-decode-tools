@@ -42,6 +42,15 @@ void SnrPlot::setMarker(qint32 frame)
     update();
 }
 
+void SnrPlot::setRange(bool fixed, double low, double high)
+{
+    if (fixed == fixedRange && low == fixedLow && high == fixedHigh) return;
+    fixedRange = fixed;
+    fixedLow = low;
+    fixedHigh = high;
+    update();
+}
+
 qint32 SnrPlot::frameAt(qint32 x) const
 {
     if (totalFrames < 1) return 1;
@@ -69,6 +78,13 @@ void SnrPlot::paintEvent(QPaintEvent *)
             low = qMin<double>(low, value);
             high = qMax<double>(high, value);
         }
+    }
+
+    // (a scale that is given is used as it is, curves or none: the graphs of the sources are read against the same one)
+    if (fixedRange && fixedHigh > fixedLow) {
+        low = fixedLow;
+        high = fixedHigh;
+        any = true;
     }
 
     double lo = 0, span = 1;
@@ -214,6 +230,9 @@ SnrGraph::SnrGraph(bool withStack, QWidget *parent)
     blackCheck->setStyleSheet(QString("QCheckBox { color: %1; }").arg(blackColor().name()));
     row->addWidget(whiteCheck);
     row->addWidget(blackCheck);
+    measureCheck = new QCheckBox(tr("Measure"));
+    measureCheck->setToolTip(tr("Measure the SNR from the test signal lines of the fields of the source, instead of reading the one in its metadata (it takes a while, in the background)"));
+    row->addWidget(measureCheck);
     if (withStack) {
         stackCheck = new QCheckBox(tr("Compare with the stack (grey)"));
         stackCheck->setChecked(false);   // the window is of the source: the stack is only there if asked for
@@ -232,6 +251,7 @@ SnrGraph::SnrGraph(bool withStack, QWidget *parent)
     connect(plot, &SnrPlot::frameRequested, this, &SnrGraph::frameRequested);
     connect(whiteCheck, &QCheckBox::toggled, this, [this]() { redraw(); });
     connect(blackCheck, &QCheckBox::toggled, this, [this]() { redraw(); });
+    connect(measureCheck, &QCheckBox::toggled, this, &SnrGraph::measureToggled);
     if (stackCheck) connect(stackCheck, &QCheckBox::toggled, this, [this]() { redraw(); });
 }
 
@@ -249,6 +269,19 @@ void SnrGraph::setData(const QString &label, const QVector<float> &newWhite, con
 void SnrGraph::setMarker(qint32 frame)
 {
     plot->setMarker(frame);
+}
+
+void SnrGraph::setRange(bool fixed, double low, double high)
+{
+    plot->setRange(fixed, low, high);
+}
+
+void SnrGraph::setMeasure(bool on, bool enabled, const QString &tip)
+{
+    const QSignalBlocker blocker(measureCheck);
+    measureCheck->setChecked(on);
+    measureCheck->setEnabled(enabled);
+    measureCheck->setToolTip(tip.isEmpty() ? tr("Measure the SNR from the test signal lines of the fields of the source, instead of reading the one in its metadata (it takes a while, in the background)") : tip);
 }
 
 void SnrGraph::redraw()

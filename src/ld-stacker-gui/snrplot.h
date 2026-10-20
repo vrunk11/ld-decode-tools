@@ -38,6 +38,9 @@ public:
 
     void setCurves(const QVector<SnrCurve> &curves);
     void setMarker(qint32 frame);
+    // The range of the vertical scale, in dB: the one given (the same for all the graphs, so that they can be compared) or, when it is not fixed, the
+    // one of the curves that are shown. A little room is left above and below either way.
+    void setRange(bool fixed, double low = 0, double high = 0);
 
     QSize sizeHint() const override { return QSize(400, 70); }
     QSize minimumSizeHint() const override { return QSize(100, 40); }
@@ -52,6 +55,8 @@ protected:
     void leaveEvent(QEvent *event) override;
 
 private:
+    bool fixedRange = false;
+    double fixedLow = 0, fixedHigh = 0;
     static constexpr qint32 AXIS_WIDTH = 56;     // room on the right for the scale
 
     qint32 plotWidth() const { return qMax(1, width() - AXIS_WIDTH); }
@@ -76,12 +81,17 @@ public:
     void setData(const QString &label, const QVector<float> &white, const QVector<float> &black,
                  const QVector<float> &stackWhite = QVector<float>(), const QVector<float> &stackBlack = QVector<float>());
     void setMarker(qint32 frame);
+    // The box that says the SNR of the source is measured from its fields instead of read from its metadata: whether it is ticked, whether it can be
+    // changed (the SNR of a stack is always measured), and what its tooltip says (empty: the usual one)
+    void setMeasure(bool on, bool enabled, const QString &tip = QString());
+    void setRange(bool fixed, double low = 0, double high = 0);
 
     static QColor whiteColor() { return QColor("#378ADD"); }
     static QColor blackColor() { return QColor("#E8833A"); }
 
 signals:
     void frameRequested(qint32 frame);
+    void measureToggled(bool on);       // the person ticked or cleared it
 
 private:
     void redraw();
@@ -91,6 +101,7 @@ private:
     QCheckBox *whiteCheck = nullptr;
     QCheckBox *blackCheck = nullptr;
     QCheckBox *stackCheck = nullptr;
+    QCheckBox *measureCheck = nullptr;
     QVector<float> white, black, stackWhite, stackBlack;
 };
 

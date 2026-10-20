@@ -10,6 +10,7 @@
 
 #include "mainwindow.h"
 #include "ldxcapture.h"
+#include "tbcfiles.h"
 
 #include "processdialog.h"
 
@@ -35,6 +36,7 @@
 #include <QScrollBar>
 #include <QSettings>
 #include <QShortcut>
+#include <limits>
 #include <QSplitter>
 #include <QStatusBar>
 #include <QTimer>
@@ -70,6 +72,8 @@ MainWindow::MainWindow(const QStringList &arguments, QWidget *parent)
     : QMainWindow(parent)
 {
     setWindowTitle(tr("ld-stacker-gui"));
+    // The stacking is off to begin with: turning it on asks to map the sources that follow the map and have no mapping
+    project.showStack = false;
 
     // Colour theme and widget style, as in ld-analyse: View > Theme and View > Style, kept in the settings.
     // --force-dark-theme overrides the theme for this session without changing the setting.
@@ -94,6 +98,7 @@ MainWindow::MainWindow(const QStringList &arguments, QWidget *parent)
     connect(backend, &FrameBackend::sourceLoaded, this, &MainWindow::on_sourceLoaded);
     connect(backend, &FrameBackend::frameReady, this, &MainWindow::on_frameReady);
     connect(backend, &FrameBackend::stackSnrReady, this, &MainWindow::on_stackSnrReady);
+    connect(backend, &FrameBackend::sourceSnrReady, this, &MainWindow::on_sourceSnrReady);
     backendThread.start();
 
     buildUi();
@@ -193,9 +198,16 @@ void MainWindow::buildUi()
     sourceList->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     side->setMinimumWidth(300);
     sideLayout->addWidget(sourceList, 1);
+    QHBoxLayout *addRow = new QHBoxLayout;
     QPushButton *addButton = new QPushButton(tr("Add source..."));
-    sideLayout->addWidget(addButton);
+    addRow->addWidget(addButton, 1);
     connect(addButton, &QPushButton::clicked, this, &MainWindow::addSourcesDialog);
+    // The panel of what is known of the source that is chosen (the history of an LDX file, the VBI, whether it was mapped...)
+    infoButton = new QPushButton(tr("Info"));
+    infoButton->setCheckable(true);
+    infoButton->setToolTip(tr("Show what is known of the source that is chosen: where it is, the video, what the VBI says of the disc, whether it was mapped, its SNR and the history of an LDX file"));
+    addRow->addWidget(infoButton);
+    sideLayout->addLayout(addRow);
 
     // After a drag the rows are made again, in the new order
     connect(sourceList->model(), &QAbstractItemModel::rowsMoved, this, [this]() {
@@ -293,6 +305,10 @@ void MainWindow::buildUi()
     navigationLayout->addWidget(lastButton);
     navigationLayout->addWidget(frameSlider, 1);
     navigationLayout->addWidget(totalLabel);
+    discLabel = new QLabel;
+    discLabel->setForegroundRole(QPalette::PlaceholderText);
+    discLabel->setToolTip(tr("Where the picture is on the disc (from the VBI), and in the file of the source that is shown"));
+    navigationLayout->addWidget(discLabel);
     mainLayout->addWidget(navigation);
 
     // Options
@@ -311,7 +327,7 @@ void MainWindow::buildUi()
     stackButton = new QPushButton(tr("Stack"));
     stackButton->setIcon(dotIcon(STACK_COLOR));
     stackButton->setCheckable(true);
-    stackButton->setChecked(true);
+    stackButton->setChecked(false);       // (off to begin with: turning it on asks to map the sources that follow the map and have none)
     stackButton->setMinimumWidth(120);
     // Clearly on or off, whatever the theme
     const QString toggleStyle = "QPushButton:checked { background: palette(highlight); color: palette(highlighted-text); }";
@@ -345,14 +361,51 @@ void MainWindow::buildUi()
     optionsLayout->addWidget(originalSizeButton);
     mainLayout->addWidget(options);
 
+    infoPanel = new SourceInfoPanel;
+    infoPanel->setVisible(false);
+    connect(infoPanel, &SourceInfoPanel::mapRequested, this, &MainWindow::mapSelectedSource);
+    connect(infoButton, &QPushButton::toggled, this, [this](bool on) {
+        // The window gets wider by the room of the panel when it is shown, and narrower by it when it is hidden (the picture keeps its room), unless the
+        // window is maximized or fills the screen
+        const bool resizes = !isMaximized() && !isFullScreen();
+        const qint32 handle = mainSplitter ? mainSplitter->handleWidth() : 0;
+        if (on) {
+            infoPanel->setVisible(true);
+            if (mainSplitter) mainSplitter->setSizes({ sourceList->parentWidget() ? sourceList->parentWidget()->width() : 340, infoPanelWidth, mainSplitter->widget(2)->width() });
+            if (resizes) resize(width() + infoPanelWidth + handle, height());
+        } else {
+            if (infoPanel->isVisible() && infoPanel->width() > 0) infoPanelWidth = infoPanel->width();
+            infoPanel->setVisible(false);
+            // (the window cannot get narrower while its layout still counts the panel: it does it when the layout has been made again)
+            if (resizes) {
+                const qint32 target = width() - infoPanelWidth - handle;
+                QTimer::singleShot(0, this, [this, target]() {
+                    // (the minimum width that the layout set while the panel was there is made again, or the window would not go below it)
+                    if (layout()) {
+                        layout()->invalidate();
+                        layout()->activate();
+                    }
+                    if (!isMaximized() && !isFullScreen() && !infoPanel->isVisible()) resize(qMax(minimumSizeHint().width(), target), height());
+                });
+            }
+        }
+        updateInfoPanel();
+    });
+
     QSplitter *splitter = new QSplitter;
+    mainSplitter = splitter;
     splitter->addWidget(side);
+    splitter->addWidget(infoPanel);
     splitter->addWidget(main);
     splitter->setStretchFactor(0, 0);
-    splitter->setStretchFactor(1, 1);
-    splitter->setSizes({ 340, 880 });
+    splitter->setStretchFactor(1, 0);
+    splitter->setStretchFactor(2, 1);
+    splitter->setSizes({ 340, 300, 880 });
     splitter->setChildrenCollapsible(false);
     setCentralWidget(splitter);
+
+    // (the panel is hidden when the program starts)
+    infoButton->setChecked(false);
 
     // The status bar: what contributes, and how
     statusSources = new QLabel;
@@ -369,7 +422,9 @@ void MainWindow::buildUi()
         if (index < 0 || index >= project.sources.size()) return;
         // Choosing a source shows it: the stack is off
         project.selected = project.sources[index].id;
+        updateInfoPanel();
         project.showStack = false;
+        updateFollowEnabled();
         {
             const QSignalBlocker blocker(stackButton);
             stackButton->setChecked(false);
@@ -381,16 +436,28 @@ void MainWindow::buildUi()
         viewChanged();
     });
     connect(stackButton, &QPushButton::toggled, this, [this](bool on) {
+        // Turning the stack on: the sources that follow the map and have no mapping are offered to be mapped first
+        if (on && !confirmMappingBeforeStack()) {
+            const QSignalBlocker blocker(stackButton);
+            stackButton->setChecked(false);
+            return;
+        }
         project.showStack = on;
+        updateFollowEnabled();
+        updateInfoPanel();
         viewChanged();
     });
-    connect(frameSpin, &QSpinBox::valueChanged, this, &MainWindow::setFrame);
-    connect(frameSlider, &QSlider::valueChanged, this, &MainWindow::setFrame);
-    connect(firstButton, &QToolButton::clicked, this, [this]() { setFrame(1); });
+    connect(frameSpin, &QSpinBox::valueChanged, this, [this](qint32 value) { setFrame(value + viewOffset()); });
+    connect(frameSlider, &QSlider::valueChanged, this, [this](qint32 value) { setFrame(value + viewOffset()); });
+    connect(firstButton, &QToolButton::clicked, this, [this]() { setFrame(viewOffset() + 1); });
     connect(previousButton, &QToolButton::clicked, this, [this]() { setFrame(frame - 1); });
     connect(nextButton, &QToolButton::clicked, this, [this]() { setFrame(frame + 1); });
-    connect(lastButton, &QToolButton::clicked, this, [this]() { setFrame(totalFrames); });
-    connect(snrPlot, &SnrGraph::frameRequested, this, &MainWindow::setFrame);
+    connect(lastButton, &QToolButton::clicked, this, [this]() { setFrame(viewOffset() + viewFrames()); });
+    connect(snrPlot, &SnrGraph::frameRequested, this, [this](qint32 requested) { setFrame(requested + viewOffset()); });
+    connect(snrPlot, &SnrGraph::measureToggled, this, [this](bool on) {
+        const QString id = measureTargetId();
+        if (!id.isEmpty()) setSourceMeasure(id, on);
+    });
     connect(modeCombo, &QComboBox::currentIndexChanged, this, [this](qint32 index) {
         project.stacking.mode = index - 1;
         sourcesChanged();
@@ -484,6 +551,16 @@ void MainWindow::buildMenus()
             if (stackWindow->isVisible() && lastStackResult.view == "stack") showStackPicture(lastStackResult);
         });
     }
+    QAction *sameScaleAction = view->addAction(tr("Same scale for all the SNR graphs"));
+    sameScaleAction->setCheckable(true);
+    snrSameScale = QSettings().value("snrSameScale", true).toBool();
+    sameScaleAction->setChecked(snrSameScale);
+    sameScaleAction->setToolTip(tr("The graphs of the sources and of the stack share one vertical scale, which holds all of them, so that they can be compared. Off: each graph has the scale that fits what it shows."));
+    connect(sameScaleAction, &QAction::toggled, this, [this](bool on) {
+        snrSameScale = on;
+        QSettings().setValue("snrSameScale", on);
+        updatePlot();
+    });
     QAction *tintAction = view->addAction(tr("Tint the source rows"));
     tintAction->setCheckable(true);
     tintRows = QSettings().value("tintRows", true).toBool();
@@ -510,7 +587,9 @@ QColor MainWindow::colorFor(const QString &id)
 
 QString MainWindow::sourceTitle(const StackSource &source) const
 {
-    if (!source.label.isEmpty()) return source.label;
+    // (the track of a capture that came by a pipe can be named after the pipe, which says nothing: the name of the file does then)
+    static const QStringList pipeNames = { QStringLiteral("stdin"), QStringLiteral("stdin.tbc"), QStringLiteral("stdin.cvbs"), QStringLiteral("-"), QStringLiteral("/dev/stdin") };
+    if (!source.label.isEmpty() && !pipeNames.contains(source.label.trimmed(), Qt::CaseInsensitive)) return source.label;
     return QFileInfo(source.file).fileName() + (source.track > 0 ? QString(" #%1").arg(source.track) : QString());
 }
 
@@ -548,6 +627,7 @@ void MainWindow::addSources(const QStringList &files)
             tracks = { track };
         }
         for (qint32 i = 0; i < tracks.size(); i++) {
+            if (tracks[i] > 0 && LdxCapture::isMappedTrack(LdxCapture::trackName(path, tracks[i]))) continue;
             StackSource source;
             source.file = QFileInfo(path).absoluteFilePath();
             source.track = tracks[i];
@@ -574,10 +654,16 @@ void MainWindow::removeSource(const QString &id)
 {
     const qint32 index = project.indexOfSource(id);
     if (index < 0) return;
+    measureQueue.removeAll(id);
+    if (measuringId == id) {
+        backend->sourceSnrGeneration.store(++sourceSnrJob);
+        measuringId.clear();
+    }
     project.sources.remove(index);
     states.remove(id);
     delete snrWindows.take(id);
     QMetaObject::invokeMethod(backend, "removeSource", Qt::QueuedConnection, Q_ARG(QString, id));
+    QTimer::singleShot(0, this, [this]() { startNextMeasure(); });
     rebuildSourceList();
     rebuildTabs();
     sourcesChanged();
@@ -600,6 +686,10 @@ void MainWindow::loadSession(const QString &fileName)
         QMetaObject::invokeMethod(backend, "removeSource", Qt::QueuedConnection, Q_ARG(QString, source.id));
     }
     states.clear();
+    // (the measures of the SNR of the sources that were open stop)
+    measureQueue.clear();
+    measuringId.clear();
+    backend->sourceSnrGeneration.store(++sourceSnrJob);
     colorCounter = 0;
     stackWhite.clear();
     stackBlack.clear();
@@ -610,6 +700,8 @@ void MainWindow::loadSession(const QString &fileName)
     snrWindows.clear();
 
     project = loaded;
+    // (the stacking is off when a session is opened too: turning it on asks to map the sources that follow the map and have no mapping)
+    project.showStack = false;
     // (the session an LDX file keeps is saved to a .stack file of its own, never over the LDX file)
     sessionFile = LdxCapture::isLdxName(fileName) ? QString() : fileName;
     for (const StackSource &source: project.sources) startSource(source);
@@ -655,7 +747,7 @@ void MainWindow::processSession()
         const QFileInfo first(project.sources.first().file);
         suggested = first.absoluteDir().absoluteFilePath(first.completeBaseName() + "-stack." + first.suffix());
     }
-    ProcessDialog dialog(project, suggested, this);
+    ProcessDialog dialog(projectForProcessing(), suggested, this);
     dialog.exec();
 }
 
@@ -733,11 +825,356 @@ void MainWindow::on_sourceLoaded(const SourceInfo &info)
     rebuildSourceList();
     updateTabTexts();
     sourcesChanged();
+    if (info.ok) resolveFollowMap(info.id);
+}
+
+// The bar of the mapping in the row of a source: hidden when nothing is going on, a bar that fills (or goes back and forth while there is no count),
+// and red with "Map failed" when ld-discmap did not succeed
+void MainWindow::updateMapBar(const QString &id)
+{
+    QProgressBar *bar = mapBars.value(id);
+    if (!bar) return;
+    const SourceState state = states.value(id);
+    const bool show = state.mapProgress >= -1 || state.mapFailed;
+    bar->setVisible(show);
+    if (!show) return;
+    if (state.mapFailed) {
+        bar->setRange(0, 100);
+        bar->setValue(100);
+        bar->setFormat(tr("Map failed"));
+        bar->setStyleSheet(QStringLiteral("QProgressBar { text-align: center; } QProgressBar::chunk { background-color: #d33a3a; }"));
+    } else if (state.mapProgress < 0) {
+        bar->setRange(0, 0);
+        bar->setFormat(QString());
+        bar->setStyleSheet(QString());
+    } else {
+        bar->setRange(0, 100);
+        bar->setValue(state.mapProgress);
+        bar->setFormat(tr("Mapping %p%"));
+        bar->setStyleSheet(QString());
+    }
+    // (the row keeps the room of its bar, so that the list does not jump when it appears)
+    for (qint32 row = 0; row < sourceList->count(); row++) {
+        QListWidgetItem *item = sourceList->item(row);
+        if (item->data(Qt::UserRole).toString() != id) continue;
+        if (QWidget *widget = sourceList->itemWidget(item)) item->setSizeHint(widget->sizeHint() + QSize(0, 2));
+    }
+}
+
+// What cannot be done while sources are being mapped: the stack, the Map button, the Follow map boxes
+void MainWindow::updateMappingControls()
+{
+    stackButton->setEnabled(!mappingBusy);
+    updateFollowEnabled();
+    updateInfoPanel();
+}
+
+// The sources that the stack would use and that follow the map but have no mapping: TBC captures that are on, whose metadata do not say they were
+// mapped (a mapping that exists was taken in their place when they were loaded). followingOnly false: all that can be mapped.
+QVector<qint32> MainWindow::sourcesToMap(bool followingOnly) const
+{
+    QVector<qint32> indexes;
+    for (qint32 index = 0; index < project.sources.size(); index++) {
+        const StackSource &source = project.sources[index];
+        const SourceState state = states.value(source.id);
+        if (!state.loaded || state.info.isMapped || state.info.cvbs) continue;
+        if (followingOnly && (!source.enabled || !state.followMap)) continue;
+        // (a track of an LDX file is mapped as a track of its own; the chroma track of a pair is not)
+        if (LdxCapture::isLdxName(source.reference())) {
+            if (LdxCapture::isChromaTrack(source.reference())) continue;
+        } else if (TbcFiles::mappedFileName(source.file).isEmpty()) {
+            continue;
+        }
+        indexes.append(index);
+    }
+    return indexes;
+}
+
+// The Stack button: if some sources that follow the map have none, ask whether to map them, and whether to keep a copy or to overwrite the capture
+bool MainWindow::confirmMappingBeforeStack()
+{
+    const QVector<qint32> needing = sourcesToMap(true);
+    if (needing.isEmpty()) return true;
+    QStringList names;
+    for (const qint32 index: needing) names << sourceTitle(project.sources[index]);
+    QMessageBox box(this);
+    box.setIcon(QMessageBox::Question);
+    box.setWindowTitle(tr("Map the sources?"));
+    box.setText(needing.size() == 1 ? tr("This source has no mapped version:\n%1").arg(names.join("\n"))
+                                    : tr("These sources have no mapped version:\n%1").arg(names.join("\n")));
+    box.setInformativeText(tr("Mapping puts the frames in the order of the disc and pads the missing ones, so that the sources line up. A copy can be kept beside each capture (name_map), or the capture can be overwritten, which cannot be undone."));
+    QPushButton *copy = box.addButton(tr("Map, keep a copy"), QMessageBox::AcceptRole);
+    QPushButton *overwrite = box.addButton(tr("Map, overwrite"), QMessageBox::DestructiveRole);
+    QPushButton *without = box.addButton(tr("Stack without mapping"), QMessageBox::ActionRole);
+    box.addButton(QMessageBox::Cancel);
+    box.setDefaultButton(copy);
+    box.exec();
+    if (box.clickedButton() == without) return true;
+    if (box.clickedButton() != copy && box.clickedButton() != overwrite) return false;
+    const bool replace = box.clickedButton() == overwrite;
+    if (replace && QMessageBox::warning(this, tr("Overwrite the captures"), tr("The captures and their metadata are replaced by their mapping. This cannot be undone. Continue?"),
+                                        QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Cancel) != QMessageBox::Yes) {
+        return false;
+    }
+    // (the mapping goes on in the window, and the stack is turned on when it is done)
+    startMapping(needing, replace, true);
+    return false;
+}
+
+// Map the sources with ld-discmap, in the background: a bar in the row of each source shows how it goes (and a window has the log of the tool). A capture that
+// is overwritten has to be let go of first (a file that is open cannot be replaced on Windows) and is read again afterwards.
+bool MainWindow::startMapping(const QVector<qint32> &indexes, bool overwrite, bool thenStack)
+{
+    if (mappingBusy || indexes.isEmpty()) return false;
+    QVector<MapDialog::Job> jobs;
+    QStringList ids;
+    for (const qint32 index: indexes) {
+        MapDialog::Job job;
+        job.id = project.sources[index].id;
+        job.title = sourceTitle(project.sources[index]);
+        job.input = project.sources[index].reference();
+        jobs.append(job);
+        ids << job.id;
+    }
+    // The sources that are let go of, and read again afterwards: with an overwrite, those that are mapped; and, for a track of an LDX file (the file is
+    // written again, whether the track is replaced or the mapping is added), every source that reads that file
+    QStringList reload;
+    if (overwrite) reload = ids;
+    for (const MapDialog::Job &job: jobs) {
+        if (!MapDialog::isLdxJob(job)) continue;
+        QString path;
+        qint32 track;
+        LdxCapture::split(job.input, path, track);
+        for (const StackSource &other: project.sources) {
+            if (reload.contains(other.id) || !LdxCapture::isLdxName(other.reference())) continue;
+            QString otherPath;
+            qint32 otherTrack;
+            LdxCapture::split(other.reference(), otherPath, otherTrack);
+            if (QFileInfo(otherPath) == QFileInfo(path)) reload << other.id;
+        }
+    }
+    if (!reload.isEmpty()) {
+        // (what measures the SNR of the sources, and their handles on the files, stop)
+        backend->snrGeneration.store(++snrJob);
+        backend->sourceSnrGeneration.store(++sourceSnrJob);
+        measureQueue.clear();
+        measuringId.clear();
+        for (const QString &id: reload) {
+            QMetaObject::invokeMethod(backend, "removeSource", Qt::BlockingQueuedConnection, Q_ARG(QString, id));
+            states[id].loaded = false;
+        }
+        rebuildSourceList();
+    }
+    for (const QString &id: ids) {
+        states[id].mapProgress = -1;
+        states[id].mapFailed = false;
+        updateMapBar(id);
+    }
+    mappingBusy = true;
+    updateMappingControls();
+    mapDialog = new MapDialog(jobs, overwrite, this);
+    mapDialog->setAttribute(Qt::WA_DeleteOnClose);
+    connect(mapDialog, &MapDialog::jobStarted, this, [this](const QString &id) {
+        if (!states.contains(id)) return;
+        states[id].mapProgress = -1;
+        updateMapBar(id);
+    });
+    connect(mapDialog, &MapDialog::jobProgress, this, [this](const QString &id, qint32 percent) {
+        if (!states.contains(id)) return;
+        states[id].mapProgress = percent;
+        updateMapBar(id);
+    });
+    connect(mapDialog, &MapDialog::jobFinished, this, [this](const QString &id, bool ok) {
+        if (!states.contains(id)) return;
+        states[id].mapProgress = -2;
+        states[id].mapFailed = !ok;
+        updateMapBar(id);
+    });
+    connect(mapDialog, &MapDialog::allFinished, this, [this, ids, reload, overwrite, thenStack](bool success) {
+        mappingFinished(ids, reload, overwrite, thenStack, success);
+    });
+    mapDialog->show();
+    mapDialog->start();
+    return true;
+}
+
+// ld-discmap is done (or stopped): the sources that were mapped read their mapping, and those that were let go of are read again
+void MainWindow::mappingFinished(const QStringList &ids, const QStringList &reload, bool overwrite, bool thenStack, bool success)
+{
+    const QStringList mapped = mapDialog ? mapDialog->mappedIds() : QStringList();
+    QHash<QString, QString> replaced;
+    for (const QString &id: mapped) {
+        if (mapDialog && !mapDialog->replacedReference(id).isEmpty()) replaced.insert(id, mapDialog->replacedReference(id));
+    }
+    mappingBusy = false;
+    // (the other sources of a file that was written again read it as it is now)
+    for (const QString &id: reload) {
+        const qint32 index = project.indexOfSource(id);
+        if (index < 0 || ids.contains(id)) continue;
+        switchSource(id, project.sources[index].reference());
+    }
+    for (const QString &id: ids) {
+        const qint32 index = project.indexOfSource(id);
+        if (index < 0) continue;
+        if (overwrite) {
+            // (the capture is the mapping now, or as it was if the mapping failed: it is read again either way; a track of an LDX file that was replaced is
+            // another track, which the mapping took the place of)
+            switchSource(id, replaced.value(id, project.sources[index].reference()));
+        } else if (reload.contains(id)) {
+            // (the file was written again: the source is read again, and the mapping that was added to it is taken if it was made)
+            switchSource(id, project.sources[index].reference());
+            if (mapped.contains(id)) {
+                states[id].followMap = true;
+                if (followBoxes.contains(id)) {
+                    const QSignalBlocker blocker(followBoxes.value(id));
+                    followBoxes.value(id)->setChecked(true);
+                }
+            }
+        } else if (mapped.contains(id)) {
+            // (the mapping was asked for: it is the one that is used)
+            states[id].followMap = true;
+            if (followBoxes.contains(id)) {
+                const QSignalBlocker blocker(followBoxes.value(id));
+                followBoxes.value(id)->setChecked(true);
+            }
+            resolveFollowMap(id);
+        }
+    }
+    updateMappingControls();
+    if (!success) {
+        QMessageBox::warning(this, tr("Map the sources"), tr("The mapping was not finished: the sources that it did not reach are as they were."));
+        return;
+    }
+    if (thenStack) stackButton->setChecked(true);
+}
+
+// The Map button of the panel: the source that is chosen, if it has no mapped version; the Follow map box does not matter, the button was pressed
+void MainWindow::mapSelectedSource()
+{
+    QString id = project.selected;
+    const qint32 index = project.indexOfSource(id);
+    if (index < 0 || project.showStack || mappingBusy) return;
+    const SourceState state = states.value(id);
+    if (state.info.isMapped) {
+        QMessageBox::information(this, tr("Map"), tr("The metadata say that this source is mapped already."));
+        return;
+    }
+    const QString reference = project.sources[index].reference();
+    const QString mapped = LdxCapture::isLdxName(reference) ? LdxCapture::mappedOfOriginal(reference) : TbcFiles::mappedFileName(project.sources[index].file);
+    if (!mapped.isEmpty() && (LdxCapture::isLdxName(reference) || QFileInfo::exists(mapped))) {
+        // A mapped version is there: it is the one to use (nothing is made again)
+        QMessageBox::information(this, tr("Map"), tr("A mapped version exists beside it (%1): it is the one that is used.").arg(QFileInfo(mapped).fileName()));
+        states[id].followMap = true;
+        resolveFollowMap(id);
+        rebuildSourceList();
+        return;
+    }
+    QMessageBox box(this);
+    box.setIcon(QMessageBox::Question);
+    box.setWindowTitle(tr("Map the source"));
+    box.setText(tr("%1 has no mapped version.").arg(sourceTitle(project.sources[index])));
+    box.setInformativeText(tr("A copy can be kept beside the capture (name_map), or the capture can be overwritten, which cannot be undone."));
+    QPushButton *copy = box.addButton(tr("Map, keep a copy"), QMessageBox::AcceptRole);
+    QPushButton *overwrite = box.addButton(tr("Map, overwrite"), QMessageBox::DestructiveRole);
+    box.addButton(QMessageBox::Cancel);
+    box.setDefaultButton(copy);
+    box.exec();
+    if (box.clickedButton() != copy && box.clickedButton() != overwrite) return;
+    const bool replace = box.clickedButton() == overwrite;
+    if (replace && QMessageBox::warning(this, tr("Overwrite the capture"), tr("The capture and its metadata are replaced by their mapping. This cannot be undone. Continue?"),
+                                        QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Cancel) != QMessageBox::Yes) {
+        return;
+    }
+    startMapping({ index }, replace, false);
+}
+
+// The Follow map boxes can be changed with the stack off only (they change what is stacked)
+void MainWindow::updateFollowEnabled()
+{
+    for (auto it = followBoxes.constBegin(); it != followBoxes.constEnd(); ++it) {
+        if (it.value()) it.value()->setEnabled(!project.showStack && !mappingBusy);
+    }
+}
+
+// The version of the source that is shown and stacked. Follow map on: the source is used as it is if its metadata say it was mapped; if not, the
+// mapping of it that exists (the file beside it with _map in its name, or the track of an LDX file that is the mapping of it) takes its place, in its
+// name and in what is stacked. Off: the capture it was made from. (A mapping that does not exist yet is made by the Map button.)
+void MainWindow::resolveFollowMap(const QString &id)
+{
+    const qint32 index = project.indexOfSource(id);
+    if (index < 0 || !states.contains(id) || !states.value(id).loaded) return;
+    const SourceState state = states.value(id);
+    const QString reference = project.sources[index].reference();
+    const bool ldx = LdxCapture::isLdxName(reference);
+    QString target;
+    if (state.followMap) {
+        if (state.info.isMapped) return;
+        if (ldx) {
+            target = LdxCapture::mappedOfOriginal(reference);
+        } else {
+            const QString mapped = TbcFiles::mappedFileName(reference);
+            if (!mapped.isEmpty() && QFileInfo::exists(mapped)) target = mapped;
+        }
+    } else {
+        if (ldx) {
+            const QString original = LdxCapture::originalOfMapped(reference);
+            if (original != reference) target = original;
+        } else {
+            const QString original = TbcFiles::originalFileName(reference);
+            if (original != reference && QFileInfo::exists(original)) target = original;
+        }
+    }
+    if (!target.isEmpty() && target != reference) switchSource(id, target);
+}
+
+// The source reads another file (or track) from now on: the same row, with the same offset, loaded again
+void MainWindow::switchSource(const QString &id, const QString &reference)
+{
+    const qint32 index = project.indexOfSource(id);
+    if (index < 0) return;
+    StackSource &source = project.sources[index];
+    QString path;
+    qint32 track = 0;
+    LdxCapture::split(reference, path, track);
+    source.file = QFileInfo(path).absoluteFilePath();
+    source.track = track;
+    // (an LDX track is named, and the row shows its name)
+    if (track > 0) {
+        QVector<qint32> tracks;
+        QStringList names;
+        QString error;
+        if (LdxCapture::listCaptures(path, tracks, names, error)) {
+            const qint32 at = tracks.indexOf(track);
+            if (at >= 0) source.label = names[at];
+        }
+    }
+    // What was measured of the other one goes
+    measureQueue.removeAll(id);
+    if (measuringId == id) {
+        backend->sourceSnrGeneration.store(++sourceSnrJob);
+        measuringId.clear();
+    }
+    SourceState &state = states[id];
+    state.loaded = false;
+    state.failed = false;
+    state.info = SourceInfo();
+    state.measure = false;
+    state.measuredWhite.clear();
+    state.measuredBlack.clear();
+    state.measuredDone = 0;
+    QMetaObject::invokeMethod(backend, "removeSource", Qt::QueuedConnection, Q_ARG(QString, id));
+    startSource(source);
+    rebuildSourceList();
+    rebuildTabs();
+    sourcesChanged();
+    statusBar()->showMessage(tr("%1 is read from %2").arg(QString("source %1").arg(index + 1), sourceTitle(source)), 6000);
 }
 
 // The sources shown as rows: switch, colour, name, offset
 void MainWindow::rebuildSourceList()
 {
+    followBoxes.clear();
+    mapBars.clear();
     const QString selected = sourceList->currentItem() ? sourceList->currentItem()->data(Qt::UserRole).toString() : project.selected;
     const QSignalBlocker blocker(sourceList);
     sourceList->clear();
@@ -790,7 +1227,7 @@ void MainWindow::rebuildSourceList()
         QString detail;
         if (state.failed) detail = tr("could not be loaded");
         else if (!state.loaded) detail = tr("loading...");
-        else detail = tr("%1 frames - %2").arg(state.info.frames).arg(state.info.system == PAL ? "PAL" : (state.info.system == NTSC ? "NTSC" : "PAL-M"));
+        else detail = tr("%1 frames - %2").arg(state.info.frames).arg(state.info.system == PAL ? "PAL" : (state.info.system == NTSC ? "NTSC" : "PAL-M")) + (state.info.isMapped ? tr(" - mapped") : QString());
         QLabel *name = new QLabel(QString("%1<br><small>%2</small>").arg(sourceTitle(source).toHtmlEscaped(), detail.toHtmlEscaped()));
         name->setToolTip(source.reference());
         if (state.failed) name->setForegroundRole(QPalette::PlaceholderText);
@@ -815,15 +1252,31 @@ void MainWindow::rebuildSourceList()
         offset->setRange(-1000000, 1000000);
         offset->setValue(source.offset);
         offset->setSuffix(tr(" fr"));
-        offset->setToolTip(tr("Offset in frames: the source is shifted by this many frames to align it with the others"));
+        offset->setToolTip(tr("Offset in frames, added to the alignment by the numbers of the disc (the sources are lined up by them, mapped or not): the source is shifted by this many frames more"));
         offset->setMinimumWidth(90);
-        if (index == referenceIndex()) {
-            offset->setEnabled(false);
-            offset->setToolTip(tr("The first source that is on is the reference: the others are lined up with it, and it has no offset"));
-        }
         bottom->addWidget(offset);
         bottom->addStretch(1);
+        QCheckBox *follow = new QCheckBox(tr("Follow map"));
+        follow->setChecked(state.followMap);
+        follow->setEnabled(!project.showStack && !mappingBusy);
+        followBoxes.insert(id, follow);
+        follow->setToolTip(tr("Use the mapped version of the source (the file beside it with _map in its name, or the mapped track of an LDX file) when there is one; off, the capture it was made from"));
+        bottom->addWidget(follow);
+        connect(follow, &QCheckBox::toggled, this, [this, id](bool on) {
+            if (!states.contains(id)) return;
+            states[id].followMap = on;
+            resolveFollowMap(id);
+            // (where the source is on the timeline depends on it, even when no other file is read)
+            sourcesChanged();
+        });
         layout->addLayout(bottom);
+
+        // The mapping of the source: a small bar while ld-discmap works on it, red if it failed
+        QProgressBar *mapBar = new QProgressBar;
+        mapBar->setFixedHeight(14);
+        layout->addWidget(mapBar);
+        mapBars.insert(id, mapBar);
+        mapBar->setVisible(false);
 
         connect(enabled, &QCheckBox::toggled, this, [this, id, name](bool on) {
             const qint32 at = project.indexOfSource(id);
@@ -847,6 +1300,7 @@ void MainWindow::rebuildSourceList()
         sourceList->setItemWidget(item, row);
         if (id == selected) sourceList->setCurrentItem(item);
     }
+    for (const StackSource &source: project.sources) updateMapBar(source.id);
 }
 
 // The tabs: the stack, then a tab for each source
@@ -886,9 +1340,10 @@ qint32 MainWindow::referenceIndex() const
     return -1;
 }
 
+// The shift of a source on the timeline: where it begins by the numbers of the disc (and the offset that was set on it, in addition)
 qint32 MainWindow::effectiveOffset(qint32 index) const
 {
-    return index == referenceIndex() ? 0 : project.sources[index].offset;
+    return index >= 0 && index < alignedOffsets.size() ? alignedOffsets[index] : project.sources[index].offset;
 }
 
 // The SNR of a source at a frame: of the white flag, or, when it has none (VHS for instance), of the black level.
@@ -958,28 +1413,49 @@ void MainWindow::updateTabTexts()
 // How many frames the timeline has: as far as any source on goes
 void MainWindow::updateTimeline()
 {
+    // Each source that is loaded is where the numbers of the disc put it (the earliest frame of any source is the first of the timeline), with its own offset
+    // in addition; a source whose VBI gives no number begins at the number 0 of the disc. The timeline is from the first frame of any source that is on to the last of any
+    // of them: where a source has no frame, the picture is blank.
+    const qint32 count = project.sources.size();
+    bool numbered = false;
+    for (const StackSource &source: project.sources) {
+        const SourceState state = states.value(source.id);
+        if (state.loaded && source.enabled && state.followMap && state.info.originDisc >= 0) numbered = true;
+    }
+    QVector<qint32> position(count, 0);
+    qint32 lowest = std::numeric_limits<qint32>::max();
+    for (qint32 index = 0; index < count; index++) {
+        const StackSource &source = project.sources[index];
+        const SourceState state = states.value(source.id);
+        if (!state.loaded) continue;
+        // (a source that does not follow the map is used as the capture is: its numbers are not trusted, and it begins at the start of the timeline)
+        const qint32 shift = state.followMap ? qMax(0, state.info.originDisc) : 0;
+        position[index] = shift + source.offset;
+        if (source.enabled) lowest = qMin(lowest, position[index]);
+    }
+    if (lowest == std::numeric_limits<qint32>::max()) lowest = 0;
+    alignedOffsets = QVector<qint32>(count, 0);
     qint32 total = 0;
-    const qint32 reference = referenceIndex();
-    if (reference >= 0) {
-        total = states.value(project.sources[reference].id).info.frames;
-    } else {
+    for (qint32 index = 0; index < count; index++) {
+        const StackSource &source = project.sources[index];
+        const SourceState state = states.value(source.id);
+        alignedOffsets[index] = state.loaded ? position[index] - lowest : source.offset;
+        if (state.loaded && source.enabled) total = qMax(total, alignedOffsets[index] + state.info.frames);
+    }
+    if (total == 0) {
         // None on: the longest of those that are loaded
-        for (const StackSource &source: project.sources) {
-            const SourceState state = states.value(source.id);
-            if (state.loaded) total = qMax(total, state.info.frames + source.offset);
+        for (qint32 index = 0; index < count; index++) {
+            const SourceState state = states.value(project.sources[index].id);
+            if (state.loaded) total = qMax(total, alignedOffsets[index] + state.info.frames);
         }
     }
+    // The picture stays on the same moment of the disc when the start of the timeline moves (a source that begins earlier, an offset changed)
+    const qint32 newDiscAtStart = numbered ? lowest : -1;
+    if (discAtStart >= 0 && newDiscAtStart >= 0 && newDiscAtStart != discAtStart) frame += discAtStart - newDiscAtStart;
+    discAtStart = newDiscAtStart;
     totalFrames = total;
 
-    const QSignalBlocker spinBlocker(frameSpin);
-    const QSignalBlocker sliderBlocker(frameSlider);
-    frameSpin->setRange(1, qMax(1, total));
-    frameSlider->setRange(1, qMax(1, total));
-    frame = qBound(1, frame, qMax(1, total));
-    frameSpin->setValue(frame);
-    frameSlider->setValue(frame);
-    frameSpin->setPrefix(tr("Frame "));
-    totalLabel->setText(tr("of %1").arg(total));
+    syncFrameControls();
 
     const bool enabled = total > 0;
     for (QWidget *widget: { static_cast<QWidget *>(firstButton), static_cast<QWidget *>(previousButton),
@@ -989,9 +1465,42 @@ void MainWindow::updateTimeline()
     }
 }
 
+// The panel of information shows the source that is chosen (the tab that is shown, or the one that was last)
+void MainWindow::updateInfoPanel()
+{
+    if (!infoPanel || !infoPanel->isVisible()) return;
+    QString id = project.selected;
+    if (project.indexOfSource(id) < 0 && !project.sources.isEmpty()) id = project.sources.first().id;
+    const qint32 index = project.indexOfSource(id);
+    if (index < 0) {
+        infoPanel->setMessage(tr("Add a source to see what is known of it."));
+        return;
+    }
+    const SourceState state = states.value(id);
+    SourceInfo info = state.info;
+    if (info.file.isEmpty()) info.file = project.sources[index].reference();
+    infoPanel->setSource(info, tr("Source %1 - %2").arg(index + 1).arg(sourceTitle(project.sources[index])), state.loaded);
+    {
+        const QString file = project.sources[index].file;
+        QString why;
+        if (!state.loaded) why = tr("The source is not loaded");
+        else if (mappingBusy) why = tr("Sources are being mapped");
+        else if (project.showStack) why = tr("Turn the stack off to map a source");
+        else if (state.info.isMapped) why = tr("The metadata say that this source is mapped already");
+        else if (state.info.cvbs) why = tr("ld-discmap maps TBC captures, not CVBS ones");
+        else if (LdxCapture::isLdxName(project.sources[index].reference())) {
+            if (LdxCapture::isChromaTrack(project.sources[index].reference())) why = tr("ld-discmap maps the luma (or composite) track of a pair, not the chroma one");
+        }
+        else if (TbcFiles::mappedFileName(file).isEmpty()) why = tr("ld-discmap maps a .tbc file (not the chroma file of a pair)");
+        infoPanel->setMappable(why.isEmpty(), why);
+    }
+}
+
 // What is stacked changed (a source on or off, an offset, the mode): the stack is worked out again
 void MainWindow::sourcesChanged()
 {
+    updateInfoPanel();
+    snrRangeDirty = true;
     updateTimeline();
     startStackSnr();
     updateTabTexts();
@@ -1009,20 +1518,49 @@ QString MainWindow::currentView() const
     return project.selected;
 }
 
+qint32 MainWindow::viewOffset() const
+{
+    const qint32 index = project.indexOfSource(currentView());
+    return (index >= 0 && states.value(project.sources[index].id).loaded) ? effectiveOffset(index) : 0;
+}
+
+qint32 MainWindow::viewFrames() const
+{
+    const qint32 index = project.indexOfSource(currentView());
+    if (index >= 0 && states.value(project.sources[index].id).loaded) return states.value(project.sources[index].id).info.frames;
+    return totalFrames;
+}
+
+void MainWindow::syncFrameControls()
+{
+    const qint32 offset = viewOffset();
+    const qint32 count = qMax(1, viewFrames());
+    frame = qBound(offset + 1, frame, offset + count);
+    const QSignalBlocker spinBlocker(frameSpin);
+    const QSignalBlocker sliderBlocker(frameSlider);
+    frameSpin->setRange(1, count);
+    frameSlider->setRange(1, count);
+    frameSpin->setValue(frame - offset);
+    frameSlider->setValue(frame - offset);
+    frameSpin->setPrefix(tr("Frame "));
+    totalLabel->setText(tr("of %1").arg(count));
+}
+
 void MainWindow::setFrame(qint32 newFrame)
 {
     if (totalFrames < 1) return;
-    newFrame = qBound(1, newFrame, totalFrames);
-    if (newFrame == frame && frameSpin->value() == frame && frameSlider->value() == frame) return;
+    const qint32 offset = viewOffset();
+    newFrame = qBound(offset + 1, newFrame, offset + qMax(1, viewFrames()));
+    if (newFrame == frame && frameSpin->value() == frame - offset && frameSlider->value() == frame - offset) return;
     frame = newFrame;
 
     {
         const QSignalBlocker spinBlocker(frameSpin);
         const QSignalBlocker sliderBlocker(frameSlider);
-        frameSpin->setValue(frame);
-        frameSlider->setValue(frame);
+        frameSpin->setValue(frame - offset);
+        frameSlider->setValue(frame - offset);
     }
-    snrPlot->setMarker(frame);
+    snrPlot->setMarker(frame - viewOffset());
     updateTabTexts();
     updateStatus();
     requestFrame();
@@ -1144,6 +1682,7 @@ void MainWindow::openSnrWindow(const QString &id)
         window = new SnrWindow(this);
         window->setWindowFlag(Qt::Window, true);
         connect(window, &SnrWindow::frameRequested, this, &MainWindow::setFrame);
+        connect(window, &SnrWindow::measureToggled, this, [this, id](bool on) { setSourceMeasure(id, on); });
         window->move(pos() + QPoint(60 + 30 * snrWindows.size(), 80 + 30 * snrWindows.size()));
         snrWindows.insert(id, window);
     }
@@ -1165,6 +1704,9 @@ void MainWindow::updateSnrWindow()
         }
         const StackSource &source = project.sources[index];
         window->setAccent(colorFor(source.id));
+        window->setMeasure(states.value(source.id).measure, true);
+        updateSnrRange();
+        window->setRange(snrSameScale && snrRangeAny, snrLow, snrHigh);
         window->setContent(tr("SNR - source %1 (%2)").arg(index + 1).arg(sourceTitle(source)), sourceCurve(index, true),
                            sourceCurve(index, false), stackWhite, stackBlack, frame);
     }
@@ -1173,6 +1715,7 @@ void MainWindow::updateSnrWindow()
 // What the picture shows changed: the stack or a source
 void MainWindow::viewChanged()
 {
+    syncFrameControls();
     updatePlot();
     updateStatus();
     requestFrame();
@@ -1180,30 +1723,63 @@ void MainWindow::viewChanged()
 
 void MainWindow::updatePlot()
 {
-    snrPlot->setMarker(frame);
+    // (the graph of a source is along the frames of that source, the one of the stack along the timeline)
+    snrPlot->setMarker(frame - viewOffset());
+    applySnrRange(snrPlot);
     updateSnrWindow();
 
-    const QString view = currentView();
+    QString view = currentView();
+    qint32 index = project.indexOfSource(view);
+    QString title;
     if (view == "stack") {
-        QString label = tr("Stack, measured from the stacked test signals");
-        if (totalFrames > 0 && stackSnrDone < totalFrames) label += tr(" - %1%").arg(stackSnrDone * 100 / totalFrames);
-        snrPlot->setData(label, stackWhite, stackBlack);
+        qint32 on = 0;
+        for (const StackSource &source: project.sources) on += (source.enabled && states.value(source.id).loaded) ? 1 : 0;
+        if (on >= 2) {
+            // The SNR of a stack is in no metadata: it is measured, whatever the box says
+            QString label = tr("Stack, measured from the stacked test signals");
+            if (totalFrames > 0 && stackSnrDone < totalFrames) label += tr(" - %1%").arg(stackSnrDone * 100 / totalFrames);
+            snrPlot->setData(label, stackWhite, stackBlack);
+            snrPlot->setMeasure(true, false, tr("The SNR of a stack is not in any metadata: it is always measured from the stacked test signals."));
+            return;
+        }
+        // One source on: the stack is that source
+        index = referenceIndex();
+        title = tr("Stack of one source");
+        if (index < 0) {
+            snrPlot->setData(QString(), QVector<float>(), QVector<float>());
+            snrPlot->setMeasure(false, false);
+            return;
+        }
+    } else if (index < 0) {
         return;
+    } else {
+        title = tr("Source %1").arg(index + 1);
     }
 
-    const qint32 index = project.indexOfSource(view);
-    if (index < 0) return;
-    snrPlot->setData(tr("Source %1, from its metadata").arg(index + 1), sourceCurve(index, true), sourceCurve(index, false));
+    const SourceState state = states.value(project.sources[index].id);
+    QString label;
+    if (!state.measure) {
+        label = tr("%1, from its metadata").arg(title);
+    } else {
+        label = tr("%1, measured from its fields").arg(title);
+        if (state.measuredDone < state.info.frames) label += tr(" - %1%").arg(state.info.frames > 0 ? state.measuredDone * 100 / state.info.frames : 0);
+    }
+    const bool ownAxis = view != "stack";
+    snrPlot->setData(label, sourceCurve(index, true, ownAxis), sourceCurve(index, false, ownAxis));
+    snrPlot->setMeasure(state.measure, true);
 }
 
 // The SNR of a source along the timeline, shifted by its offset
-QVector<float> MainWindow::sourceCurve(qint32 index, bool white) const
+QVector<float> MainWindow::sourceCurve(qint32 index, bool white, bool ownAxis) const
 {
-    QVector<float> values(totalFrames, std::nanf(""));
+    QVector<float> values(ownAxis ? 0 : totalFrames, std::nanf(""));
     const StackSource &source = project.sources[index];
     const SourceState state = states.value(source.id);
     if (!state.loaded) return values;
-    const QVector<float> &own = white ? state.info.whiteSnr : state.info.blackSnr;
+    // (measured from the fields if the box says so, else read from the metadata)
+    const bool measured = state.measure && !state.measuredWhite.isEmpty();
+    const QVector<float> &own = measured ? (white ? state.measuredWhite : state.measuredBlack) : (white ? state.info.whiteSnr : state.info.blackSnr);
+    if (ownAxis) return own.mid(0, state.info.frames);
     const qint32 offset = effectiveOffset(index);
     for (qint32 at = 1; at <= totalFrames; at++) {
         const qint32 ownFrame = at - offset;
@@ -1212,9 +1788,122 @@ QVector<float> MainWindow::sourceCurve(qint32 index, bool white) const
     return values;
 }
 
+// The range of dB that holds the SNR of every source (as it is shown: from the metadata, or measured) and of the stack, white and black, whether the
+// curves are ticked or not: the same scale for every graph
+void MainWindow::updateSnrRange()
+{
+    if (!snrRangeDirty) return;
+    snrRangeDirty = false;
+    snrRangeAny = false;
+    const auto take = [this](const QVector<float> &values) {
+        for (const float value: values) {
+            if (!std::isfinite(value)) continue;
+            if (!snrRangeAny) {
+                snrLow = snrHigh = value;
+                snrRangeAny = true;
+            }
+            snrLow = qMin<double>(snrLow, value);
+            snrHigh = qMax<double>(snrHigh, value);
+        }
+    };
+    for (const StackSource &source: project.sources) {
+        const SourceState state = states.value(source.id);
+        if (!state.loaded) continue;
+        const bool measured = state.measure && !state.measuredWhite.isEmpty();
+        take(measured ? state.measuredWhite : state.info.whiteSnr);
+        take(measured ? state.measuredBlack : state.info.blackSnr);
+    }
+    take(stackWhite);
+    take(stackBlack);
+}
+
+void MainWindow::applySnrRange(SnrGraph *graph)
+{
+    updateSnrRange();
+    graph->setRange(snrSameScale && snrRangeAny, snrLow, snrHigh);
+}
+
+// The source that the box "Measure" of the graph under the picture is for: the one that is shown, or, when the stack is shown and has only one source
+// on, that one; none for a stack of several (which is always measured)
+QString MainWindow::measureTargetId() const
+{
+    const QString view = currentView();
+    if (view != "stack") return project.indexOfSource(view) >= 0 ? view : QString();
+    qint32 on = 0;
+    for (const StackSource &source: project.sources) on += (source.enabled && states.value(source.id).loaded) ? 1 : 0;
+    if (on >= 2) return QString();
+    const qint32 reference = referenceIndex();
+    return reference >= 0 ? project.sources[reference].id : QString();
+}
+
+// The box "Measure" of a source: its SNR is measured from its fields (in the background, one source at a time) instead of read from its metadata
+void MainWindow::setSourceMeasure(const QString &id, bool on)
+{
+    if (!states.contains(id)) return;
+    snrRangeDirty = true;
+    SourceState &state = states[id];
+    if (state.measure == on) return;
+    state.measure = on;
+    if (on) {
+        // (what was measured stays, and a measure that was not finished goes on from the start)
+        if (state.measuredDone < state.info.frames && measuringId != id && !measureQueue.contains(id)) {
+            state.measuredWhite = QVector<float>(state.info.frames, std::nanf(""));
+            state.measuredBlack = QVector<float>(state.info.frames, std::nanf(""));
+            state.measuredDone = 0;
+            measureQueue.append(id);
+        }
+        startNextMeasure();
+    } else {
+        measureQueue.removeAll(id);
+        if (measuringId == id) {
+            backend->sourceSnrGeneration.store(++sourceSnrJob);    // (the one that was going stops)
+            measuringId.clear();
+            state.measuredDone = 0;
+            state.measuredWhite.clear();
+            state.measuredBlack.clear();
+            startNextMeasure();
+        }
+    }
+    updatePlot();
+}
+
+void MainWindow::startNextMeasure()
+{
+    if (!measuringId.isEmpty()) return;
+    while (!measureQueue.isEmpty()) {
+        const QString id = measureQueue.takeFirst();
+        if (!states.contains(id) || !states.value(id).loaded || !states.value(id).measure) continue;
+        measuringId = id;
+        const quint64 job = ++sourceSnrJob;
+        backend->sourceSnrGeneration.store(job);
+        QMetaObject::invokeMethod(backend, "computeSourceSnr", Qt::QueuedConnection, Q_ARG(QString, id), Q_ARG(qint32, 1), Q_ARG(quint64, job));
+        return;
+    }
+}
+
+void MainWindow::on_sourceSnrReady(const QString &id, quint64 generation, const QVector<StackSnrPoint> &points, bool finished)
+{
+    if (generation != sourceSnrJob || id != measuringId || !states.contains(id)) return;   // of an earlier job
+    snrRangeDirty = true;
+    SourceState &state = states[id];
+    for (const StackSnrPoint &point: points) {
+        if (point.frame < 1 || point.frame > state.measuredWhite.size()) continue;
+        state.measuredWhite[point.frame - 1] = point.white;
+        state.measuredBlack[point.frame - 1] = point.black;
+        state.measuredDone = qMax(state.measuredDone, point.frame);
+    }
+    if (finished) {
+        state.measuredDone = state.info.frames;
+        measuringId.clear();
+        startNextMeasure();
+    }
+    updatePlot();
+}
+
 // Start measuring the SNR of the stack over the whole timeline, in the background (and stop any earlier one)
 void MainWindow::startStackSnr()
 {
+    snrRangeDirty = true;
     stackWhite = QVector<float>(totalFrames, std::nanf(""));
     stackBlack = QVector<float>(totalFrames, std::nanf(""));
     stackSnrDone = 0;
@@ -1239,6 +1928,7 @@ void MainWindow::startStackSnr()
 void MainWindow::on_stackSnrReady(quint64 generation, const QVector<StackSnrPoint> &points, bool finished)
 {
     if (generation != snrJob) return;   // of an earlier job
+    snrRangeDirty = true;
     for (const StackSnrPoint &point: points) {
         if (point.frame < 1 || point.frame > stackWhite.size()) continue;
         stackWhite[point.frame - 1] = point.white;
@@ -1250,8 +1940,69 @@ void MainWindow::on_stackSnrReady(quint64 generation, const QVector<StackSnrPoin
     updatePlot();
 }
 
+// A number of the disc as it is read: the picture of a CAV disc, or the time of a CLV one (hours:minutes:seconds, and the picture of the second)
+QString MainWindow::discFormat(qint32 disc) const
+{
+    qint32 type = 0;
+    VideoSystem system = NTSC;
+    for (const StackSource &source: project.sources) {
+        const SourceState state = states.value(source.id);
+        if (!state.loaded || state.info.discType == 0) continue;
+        type = state.info.discType;
+        system = state.info.system;
+        break;
+    }
+    if (type == 1) {
+        const qint32 fps = system == PAL ? 25 : 30;
+        const qint32 seconds = disc / fps;
+        return QStringLiteral("%1:%2:%3.%4").arg(seconds / 3600).arg((seconds / 60) % 60, 2, 10, QChar('0')).arg(seconds % 60, 2, 10, QChar('0')).arg(disc % fps, 2, 10, QChar('0'));
+    }
+    return type == 2 ? tr("picture %1").arg(disc) : tr("frame %1").arg(disc);
+}
+
+void MainWindow::updateDiscLabel()
+{
+    if (!discLabel) return;
+    if (totalFrames < 1) {
+        discLabel->clear();
+        return;
+    }
+    QString text;
+    const QString view = currentView();
+    const qint32 index = project.indexOfSource(view);
+    if (view != "stack" && index >= 0) {
+        // The source that is shown: where it is in its file, and on the disc
+        const SourceState state = states.value(view);
+        const qint32 own = frame - effectiveOffset(index);
+        if (!state.loaded) text = QString();
+        else if (own < 1 || own > state.info.frames) text = tr("no frame of this source here");
+        else {
+            text = tr("file frame %1").arg(own);
+            if (state.followMap && state.info.originDisc >= 0) text +=QStringLiteral(" - ") + discFormat(state.info.originDisc + own - 1);
+        }
+    } else if (discAtStart >= 0) {
+        text = discFormat(discAtStart + frame - 1);
+    }
+    discLabel->setText(text);
+}
+
+// What the process stacks: the offsets are those of the timeline (the alignment by the disc and the offsets set), relative to the first source that is on, which is
+// the reference of ld-disc-stacker
+StackProject MainWindow::projectForProcessing() const
+{
+    StackProject copy = project;
+    const qint32 reference = referenceIndex();
+    if (reference < 0) return copy;
+    const qint32 base = effectiveOffset(reference);
+    for (qint32 index = 0; index < copy.sources.size(); index++) {
+        if (states.value(copy.sources[index].id).loaded) copy.sources[index].offset = effectiveOffset(index) - base;
+    }
+    return copy;
+}
+
 void MainWindow::updateStatus()
 {
+    updateDiscLabel();
     // What the sources are: the video system, and TBC or CVBS
     QString format;
     for (const StackSource &source: project.sources) {
@@ -1376,23 +2127,36 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
     return QMainWindow::eventFilter(watched, event);
 }
 
-// Files dropped on the window: a session, or sources to add
+// Files dropped on the window: a session, or sources to add. Only what a stack can be made of is taken (a TBC, CVBS or LDX capture, not the
+// chroma file of a pair, which goes with its luma); the other files are left, and the status bar says which
 void MainWindow::dragEnterEvent(QDragEnterEvent *event)
 {
-    if (event->mimeData()->hasUrls()) event->acceptProposedAction();
+    if (!event->mimeData()->hasUrls()) return;
+    for (const QUrl &url: event->mimeData()->urls()) {
+        const QString path = url.toLocalFile();
+        if (!path.isEmpty() && (StackProject::isSession(path) || TbcFiles::isStackSourceName(path))) {
+            event->acceptProposedAction();
+            return;
+        }
+    }
 }
 
 void MainWindow::dropEvent(QDropEvent *event)
 {
-    QStringList files;
+    QStringList files, ignored;
     QString session;
     for (const QUrl &url: event->mimeData()->urls()) {
         const QString path = url.toLocalFile();
         if (path.isEmpty()) continue;
-        if (StackProject::isSession(path)) session = path; else files.append(path);
+        if (StackProject::isSession(path)) session = path;
+        else if (TbcFiles::isStackSourceName(path)) files.append(path);
+        else ignored.append(QFileInfo(path).fileName());
     }
+    if (files.isEmpty() && session.isEmpty()) return;
+    event->acceptProposedAction();
     if (!session.isEmpty()) loadSession(session);
     if (!files.isEmpty()) addSources(files);
+    if (!ignored.isEmpty()) statusBar()->showMessage(tr("Not added (not a TBC, CVBS or LDX capture): %1").arg(ignored.join(", ")), 10000);
 }
 
 // Resize the window so that the scroll area shows the whole picture, without scroll bars. What is around the
