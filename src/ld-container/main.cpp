@@ -841,6 +841,7 @@ int addStream(const QStringList &arguments)
     parser.addPositionalArgument("file", "The LDX file");
     parser.addPositionalArgument("input", "The .tbc file to add");
     parser.addOption(QCommandLineOption({ "o", "output" }, "The LDX file to write", "file"));
+    parser.addOption(QCommandLineOption("mapped-from", "The capture is the mapping (ld-discmap) of the video track with this id, which is in the file", "id"));
     addCaptureOptions(parser);
     parser.process(arguments);
     if (parser.positionalArguments().size() != 2 || !parser.isSet("output")) {
@@ -863,11 +864,28 @@ int addStream(const QStringList &arguments)
     ChromaPart chroma;
     if (!readChroma(addOptions, input, chroma)) return 1;
 
+    // A mapping says which capture of the file it is the mapping of (section 7.4 of the specification): a video track that is there, and not a chroma one
+    if (parser.isSet("mapped-from")) {
+        bool numeric = false;
+        const quint32 original = parser.value("mapped-from").toUInt(&numeric);
+        bool valid = false;
+        for (const Ldx::Track &track: rewrite.tracks) {
+            if (track.number == original && numeric && (track.kind == Ldx::Kind::Tbc || track.kind == Ldx::Kind::Cvbs)
+                && track.parameters.value("role").toString() != "chroma") valid = true;
+        }
+        if (!valid) {
+            err << "--mapped-from " << parser.value("mapped-from") << ": there is no video track with that id in " << source << "\n";
+            return 1;
+        }
+        capture.video.parameters["mappedFrom"] = static_cast<int>(original);
+    }
+
     Ldx::Writer writer;
     prepareWriter(rewrite, writer, {});
     addCaptureTracks(writer, capture);
     addChromaTrack(writer, chroma, capture.video.number);
-    rewrite.history.append(historyEntry("add", QString("track %1: %2").arg(capture.video.number).arg(QFileInfo(input).fileName())));
+    rewrite.history.append(historyEntry("add", QString("track %1: %2").arg(capture.video.number).arg(QFileInfo(input).fileName())
+                                         + (parser.isSet("mapped-from") ? QString(" (the mapping of track %1)").arg(parser.value("mapped-from")) : QString())));
     writer.setHistory(rewrite.history);
 
     QString error;

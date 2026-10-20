@@ -352,6 +352,8 @@ public:
     void clearFieldDropOuts(qint32 sequentialFieldNumber);
 
     void appendField(const Field &field);
+    // Leave no fields (the parameters stay), to put others in their place
+    void clearFields();
 
     void setNumberOfFields(qint32 numberOfFields);
     qint32 getNumberOfFields();

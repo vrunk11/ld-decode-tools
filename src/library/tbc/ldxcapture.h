@@ -81,6 +81,13 @@ public:
     static QString lumaOfChroma(const QString &name);
     static QString chromaOfLuma(const QString &name);
 
+    // A track that is the mapping of another one (ld-discmap: the frames in the order of the disc, the missing ones padded) says so with the parameter
+    // "mappedFrom": the id of the track it is the mapping of, which has to be in the file. These say whether a name is such a track, give the mapped track of
+    // a capture (empty if it has none), and the capture that a mapped track is the mapping of (the name as it is for any other track).
+    static bool isMappedTrack(const QString &name);
+    static QString mappedOfOriginal(const QString &name);
+    static QString originalOfMapped(const QString &name);
+
     // Whether the capture a name gives is CVBS (a cvbs track) and not a TBC
     static bool isCvbs(const QString &name);
 
@@ -119,6 +126,9 @@ public:
         qint32 bits = 16;
     };
     static QVector<AudioTrack> audioTracks(const QString &name);
+    // The tracks of the capture a name gives, by their ids: the video track (the one named, or the first that is not a chroma), the metadata track about it and
+    // its analogue audio; 0 for one it has not. False if the name is not that of a capture of an LDX file.
+    static bool captureTracks(const QString &name, qint32 &video, qint32 &metadata, qint32 &audio);
     qint64 audioSamples() const;
     double audioSampleRate() const;
     qint32 audioBytesPerSample() const;                  // 4 for 16-bit stereo, 6 for 24-bit

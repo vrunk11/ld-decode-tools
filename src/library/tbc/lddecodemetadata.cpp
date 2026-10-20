@@ -1949,6 +1949,12 @@ void LdDecodeMetaData::appendField(const LdDecodeMetaData::Field &field)
     videoParameters.numberOfSequentialFields = fields.size();
 }
 
+void LdDecodeMetaData::clearFields()
+{
+    fields.clear();
+    videoParameters.numberOfSequentialFields = 0;
+}
+
 // Method to get the available number of fields (according to the metadata)
 qint32 LdDecodeMetaData::getNumberOfFields()
 {

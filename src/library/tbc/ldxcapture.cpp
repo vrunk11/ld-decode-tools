@@ -257,6 +257,23 @@ bool isChroma(const Ldx::Track &track)
 {
     return (track.kind == Ldx::Kind::Tbc || track.kind == Ldx::Kind::Cvbs) && track.parameters.value("role").toString() == "chroma";
 }
+
+bool isVideo(const Ldx::Track &track)
+{
+    return track.kind == Ldx::Kind::Tbc || track.kind == Ldx::Kind::Cvbs;
+}
+
+// The id of the track that a video track is the mapping of: 0 if it is not one, or if the track it names is not a video track of the file
+qint32 mappedFrom(const Ldx::Track &track, const QVector<Ldx::Track> &tracks)
+{
+    if (!isVideo(track)) return 0;
+    const qint32 from = track.parameters.value("mappedFrom").toInt(0);
+    if (from <= 0) return 0;
+    for (const Ldx::Track &other: tracks) {
+        if (other.number == static_cast<quint32>(from) && isVideo(other)) return from;
+    }
+    return 0;
+}
 #endif
 
 } // namespace
@@ -312,6 +329,62 @@ QString LdxCapture::chromaOfLuma(const QString &name)
     Q_UNUSED(name);
 #endif
     return QString();
+}
+
+bool LdxCapture::isMappedTrack(const QString &name)
+{
+#ifdef LDDECODE_WITH_LDX
+    QString path;
+    qint32 asked;
+    QVector<Ldx::Track> tracks;
+    if (!isLdxName(name) || !tracksOf(name, path, asked, tracks) || asked <= 0) return false;
+    for (const Ldx::Track &track: tracks) {
+        if (track.number == static_cast<quint32>(asked)) return mappedFrom(track, tracks) > 0;
+    }
+#else
+    Q_UNUSED(name);
+#endif
+    return false;
+}
+
+QString LdxCapture::mappedOfOriginal(const QString &name)
+{
+#ifdef LDDECODE_WITH_LDX
+    QString path;
+    qint32 asked;
+    QVector<Ldx::Track> tracks;
+    if (!isLdxName(name) || !tracksOf(name, path, asked, tracks)) return QString();
+    // (a name with no track is the first capture of the file)
+    quint32 original = static_cast<quint32>(asked);
+    if (original == 0) {
+        for (const Ldx::Track &track: tracks) {
+            if (isVideo(track) && !isChroma(track) && mappedFrom(track, tracks) == 0) { original = track.number; break; }
+        }
+    }
+    for (const Ldx::Track &track: tracks) {
+        if (mappedFrom(track, tracks) == static_cast<qint32>(original)) return trackName(path, static_cast<qint32>(track.number));
+    }
+#else
+    Q_UNUSED(name);
+#endif
+    return QString();
+}
+
+QString LdxCapture::originalOfMapped(const QString &name)
+{
+#ifdef LDDECODE_WITH_LDX
+    QString path;
+    qint32 asked;
+    QVector<Ldx::Track> tracks;
+    if (!isLdxName(name) || !tracksOf(name, path, asked, tracks) || asked <= 0) return name;
+    for (const Ldx::Track &track: tracks) {
+        if (track.number == static_cast<quint32>(asked)) {
+            const qint32 from = mappedFrom(track, tracks);
+            return from > 0 ? trackName(path, from) : name;
+        }
+    }
+#endif
+    return name;
 }
 
 bool LdxCapture::isCvbs(const QString &name)
@@ -635,6 +708,49 @@ bool LdxCapture::writeMetadata(const QString &name, const QByteArray &json, QStr
     Q_UNUSED(name);
     Q_UNUSED(json);
     error = unsupported();
+    return false;
+#endif
+}
+
+bool LdxCapture::captureTracks(const QString &name, qint32 &video, qint32 &metadata, qint32 &audio)
+{
+    video = metadata = audio = 0;
+#ifdef LDDECODE_WITH_LDX
+    QString path;
+    qint32 asked;
+    QVector<Ldx::Track> tracks;
+    if (!isLdxName(name) || !tracksOf(name, path, asked, tracks)) return false;
+    quint32 chosen = static_cast<quint32>(asked);
+    if (chosen == 0) {
+        for (const Ldx::Track &track: tracks) {
+            if ((track.kind == Ldx::Kind::Tbc || track.kind == Ldx::Kind::Cvbs) && !isChroma(track)) { chosen = track.number; break; }
+        }
+    }
+    bool found = false;
+    for (const Ldx::Track &track: tracks) {
+        if (track.number == chosen && (track.kind == Ldx::Kind::Tbc || track.kind == Ldx::Kind::Cvbs)) found = true;
+    }
+    if (!found) return false;
+    video = static_cast<qint32>(chosen);
+    // (as the capture reads them: the metadata that says which capture it is about, else the one that says none)
+    quint32 general = 0;
+    for (const Ldx::Track &track: tracks) {
+        if (track.kind == Ldx::Kind::Metadata) {
+            if (track.parameters.value("track").toInt(0) == video) { metadata = static_cast<qint32>(track.number); break; }
+            if (general == 0 && !track.parameters.contains("track")) general = track.number;
+        }
+    }
+    if (metadata == 0) metadata = static_cast<qint32>(general);
+    for (const Ldx::Track &track: tracks) {
+        if (track.kind != Ldx::Kind::Pcm || track.parameters.value("source").toString("analogue") != "analogue") continue;
+        const int about = track.parameters.value("track").toInt(0);
+        if (about != 0 && about != video) continue;
+        audio = static_cast<qint32>(track.number);
+        break;
+    }
+    return true;
+#else
+    Q_UNUSED(name);
     return false;
 #endif
 }

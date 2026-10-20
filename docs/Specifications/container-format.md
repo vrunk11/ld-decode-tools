@@ -61,6 +61,7 @@ Parameters are in the description of the track (section 4). A writer MUST give t
 | | `fieldWidth`, `fieldHeight` (required for `tbc`) | samples of a line, and lines of a field, as in the metadata |
 | `tbc`, `cvbs` | `role` | `"chroma"` for the chroma file of a Y/C capture (section 7.3) |
 | | `track` | for a chroma track: the id of the luma track |
+| `tbc`, `cvbs` | `mappedFrom` | for a track that is the mapping of another capture of the file (section 7.4): the id of the video track it is the mapping of |
 | `cvbs` | `lineWidth` (required) | samples of a line of the frame |
 | | `frameSamples` (required) | samples of a frame: 477,750 (NTSC), 709,379 (PAL), 477,225 (PAL-M) |
 | | `sampleEncoding` | the CVBS encoding the frames had in their file (`CVBS_U10_4FSC`...), to give the file back as it was |
@@ -161,6 +162,10 @@ See section 14.
 
 A Y/C capture (a luma file and a chroma file: `name.tbc` + `name_chroma.tbc`, or `name.tbcy` + `name.tbcc`) is **two `tbc` tracks**: the luma, as for any capture, and a **chroma track** with `"role": "chroma"` and `"track": <id of the luma track>` in its parameters. The chroma has no metadata track: the metadata of the luma are those of the pair. The chroma track has as many units as the luma and the same time for each. A reader that does not know the role reads it as another capture; the tools list only the tracks that are not chroma as the captures of a file. A CVBS Y/C pair (`name.cvbsy` and `name.cvbsc` of decode-orc, which share `name.meta`, the dropouts and the companion metadata) is the same with `cvbs` tracks: the luma `cvbs` track, and a chroma `cvbs` track with `"role": "chroma"` and `"track": <the id of the luma track>`, each with the parameters and the codec of section 3.1 and 6. `unpack` names them `<name>.<id of the luma>.cvbsy` and `.cvbsc`.
 
+### 7.4 Mapped captures
+
+A capture that was **mapped** (ld-discmap: the frames in the order of the disc, the repeated ones removed and the missing ones padded) can be kept in the file beside the capture it was made from, as a video track of its own with `"mappedFrom": <id of the original track>` in its parameters. The original is a video track of the file; a `mappedFrom` that names a track that is not there, or that is not a video track, is ignored and the track is a capture like any other. The metadata of the mapped track are those of the mapping (and say `isMapped`), and a mapped Y/C capture is two tracks again, the chroma with the `role` and `track` of section 7.3 about the mapped luma. A reader that does not know the parameter reads the mapped track as another capture, which it is. `ld-container add --mapped-from <id>` writes such a track, and ld-stacker-gui makes one with it. The tools find the mapped track of a capture from the original, and the original from the mapped track; a name with no track number gives the first capture that is not a mapping.
+
 ## 8. Metadata
 
 ### 8.1 The format
@@ -235,6 +240,8 @@ A stacking session can be an attachment named `session.stack` (media type `appli
 
 The path of a link is relative to the `.ldx` file. A tool that writes a session into a file MAY embed the sources that are files (copying each into a track of its own with its metadata and audio) or leave them as links; both are valid. A tool that removes a track MUST take the sources that name it out of the session and say so; links are not touched.
 
+**How a session is read.** The sources that are on are lined up on a timeline by the numbers of the disc that their VBI gives (the picture number of a CAV disc, the time of a CLV one, in frames); the origin of a source is the number of its first frame, the one that most of its first frames agree on. The source whose origin is the earliest begins the timeline, every other source begins where its origin puts it, and its `offset` (a number of frames, which may be negative) is added to that. A source whose VBI gives no number (for instance a capture that was not mapped and whose first frames cannot be read) begins at the number 0 of the disc, plus its offset, so that it is at the start of the timeline while the sources that have numbers are where these put them. The timeline goes from the earliest frame of any source to the latest of any: a frame that no source has is a padded, blank frame. A reader MUST NOT make or change a mapping: a source that has a mapping that exists (a file beside it with `_map` in its name, or the track of the same file whose `mappedFrom` parameter names it, section 7.4) is read from that mapping unless the metadata of the source say it is mapped already, and a source that has none is read as it is. A tool that stacks to a file (`ld-disc-stacker`) MAY line the sources up with its first source and the `offset` only, and then the stack it writes is as long as that source.
+
 ## 14. Names, and which capture a tool reads
 
 The tools take an LDX file where they take a `.tbc`, `.cvbs` or `.stack`:
@@ -245,7 +252,7 @@ The tools take an LDX file where they take a `.tbc`, `.cvbs` or `.stack`:
 | `capture.ldx#3` | the track 3, with the metadata, audio, EFM and AC3 tracks that are about it |
 | `-` | an LDX stream on the standard input (section 15) |
 
-The `#` and the number are only a part of the name the tool is given: nothing is written. A source of a session that is a track of another file is the same name (`"file": "other.ldx", "track": 3` is `other.ldx#3`). The metadata of a session are those of its first source that is on. The default track of a file is the first, by id.
+The `#` and the number are only a part of the name the tool is given: nothing is written. A source of a session that is a track of another file is the same name (`"file": "other.ldx", "track": 3` is `other.ldx#3`). The parameters of the metadata of a session are those of its first source that is on, and its fields are those of the first source that has each frame of the timeline (section 13). The default track of a file is the first, by id.
 
 ## 15. Streams (pipes)
 

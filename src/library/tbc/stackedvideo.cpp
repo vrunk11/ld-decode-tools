@@ -11,8 +11,12 @@
 #include "stackedvideo.h"
 
 #include <QFileInfo>
+#include <QHash>
+#include <limits>
 
 #include "ldxcapture.h"
+#include "tbcfiles.h"
+#include "vbidecoder.h"
 
 #include "tbc/logging.h"
 
@@ -45,6 +49,81 @@ static const StackSource *referenceSource(const StackProject &project)
     return nullptr;
 }
 
+qint32 StackedVideo::discOrigin(LdDecodeMetaData &metadata)
+{
+    VbiDecoder vbiDecoder;
+    const qint32 framesPerSecond = metadata.getVideoParameters().system == PAL ? 25 : 30;
+    const qint32 frames = metadata.getNumberOfFrames();
+    QHash<qint32, qint32> votes;
+    qint32 cast = 0;
+    for (qint32 frame = 1; frame <= frames && cast < 600; frame++) {
+        const qint32 first = metadata.getFirstFieldNumber(frame);
+        const qint32 second = metadata.getSecondFieldNumber(frame);
+        if (first < 1 || second < 1) continue;
+        const LdDecodeMetaData::Field &a = metadata.getField(first);
+        const LdDecodeMetaData::Field &b = metadata.getField(second);
+        const VbiDecoder::Vbi vbi = vbiDecoder.decodeFrame(a.vbi.vbiData[0], a.vbi.vbiData[1], a.vbi.vbiData[2],
+                                                           b.vbi.vbiData[0], b.vbi.vbiData[1], b.vbi.vbiData[2]);
+        qint32 number = -1;
+        if (vbi.picNo != -1) number = vbi.picNo;
+        else if (vbi.clvHr != -1 && vbi.clvPicNo != -1) number = (vbi.clvHr * 3600 + vbi.clvMin * 60 + vbi.clvSec) * framesPerSecond + vbi.clvPicNo;
+        if (number < 0) continue;
+        votes[number - (frame - 1)]++;
+        cast++;
+    }
+    qint32 best = 0, origin = -1;
+    for (auto it = votes.cbegin(); it != votes.cend(); ++it) {
+        if (it.value() > best || (it.value() == best && it.key() < origin)) {
+            best = it.value();
+            origin = it.key();
+        }
+    }
+    return origin;
+}
+
+QVector<qint32> StackedVideo::alignedPositions(const QVector<qint32> &origins, const QVector<qint32> &offsets, const QVector<qint32> &frames, qint32 &total, qint32 *discAtStart)
+{
+    const qint32 count = origins.size();
+    bool numbered = false;
+    for (qint32 origin: origins) numbered = numbered || origin >= 0;
+    QVector<qint32> positions(count, 0);
+    qint32 lowest = std::numeric_limits<qint32>::max();
+    for (qint32 i = 0; i < count; i++) {
+        positions[i] = qMax(0, origins[i]) + offsets[i];
+        lowest = qMin(lowest, positions[i]);
+    }
+    if (count == 0) lowest = 0;
+    const qint32 startOfTimeline = lowest;
+    total = 0;
+    for (qint32 i = 0; i < count; i++) {
+        positions[i] -= lowest;
+        total = qMax(total, positions[i] + frames[i]);
+    }
+    if (discAtStart) *discAtStart = numbered ? startOfTimeline : -1;
+    return positions;
+}
+
+// What a source is read from: its mapping (ld-discmap) if it has one that exists, the file beside it with _map in its name or the track of an LDX file that is the
+// mapping of it, unless the metadata of the source say it is mapped already; the source as it is when it has none. Nothing is made here: the mapping is made by
+// ld-discmap (or ld-stacker-gui), and a source that has none is used as it is.
+static QString resolvedReference(const StackSource &source)
+{
+    const QString reference = source.reference();
+    QString mapped;
+    if (LdxCapture::isLdxName(reference)) {
+        mapped = LdxCapture::mappedOfOriginal(reference);
+    } else {
+        const QString name = TbcFiles::mappedFileName(reference);
+        if (!name.isEmpty() && QFileInfo::exists(name)) mapped = name;
+    }
+    if (mapped.isEmpty() || mapped == reference) return reference;
+    if (!metadataThere(LdDecodeMetaData::findMetadataFile(mapped))) return reference;
+    LdDecodeMetaData own;
+    const QString ownMetadata = LdDecodeMetaData::findMetadataFile(reference);
+    if (metadataThere(ownMetadata) && own.read(ownMetadata) && own.getVideoParameters().isMapped) return reference;
+    return mapped;
+}
+
 bool StackedVideo::readMetadata(const QString &stackFile, LdDecodeMetaData &metadata, QString &error)
 {
     StackProject session;
@@ -56,22 +135,81 @@ bool StackedVideo::readMetadata(const QString &stackFile, LdDecodeMetaData &meta
         return false;
     }
 
-    const QString metadataFile = LdDecodeMetaData::findMetadataFile(reference->reference());
+    const QString referenceName = resolvedReference(*reference);
+    const QString metadataFile = LdDecodeMetaData::findMetadataFile(referenceName);
     if (!metadataThere(metadataFile) || !metadata.read(metadataFile)) {
-        error = QObject::tr("Could not read the metadata of %1").arg(reference->reference());
+        error = QObject::tr("Could not read the metadata of %1").arg(referenceName);
         return false;
     }
     metadata.setIsFirstFieldFirst(!session.stacking.reverseFields);
 
-    // What the stack has no use for: the sources' dropouts, which it fills, and the VITS measurements, which
-    // are those of the reference and not of the stack
-    const qint32 fields = metadata.getNumberOfFields();
-    for (qint32 fieldNumber = 1; fieldNumber <= fields; fieldNumber++) {
-        LdDecodeMetaData::Field field = metadata.getField(fieldNumber);
-        field.dropOuts = DropOuts();
-        field.vitsMetrics = LdDecodeMetaData::VitsMetrics();
-        metadata.updateField(field, fieldNumber);
+    // The other sources that are on, to line them up with it
+    std::vector<std::unique_ptr<LdDecodeMetaData>> others;
+    QVector<qint32> origins, offsets, frames;
+    origins.append(discOrigin(metadata));
+    offsets.append(reference->offset);
+    frames.append(metadata.getNumberOfFrames());
+    bool afterReference = false;
+    for (const StackSource &entry: session.sources) {
+        if (!entry.enabled) continue;
+        if (!afterReference) {
+            afterReference = true;
+            continue;
+        }
+        auto other = std::make_unique<LdDecodeMetaData>();
+        const QString otherName = resolvedReference(entry);
+        const QString otherFile = LdDecodeMetaData::findMetadataFile(otherName);
+        if (!metadataThere(otherFile) || !other->read(otherFile)) {
+            error = QObject::tr("Could not read the metadata of %1").arg(otherName);
+            return false;
+        }
+        other->setIsFirstFieldFirst(!session.stacking.reverseFields);
+        origins.append(discOrigin(*other));
+        offsets.append(entry.offset);
+        frames.append(other->getNumberOfFrames());
+        others.push_back(std::move(other));
     }
+    qint32 total = 0;
+    const QVector<qint32> positions = alignedPositions(origins, offsets, frames, total);
+
+    // The fields of the timeline: those of the first source that has the frame (with no dropouts, which the stack fills, and no VITS measurements, which are
+    // those of the source and not of the stack), a padded one where none has
+    const bool firstFirst = !session.stacking.reverseFields;
+    QVector<LdDecodeMetaData::Field> timeline;
+    timeline.reserve(total * 2);
+    for (qint32 frame = 1; frame <= total; frame++) {
+        LdDecodeMetaData::Field pair[2];
+        bool found = false;
+        for (qint32 i = 0; i < frames.size() && !found; i++) {
+            const qint32 own = frame - positions[i];
+            if (own < 1 || own > frames[i]) continue;
+            LdDecodeMetaData &from = i == 0 ? metadata : *others[i - 1];
+            const qint32 a = from.getFirstFieldNumber(own);
+            const qint32 b = from.getSecondFieldNumber(own);
+            if (a < 1 || b < 1) continue;
+            pair[0] = from.getField(a);
+            pair[1] = from.getField(b);
+            if (pair[0].pad || pair[1].pad) continue;
+            found = true;
+        }
+        if (!found) {
+            pair[0] = LdDecodeMetaData::Field();
+            pair[1] = LdDecodeMetaData::Field();
+            pair[0].pad = pair[1].pad = true;
+            pair[0].audioSamples = pair[1].audioSamples = 0;
+        }
+        pair[0].isFirstField = true;
+        pair[1].isFirstField = false;
+        for (LdDecodeMetaData::Field &field: pair) {
+            field.dropOuts = DropOuts();
+            field.vitsMetrics = LdDecodeMetaData::VitsMetrics();
+        }
+        timeline.append(firstFirst ? pair[0] : pair[1]);
+        timeline.append(firstFirst ? pair[1] : pair[0]);
+    }
+    metadata.clearFields();
+    for (const LdDecodeMetaData::Field &field: timeline) metadata.appendField(field);
+    const qint32 fields = metadata.getNumberOfFields();
 
     // NTSC fields come in a sequence of 4 phases: the padded fields of the reference may have broken it, and
     // ld-disc-stacker puts it right in what it writes
@@ -103,22 +241,23 @@ bool StackedVideo::open(const QString &stackFile, QString &error)
     bool firstIsCvbs = false;
     for (const StackSource &entry: project.sources) {
         if (!entry.enabled) continue;
+        const QString name = resolvedReference(entry);
 
         // TBC and CVBS are not mixed
-        const bool isCvbs = Cvbs::isDataFileName(StackProject::referenceFile(entry.reference()));
+        const bool isCvbs = Cvbs::isDataFileName(StackProject::referenceFile(name));
         if (sources.empty()) {
             firstIsCvbs = isCvbs;
         } else if (isCvbs != firstIsCvbs) {
-            error = QObject::tr("%1 is not of the same format (TBC or CVBS) as the first source: they cannot be stacked together").arg(entry.reference());
+            error = QObject::tr("%1 is not of the same format (TBC or CVBS) as the first source: they cannot be stacked together").arg(name);
             return false;
         }
 
         auto source = std::make_unique<Source>();
-        source->offset = sources.empty() ? 0 : entry.offset;    // the reference has none
+        source->offset = entry.offset;    // (the position on the timeline is worked out below)
 
-        const QString metadataFile = LdDecodeMetaData::findMetadataFile(entry.reference());
+        const QString metadataFile = LdDecodeMetaData::findMetadataFile(name);
         if (!metadataThere(metadataFile) || !source->metadata.read(metadataFile)) {
-            error = QObject::tr("Could not read the metadata of %1").arg(entry.reference());
+            error = QObject::tr("Could not read the metadata of %1").arg(name);
             return false;
         }
         source->metadata.setIsFirstFieldFirst(!project.stacking.reverseFields);
@@ -131,14 +270,14 @@ bool StackedVideo::open(const QString &stackFile, QString &error)
         } else {
             const LdDecodeMetaData::VideoParameters &first = sources.front()->metadata.getVideoParameters();
             if (parameters.fieldWidth != fieldWidth || parameters.fieldHeight != fieldHeight || parameters.system != first.system) {
-                error = QObject::tr("%1 is not of the same video system and size as the first source").arg(entry.reference());
+                error = QObject::tr("%1 is not of the same video system and size as the first source").arg(name);
                 return false;
             }
         }
 
         // (with the line length, so that only the first lines of a field can be asked for)
-        if (!source->video.open(entry.reference(), fieldLength, fieldWidth)) {
-            error = QObject::tr("Could not open %1").arg(entry.reference());
+        if (!source->video.open(name, fieldLength, fieldWidth)) {
+            error = QObject::tr("Could not open %1").arg(name);
             return false;
         }
         sources.push_back(std::move(source));
@@ -152,27 +291,35 @@ bool StackedVideo::open(const QString &stackFile, QString &error)
     mode = project.stacking.mode;
     if (mode == -1) mode = StackerCore::autoMode(static_cast<qint32>(sources.size()));
 
-    // Which frame of the reference each of its fields is of
-    LdDecodeMetaData &metadata = sources.front()->metadata;
-    positions = QVector<FieldPosition>(metadata.getNumberOfFields() + 1);
-    const qint32 frames = metadata.getNumberOfFrames();
-    for (qint32 frame = 1; frame <= frames; frame++) {
-        const qint32 first = metadata.getFirstFieldNumber(frame);
-        const qint32 second = metadata.getSecondFieldNumber(frame);
-        if (first >= 1 && first < positions.size()) positions[first] = { frame, true };
-        if (second >= 1 && second < positions.size()) positions[second] = { frame, false };
+    // Where each source is on the timeline, by the numbers of the disc and then by its offset
+    QVector<qint32> origins, offsets, frames;
+    for (const std::unique_ptr<Source> &source: sources) {
+        origins.append(discOrigin(source->metadata));
+        offsets.append(source->offset);
+        frames.append(source->metadata.getNumberOfFrames());
+    }
+    const QVector<qint32> placed = alignedPositions(origins, offsets, frames, timelineFrames);
+    for (qint32 i = 0; i < static_cast<qint32>(sources.size()); i++) sources[i]->offset = placed[i];
+
+    // Which frame of the timeline each of its fields is of (the fields of a frame are in the order of the metadata that readMetadata makes)
+    positions = QVector<FieldPosition>(timelineFrames * 2 + 1);
+    for (qint32 frame = 1; frame <= timelineFrames; frame++) {
+        const qint32 a = frame * 2 - 1;
+        positions[a] = { frame, !project.stacking.reverseFields };
+        positions[a + 1] = { frame, project.stacking.reverseFields };
     }
     return true;
 }
 
 qint32 StackedVideo::getNumberOfFields()
 {
-    return sources.empty() ? 0 : sources.front()->metadata.getNumberOfFields();
+    return timelineFrames * 2;
 }
 
 qint32 StackedVideo::sourceFrame(Source &source, qint32 frame, bool isReference) const
 {
-    const qint32 own = isReference ? frame : frame - source.offset;
+    (void)isReference;
+    const qint32 own = frame - source.offset;
     if (own < 1 || own > source.metadata.getNumberOfFrames()) return -1;
     return own;
 }
@@ -203,7 +350,7 @@ SourceVideo::Data StackedVideo::stackField(qint32 fieldNumber, qint32 lines)
         return lines < fieldHeight ? source.video.getVideoField(number, 1, lines) : source.video.getVideoField(number);
     };
 
-    // A field that is of no frame, or that no source can give, is the reference's own
+    // A field of no frame of the timeline, or that no source can give (a frame where none has one), is blank
     const FieldPosition position = (fieldNumber >= 1 && fieldNumber < positions.size()) ? positions[fieldNumber] : FieldPosition();
     Source &reference = *sources.front();
 
@@ -231,11 +378,7 @@ SourceVideo::Data StackedVideo::stackField(qint32 fieldNumber, qint32 lines)
         }
     }
 
-    if (usable.isEmpty()) {
-        const qint32 available = reference.video.getNumberOfAvailableFields();
-        if (fieldNumber < 1 || fieldNumber > available) return SourceVideo::Data(fieldWidth * lines, 0);
-        return read(reference, fieldNumber);
-    }
+    if (usable.isEmpty()) return SourceVideo::Data(fieldWidth * lines, 0);
 
     LdDecodeMetaData::VideoParameters parameters = reference.metadata.getVideoParameters();
     parameters.fieldHeight = lines;

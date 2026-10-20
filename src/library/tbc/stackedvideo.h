@@ -27,8 +27,9 @@
 // the metadata that goes with it, so that the tools that read a TBC file (ld-analyse, ld-chroma-decoder...)
 // can read a session, and show or decode the stack without it being written first.
 //
-// The stack is made as ld-disc-stacker does it for a session: the first source that is on is the reference,
-// and the others are lined up with it by their offsets.
+// The sources are lined up by the numbers of the disc that their VBI gives (the picture of a CAV disc, the time of a CLV one), and then by their own offsets
+// in addition. The stack goes from the earliest frame of any source that is on to the latest of any of them: where no source has a frame, the frame is a padded one
+// (blank). A source whose VBI gives no number begins at the number 0 of the disc.
 class StackedVideo
 {
 public:
@@ -47,14 +48,22 @@ public:
     // A field of the stack. startLine and endLine (numbered from 1) give the lines wanted, -1 for all of them.
     SourceVideo::Data getField(qint32 fieldNumber, qint32 startLine = -1, qint32 endLine = -1);
 
-    // The metadata of the stack, as the tools read it: that of the reference source, but with no dropouts (the
-    // stack has filled them) and no VITS measurements (those of the reference are not the stack's), and the
-    // phases of the fields in sequence as ld-disc-stacker leaves them. Returns false, with the reason in error.
+    // Where the first frame of a capture is on the disc, by the numbers of its VBI (the picture of a CAV disc, the time of a CLV one in frames), or -1 if the VBI
+    // gives none: the one most of the first frames agree on, so that a frame with a corrupt number does not decide it
+    static qint32 discOrigin(LdDecodeMetaData &metadata);
+
+    // Where each source begins on the timeline (in frames from the start of the timeline, the earliest being 0): by the origin on the disc (-1: the number 0), plus its offset.
+    // The frames of the timeline are returned in total, with the number of frames of each source.
+    static QVector<qint32> alignedPositions(const QVector<qint32> &origins, const QVector<qint32> &offsets, const QVector<qint32> &frames, qint32 &total, qint32 *discAtStart = nullptr);
+
+    // The metadata of the stack, as the tools read it: the parameters of the first source that is on, the fields of the timeline (those of the first source that has
+    // each frame, a padded field where none has), with no dropouts (the stack has filled them) and no VITS measurements (those of a source are not the stack's),
+    // and the phases of the fields in sequence as ld-disc-stacker leaves them. Returns false, with the reason in error.
     static bool readMetadata(const QString &stackFile, LdDecodeMetaData &metadata, QString &error);
 
 private:
     struct Source {
-        qint32 offset = 0;
+        qint32 offset = 0;     // where its first frame is on the timeline
         LdDecodeMetaData metadata;
         SourceVideo video;
     };
@@ -64,13 +73,14 @@ private:
         bool isFirst = true;
     };
 
-    // The frame of a source that falls on a frame of the reference, or -1
+    // The frame of a source that falls on a frame of the timeline, or -1
     qint32 sourceFrame(Source &source, qint32 frame, bool isReference) const;
     SourceVideo::Data stackField(qint32 fieldNumber, qint32 lines);
 
     StackProject project;
-    std::vector<std::unique_ptr<Source>> sources;    // those that are on, the reference first
-    QVector<FieldPosition> positions;            // for each field of the reference, from 1
+    std::vector<std::unique_ptr<Source>> sources;    // those that are on, the first of them gives the parameters
+    QVector<FieldPosition> positions;            // for each field of the timeline, from 1
+    qint32 timelineFrames = 0;
     qint32 fieldLength = 0;
     qint32 fieldWidth = 0;
     qint32 fieldHeight = 0;
