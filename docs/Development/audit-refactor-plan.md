@@ -149,6 +149,49 @@ Written so that a new session (the conversation may have been compacted) can car
 - There is no `python`, no `gh` here. Releases are written as text for the person to paste.
 - Do not `rm` with a wildcard.
 
+## Phase 4 - Re-analysis of the final state (2026-10-21)
+
+The same readings as in pass 1, on the branch as committed (`a5089ea2`) compared with `main` (`4ba94c96`, unpacked with `git archive`).
+
+**Numbers**
+
+| | `main` | branch |
+|---|---|---|
+| unit tests | 16 (the `assert` ones checked nothing, M-08) | 31 (15 new) |
+| C++ and `.ui` lines under `src/` (without `deemp.h`) | 99 649 | 99 909 |
+| of which `library` / `gui-common` | 21 482 / 831 | 24 161 / 1 442 |
+| `ld-analyse` / `ld-stacker-gui` | 23 845 / 7 532 | 22 787 / 7 308 |
+| `ld-json-converter` / `ld-export-decode-metadata` | 840 / 2 768 | 329 / 2 069 |
+| `ld-process-vbi` / `ld-process-vits` | 538 / 523 | 315 / 302 |
+| pairs of files that share 8 or more windows of 5 lines | 3 666 | 3 625 |
+| pairs that share 20 windows or more | 24 | 19 |
+| inventory entries: done or partly done / proposed keep, decided, deferred or moved to the audit | - | 46 / 19 |
+
+The total did not shrink: the code that was copied has become shared code (and 15 new unit tests are added), so the tools lose lines and the libraries gain them.
+
+**What was removed (the pairs of files that no longer share text)**: `ld-export-decode-metadata/jsonio.*` with the library's (258 + 73 windows), the copies between `ld-analyse` and `ld-stacker-gui` (`mainwindow.cpp`, 27),
+the pools of `ld-process-vbi` and `ld-process-vits` (13) and most of those of `ld-disc-stacker` and `ld-dropout-correct` (69 to 37), the two `main.cpp` of the stacker and the corrector (66 to 49).
+No pair that involves a file created on this branch has 8 windows or more: the new shared code did not make new copies.
+
+**What is left, with the reason** (the largest pairs now)
+- `ld-export-decode-metadata/exportmetadata.cpp` and `.h` against `lddecodemetadata.*` (237 + 55): a second metadata model, kept (E-04).
+- the two EFM stacks and the tools of `efm-decoder` between them (148 + 33 + 56 + the `main.cpp` and `decoders.h` of the four tools): deferred by the person (I-01, I-03).
+- `ld-disc-stacker/main.cpp` and `ld-dropout-correct/main.cpp` (49), `ld-process-vbi/main.cpp` and `ld-process-vits/main.cpp` (39): the same steps of a tool that processes a capture (F-06, "left": a helper for them was not made).
+- `stackingpool.cpp` and `correctorpool.cpp` (37): `writeOutputField`, `historyWith` and the metadata of the output use the pools' own members (K-01, "left").
+- `ld-ac3-demodulate` and `ld-ac3-decode` (37), `transformpal2d` and `3d` (26), `ntscencoder` and `palencoder` (23): not looked at in step 1 (the filters and the encoder).
+
+**Names declared and used nowhere**: the same search over the headers gives 145 names with two uses or fewer instead of 170; 117 of them are the filters of `deemp.h` (kept) and slots that Qt connects by name. The other 28 are to be looked at in step 2
+(`ld-analyse`: `trimBefore`, `clearSkipped`, `reachedEnd`, `hasFailed`, `setLabel`, `setSilenced`, `setSolo`; `ld-chroma-decoder`: the accessors of `ComponentFrame`, `getOutputWriter`, `setComponentFrame`;
+`ld-discmap`: `getAudioFieldSampleLength`; `ld-stacker-gui`: `mappedIds`, `setSmooth`; library: `makeLive`, `writeData`, `fromField0`; and the overrides `wheelEvent` and `leaveEvent`, which Qt calls).
+One name added on this branch and never used (`PipedInputOptions::isSubcarrierLockedSet`) was removed.
+
+**Differences that the branch created**: the exit codes (decided), the 8 field phases of PAL in the stack metadata, the `.tbc.db` schema text written by the library, the blanking value of `ld-json-converter` for an NTSC JSON without
+`blanking16bIre` (E-03: to be confirmed), hyphenated names beside the underscored ones for four options, `-d`/`-q`/`--version` added to three programs, the 3 menu shortcuts that did nothing. Each is in its entry.
+
+**Not checked on this machine** (and so to be looked at by the person or in CI): the windows of `ld-analyse` and `ld-stacker-gui` (menus, theme editor, analysis graphs, SNR measure, dropout drawing), the functional tests (`ctest -L functional` needs Python and ffmpeg),
+the Windows/MSVC and macOS builds (`getopt` of `ld-ac3-*`, the new files in the CMake lists).
+
+
 ## Log
 
 | Date | Phase | What was done | Result |
@@ -186,6 +229,7 @@ Written so that a new session (the conversation may have been compacted) can car
 | 2026-10-21 | 3 | N-07 partly done (glossary `docs/Development/glossary.md`; dropout, timecode, timestamp in the docs and 5 messages; the labels of the windows listed, not changed); N-02 moved to step 2 by the person | build ok, `ctest -L unit` 31/31; stacker and corrector outputs identical (one info message differs: "timecodes") |
 | 2026-10-21 | 3 | O-01 done (28 unused functions and a signal removed), O-03 done (3 actions of ld-analyse in no menu removed) | build ok, `ctest -L unit` 31/31; both windows start offscreen |
 | 2026-10-21 | 3 | O-02 decided by the person: `deemp.h` kept as it is. **Phase 3 has been gone through in the order of the inventory (A to O)**; what is left of each point is in its entry | - |
+| 2026-10-21 | 4 | Re-analysis of the final state: lines per tool, pairs of files that share text (same script on `main` and on the branch), names used nowhere, status of the entries; `PipedInputOptions::isSubcarrierLockedSet` (added and never used) removed | build ok, `ctest -L unit` 31/31; see the section "Phase 4" |
 
 ## Notes for step 2 (the audit of validity and relevance)
 

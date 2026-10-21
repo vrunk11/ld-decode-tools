@@ -33,7 +33,6 @@ public:
     bool isSystemSet(const QCommandLineParser &parser) const { return parser.isSet(systemOption); }
     bool isLevelSet(const QCommandLineParser &parser) const { return parser.isSet(blackLevelOption) || parser.isSet(whiteLevelOption); }
     bool isSampleEncodingSet(const QCommandLineParser &parser) const { return parser.isSet(sampleEncodingOption); }
-    bool isSubcarrierLockedSet(const QCommandLineParser &parser) const { return parser.isSet(subcarrierLockedOption); }
 
     // What the pipe carries, as --input-format says: "ldx", "tbc" or "cvbs" (empty if it was not given). False, having logged why, for another word.
     bool format(const QCommandLineParser &parser, QString &format) const;
