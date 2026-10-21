@@ -74,4 +74,27 @@ private:
     bool smooth = false;
 };
 
+// The dropouts of one source in a window of its own, as the SNR of a source has: the total length of the dropouts of each frame along the timeline, on the
+// scale that is the same for every graph of the dropouts, and, when it was measured, what the stack is left with
+class DropoutWindow : public QDialog
+{
+    Q_OBJECT
+
+public:
+    explicit DropoutWindow(QWidget *parent = nullptr);
+
+    void setContent(const QString &title, const QVector<SnrCurve> &curves, qint32 marker);
+    // The colour of the source: a bar at the top, and the window's icon
+    void setAccent(const QColor &color);
+    void setMarker(qint32 frame);
+    void setRange(bool fixed, double low, double high);
+
+signals:
+    void frameRequested(qint32 frame);
+
+private:
+    DropoutGraph *graph = nullptr;
+    QFrame *accentBar = nullptr;
+};
+
 #endif // TOOLWINDOWS_H

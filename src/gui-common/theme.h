@@ -62,6 +62,9 @@ QColor playButtonColour();
 // The colour the audio waveform is drawn in, for the analogue audio of a capture or for audio decoded from EFM
 QColor waveformColour(bool fromEfm);
 
+// The colour the dropouts that a stack is left with are drawn in (ld-stacker-gui), in the theme applied
+QColor dropoutResidualColour();
+
 // Widget styles are Qt style names (as listed by QStyleFactory), stored in the
 // configuration file. An empty name means Auto: on Windows the classic style
 // ("windowsvista", the Windows 10 look), except on Windows 11 with a dark theme

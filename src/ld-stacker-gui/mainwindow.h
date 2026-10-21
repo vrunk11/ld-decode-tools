@@ -75,6 +75,7 @@ private:
         // metadata, when the box of the graphs is ticked for it
         // Follow map (on by default): the source shows and stacks its mapping (ld-discmap) when there is one; off, the capture it was made from
         bool followMap = true;
+        bool showDropouts = true;    // the dropouts of the capture are drawn on the picture (the box of the status bar hides all of them)
         // The mapping of the source by ld-discmap (shown as a bar in its row): -2 not mapping, -1 mapping with no count yet, 0 to 100; and whether it failed
         qint32 mapProgress = -2;
         bool mapFailed = false;
@@ -94,6 +95,7 @@ private:
     void removeSource(const QString &id);
 
     void rebuildSourceList();
+    void fitSourceListWidth();
     void rebuildTabs();
     void updateTabTexts();
     void updateTimeline();
@@ -200,6 +202,8 @@ private:
     QVector<float> stackWhite;    // the SNR of the stack per frame, NaN until measured
     QVector<float> stackBlack;
     qint32 stackSnrDone = 0;      // how many frames of it have been measured
+    QVector<float> stackResidual;      // per frame: the length of the dropouts the stack is left with, measured with its SNR when the dropout graph is shown
+    bool stackMeasuredResidual = false;
     quint64 snrJob = 0;
     QTimer *stackSnrTimer = nullptr;   // the measure of the stack begins a moment after the last change, and only if something shows it
     bool stackSnrActive = false;       // the measure for what is stacked now was begun
@@ -207,12 +211,12 @@ private:
     // What was measured is kept for as long as the program runs, by what it was measured from (the file, with its size and date, and for the stack the offsets
     // and the stacking options), so that it is measured again only when something that it depends on has changed
     struct SnrCacheEntry {
-        QVector<float> white, black;
+        QVector<float> white, black, residual;
     };
     QHash<QString, SnrCacheEntry> snrCache;
     QString sourceCacheKey(const QString &id) const;
-    QString stackCacheKey() const;
-    void storeInCache(const QString &key, const QVector<float> &white, const QVector<float> &black);
+    QString stackCacheKey(bool withResidual) const;
+    void storeInCache(const QString &key, const QVector<float> &white, const QVector<float> &black, const QVector<float> &residual = QVector<float>());
 
     QListWidget *sourceList = nullptr;
     SourceInfoPanel *infoPanel = nullptr;     // what is known of the source that is chosen, between the list and the picture
@@ -225,6 +229,21 @@ private:
     QScrollArea *scrollArea = nullptr;
     QLabel *imageLabel = nullptr;
     SnrGraph *snrPlot = nullptr;
+    DropoutGraph *dropoutPlot = nullptr;       // under the SNR graph, as View > Dropout graph says
+    QAction *dropoutGraphAction = nullptr;
+    bool dropoutRangeDirty = true;
+    double dropoutHigh = 0;                    // the largest length of dropouts in a frame of any source: the scale of the graph is the same for all
+    void setDropoutGraphVisible(bool visible);
+    // The window grows or shrinks in height by what a graph that comes or goes takes (not when it is maximized)
+    void resizeHeightBy(qint32 delta);
+    void updateDropoutPlot();
+    QMap<QString, DropoutWindow *> dropoutWindows;   // a window for each source whose dropouts were asked for
+    void openDropoutWindow(const QString &id);
+    // What the timeline has over the frames of a source (from its own first frame): the windows of a source show what its file covers, and no more
+    QVector<float> ownFrames(const QVector<float> &timeline, qint32 index) const;
+    void updateDropoutWindows();
+    void updateDropoutRange();
+    QVector<float> dropoutCurve(qint32 index, bool ownAxis) const;
     QToolButton *firstButton = nullptr;
     QToolButton *previousButton = nullptr;
     QToolButton *nextButton = nullptr;
@@ -246,12 +265,15 @@ private:
     bool fieldSplit = false;        // in field view: both fields one above the other
     qint32 fieldIndex = 0;          // in field view, which field of the frame: 0 the first, 1 the second
     bool fitFirstSource = false;    // the next source to be loaded is the first one imported
+    bool resizeOnFirstImport = true;    // View > Resize on first file import: the first source imported is shown at 100% and the window is resized to it
     bool fitPicture = false;        // and its first picture is to be shown at its original size
     bool fitWindow = false;         // a session was opened: the window is to fit its picture at its own zoom
     QLabel *statusSources = nullptr;
     QLabel *statusMode = nullptr;
     QLabel *statusFormat = nullptr;
     QLabel *statusShowing = nullptr;
+    QCheckBox *hideCaptureDropouts = nullptr;     // the dropouts of the captures are not drawn, whatever the boxes of the sources say
+    QCheckBox *showResidualDropouts = nullptr;    // the dropouts that the stacking left are drawn on the stack
 
     ThemeMode themeMode = ThemeMode::Auto;
     QString styleName;

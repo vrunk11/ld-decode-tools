@@ -94,6 +94,7 @@ void FrameBackend::addSource(const QString &id, const QString &file, bool revers
     }
 
     const LdDecodeMetaData::VideoParameters &videoParameters = loaded->metadata.getVideoParameters();
+    loaded->video.setLenient(true);
     if (!loaded->video.open(file, videoParameters.fieldWidth * videoParameters.fieldHeight, videoParameters.fieldWidth)) {
         info.error = tr("Could not open %1").arg(QFileInfo(file).fileName());
         emit sourceLoaded(info);
@@ -110,6 +111,7 @@ void FrameBackend::addSource(const QString &id, const QString &file, bool revers
     info.frames = loaded->metadata.getNumberOfFrames();
     info.whiteSnr.resize(info.frames);
     info.blackSnr.resize(info.frames);
+    info.dropoutLength.resize(info.frames);
     info.metadataFormat = info.cvbs ? QStringLiteral("CVBS") : (metadataFile.endsWith(".json", Qt::CaseInsensitive) ? QStringLiteral("JSON") : QStringLiteral("SQLite"));
     info.isMapped = videoParameters.isMapped;
     info.sampleRate = videoParameters.sampleRate;
@@ -128,6 +130,7 @@ void FrameBackend::addSource(const QString &id, const QString &file, bool revers
         const qint32 secondNumber = loaded->metadata.getSecondFieldNumber(frame);
         info.whiteSnr[frame - 1] = std::nanf("");
         info.blackSnr[frame - 1] = std::nanf("");
+        info.dropoutLength[frame - 1] = std::nanf("");
         // (a frame whose fields cannot be found has no SNR)
         if (firstNumber < 1 || secondNumber < 1) {
             info.paddedFrames++;
@@ -136,6 +139,14 @@ void FrameBackend::addSource(const QString &id, const QString &file, bool revers
         const LdDecodeMetaData::Field &first = loaded->metadata.getField(firstNumber);
         const LdDecodeMetaData::Field &second = loaded->metadata.getField(secondNumber);
         if (first.pad || second.pad) info.paddedFrames++;
+        if (!first.pad && !second.pad && !isWholeDropout(first.dropOuts, videoParameters.fieldWidth, videoParameters.fieldHeight)
+            && !isWholeDropout(second.dropOuts, videoParameters.fieldWidth, videoParameters.fieldHeight)) {
+            qint64 length = 0;
+            for (const DropOuts *dropOuts: { &first.dropOuts, &second.dropOuts }) {
+                for (qint32 i = 0; i < dropOuts->size(); i++) length += qMax(0, dropOuts->endx(i) - dropOuts->startx(i));
+            }
+            info.dropoutLength[frame - 1] = static_cast<float>(length);
+        }
 
         // What the VBI says: the type of the disc, the first and the last picture or time, the chapters, and where the numbering jumps
         const VbiDecoder::Vbi vbi = vbiDecoder.decodeFrame(first.vbi.vbiData[0], first.vbi.vbiData[1], first.vbi.vbiData[2],
@@ -222,6 +233,52 @@ QImage FrameBackend::applyView(const QImage &frame, qint32 viewMode, qint32 fiel
         memcpy(result.scanLine(y), frame.constScanLine(source), static_cast<size_t>(frame.bytesPerLine()));
     }
     return result;
+}
+
+// A field that is a dropout over its whole width on every line (a frame that ld-discmap could not number is written so): the stack leaves it out, and it is
+// not drawn, since it would colour the whole picture
+bool FrameBackend::isWholeDropout(const DropOuts &dropOuts, qint32 fieldWidth, qint32 fieldHeight)
+{
+    if (dropOuts.size() < fieldHeight) return false;
+    QVector<bool> covered(fieldHeight + 1, false);
+    qint32 lines = 0;
+    for (qint32 i = 0; i < dropOuts.size(); i++) {
+        const qint32 line = dropOuts.fieldLine(i);
+        if (line < 1 || line > fieldHeight || covered[line] || dropOuts.startx(i) > 0 || dropOuts.endx(i) < fieldWidth - 1) continue;
+        covered[line] = true;
+        lines++;
+    }
+    return lines >= fieldHeight;
+}
+
+// The dropouts of one field, on the rows it has in the frame. The first field is drawn in the colour, the second a little darker so that the two can be told apart.
+void FrameBackend::drawDropouts(QImage &image, const DropOuts &dropOuts, bool secondField, const QColor &color)
+{
+    if (image.isNull() || image.format() != QImage::Format_RGB32) return;
+    const QRgb pixel = (secondField ? color.darker(130) : color.lighter(135)).rgb();
+    for (qint32 i = 0; i < dropOuts.size(); i++) {
+        const qint32 row = 2 * (dropOuts.fieldLine(i) - 1) + (secondField ? 1 : 0);
+        if (row < 0 || row >= image.height()) continue;
+        const qint32 from = qMax(0, dropOuts.startx(i));
+        const qint32 to = qMin(image.width(), dropOuts.endx(i) + 1);
+        QRgb *line = reinterpret_cast<QRgb *>(image.scanLine(row));
+        for (qint32 x = from; x < to; x++) line[x] = pixel;
+    }
+}
+
+// The dropouts that the capture has for a frame of it, unless the whole frame is marked as a dropout
+void FrameBackend::drawSourceDropouts(QImage &image, Loaded &source, qint32 ownFrame, const QColor &color)
+{
+    const qint32 first = source.metadata.getFirstFieldNumber(ownFrame);
+    const qint32 second = source.metadata.getSecondFieldNumber(ownFrame);
+    if (first < 1 || second < 1) return;
+    const LdDecodeMetaData::VideoParameters &parameters = source.metadata.getVideoParameters();
+    const DropOuts firstDropOuts = source.metadata.getFieldDropOuts(first);
+    const DropOuts secondDropOuts = source.metadata.getFieldDropOuts(second);
+    if (isWholeDropout(firstDropOuts, parameters.fieldWidth, parameters.fieldHeight)
+        || isWholeDropout(secondDropOuts, parameters.fieldWidth, parameters.fieldHeight)) return;
+    drawDropouts(image, firstDropOuts, false, color);
+    drawDropouts(image, secondDropOuts, true, color);
 }
 
 // The two fields of a frame as a grey picture, as ld-analyse shows a source
@@ -381,6 +438,14 @@ void FrameBackend::render(const FrameRequest &request)
                 Loaded &source = **found;
                 const qint32 first = source.metadata.getFirstFieldNumber(frames[i]);
                 const qint32 second = source.metadata.getSecondFieldNumber(frames[i]);
+                const qint32 availableFields = source.video.getNumberOfAvailableFields();
+                if (first < 1 || second < 1 || first > availableFields || second > availableFields) {
+                    // (the metadata of a capture can describe frames that its file does not hold, as the original of a mapping can)
+                    result.message = tr("This frame is not in the file of the source");
+                    result.image = blankPicture(request);
+                    emit frameReady(result);
+                    return;
+                }
                 const LdDecodeMetaData::VideoParameters &videoParameters = source.metadata.getVideoParameters();
                 SourceVideo::Data firstData, secondData;
                 if (first < second) {
@@ -392,6 +457,7 @@ void FrameBackend::render(const FrameRequest &request)
                 }
                 result.image = request.chroma ? chromaPicture(source, frames[i], nullptr, 0)
                                               : weave(firstData, secondData, videoParameters.fieldWidth, videoParameters.fieldHeight);
+                if (request.entries[i].showDropouts) drawSourceDropouts(result.image, source, frames[i], QColor(request.entries[i].color));
                 result.image = applyView(result.image, request.viewMode, request.fieldIndex);
             }
         }
@@ -427,6 +493,18 @@ void FrameBackend::render(const FrameRequest &request)
         result.image = chromaPicture(referenceSource, main.ownFrame, &around, lookBehind);
     } else {
         result.image = weave(main.first, main.second, main.videoParameters.fieldWidth, main.videoParameters.fieldHeight);
+    }
+    // The dropouts of the captures that are shown, each in the colour of its source, and those that the stacking left (in red)
+    for (qint32 i = 0; i < total; i++) {
+        const FrameRequest::Entry &entry = request.entries[i];
+        if (!entry.showDropouts || !entry.enabled || frames[i] < 0) continue;
+        const auto found = sources.constFind(entry.id);
+        if (found == sources.constEnd() || !(*found)->ok || isPadded(**found, frames[i])) continue;
+        drawSourceDropouts(result.image, **found, frames[i], QColor(entry.color));
+    }
+    if (request.residualDropouts) {
+        drawDropouts(result.image, main.firstDropOuts, false, QColor(request.residualColor));
+        drawDropouts(result.image, main.secondDropOuts, true, QColor(request.residualColor));
     }
     result.image = applyView(result.image, request.viewMode, request.fieldIndex);
 
@@ -521,6 +599,8 @@ bool FrameBackend::stackFrame(const FrameRequest &request, qint32 frame, qint32 
                     request.settings.passthrough, out.second, secondDropOuts, mode,
                     request.settings.smartThreshold * 256, false);
 
+    out.firstDropOuts = firstDropOuts;
+    out.secondDropOuts = secondDropOuts;
     out.ok = true;
     out.usable = usable;
     out.ownFrame = frames[usable[0]];
@@ -538,15 +618,24 @@ StackSnrPoint FrameBackend::measureStackFrame(const FrameRequest &request, qint3
     StackSnrPoint point;
     point.frame = frame;
     point.white = std::nanf("");
-    point.black = std::nanf("");
+    point.residual = std::nanf("");
     StackedFrame stacked;
-    if (stackFrame(request, frame, inStack, stacked, vitsLines, videos)) {
+    // (the dropouts of the stack are on every line of the field, so they need the whole fields, not only the lines of the test signals)
+    if (stackFrame(request, frame, inStack, stacked, request.measureResidual ? -1 : vitsLines, videos)) {
         double whiteTotal = 0, blackTotal = 0;
         qint32 whitePoints = 0, blackPoints = 0;
         measureField(stacked.first, stacked.videoParameters, whiteTotal, whitePoints, blackTotal, blackPoints);
         measureField(stacked.second, stacked.videoParameters, whiteTotal, whitePoints, blackTotal, blackPoints);
         if (whitePoints) point.white = static_cast<float>(whiteTotal / whitePoints);
         if (blackPoints) point.black = static_cast<float>(blackTotal / blackPoints);
+        if (request.measureResidual && !isWholeDropout(stacked.firstDropOuts, stacked.videoParameters.fieldWidth, stacked.videoParameters.fieldHeight)
+            && !isWholeDropout(stacked.secondDropOuts, stacked.videoParameters.fieldWidth, stacked.videoParameters.fieldHeight)) {
+            qint64 length = 0;
+            for (const DropOuts *dropOuts: { &stacked.firstDropOuts, &stacked.secondDropOuts }) {
+                for (qint32 i = 0; i < dropOuts->size(); i++) length += qMax(0, dropOuts->endx(i) - dropOuts->startx(i));
+            }
+            point.residual = static_cast<float>(length);
+        }
     }
     return point;
 }
@@ -569,6 +658,7 @@ void FrameBackend::openSnrReaders(const FrameRequest &request, qint32 threads, q
             if (found == sources.constEnd() || !(*found)->ok || !entry.enabled) continue;
             const LdDecodeMetaData::VideoParameters &videoParameters = (*found)->metadata.getVideoParameters();
             auto video = std::make_shared<SourceVideo>();
+            video->setLenient(true);
             if (video->open((*found)->file, videoParameters.fieldWidth * videoParameters.fieldHeight, videoParameters.fieldWidth)) {
                 snrReaders[t].insert(entry.id, video);
             }
@@ -699,6 +789,7 @@ void FrameBackend::computeSourceSnr(const QString &id, qint32 startFrame, quint6
         const LdDecodeMetaData::VideoParameters &videoParameters = source.metadata.getVideoParameters();
         for (qint32 t = 0; t < threads; t++) {
             auto video = std::make_shared<SourceVideo>();
+            video->setLenient(true);
             if (!video->open(source.file, videoParameters.fieldWidth * videoParameters.fieldHeight, videoParameters.fieldWidth)) break;
             sourceReaders.append(video);
         }

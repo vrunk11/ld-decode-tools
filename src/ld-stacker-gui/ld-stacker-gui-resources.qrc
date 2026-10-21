@@ -8,6 +8,7 @@
         <file alias="zoom-out.svg">../ld-analyse/Graphics/zoom-out.svg</file>
         <file alias="zoom-original.svg">../ld-analyse/Graphics/zoom-original.svg</file>
         <file alias="snr.svg">Graphics/snr.svg</file>
+        <file alias="dropout.svg">Graphics/dropout.svg</file>
         <file alias="map.svg">Graphics/map.svg</file>
         <file alias="app-16.png">Graphics/16-stacker.png</file>
         <file alias="app-24.png">Graphics/24-stacker.png</file>

@@ -51,6 +51,13 @@ void SnrPlot::setRange(bool fixed, double low, double high)
     update();
 }
 
+void SnrPlot::setUnit(const QString &newUnit, qint32 newDecimals)
+{
+    unit = newUnit;
+    decimals = newDecimals;
+    update();
+}
+
 qint32 SnrPlot::frameAt(qint32 x) const
 {
     if (totalFrames < 1) return 1;
@@ -110,7 +117,8 @@ void SnrPlot::paintEvent(QPaintEvent *)
             painter.setFont(axisFont);
             painter.setPen(textColor);
             painter.drawText(QRectF(plotW + 4, y - 8, AXIS_WIDTH - 6, 16), Qt::AlignLeft | Qt::AlignVCenter,
-                             QString("%1 dB").arg(value, 0, 'f', 1));
+                             unit.isEmpty() ? (decimals == 0 && std::fabs(value) >= 1000 ? QString("%1k").arg(value / 1000.0, 0, 'f', 1) : QString::number(value, 'f', decimals))
+                                         : QString("%1 %2").arg(value, 0, 'f', decimals).arg(unit));
         }
     }
     painter.setPen(QPen(gridColor, 1));
@@ -165,7 +173,7 @@ void SnrPlot::paintEvent(QPaintEvent *)
         for (const SnrCurve &curve: curves) {
             if (!curve.visible || hoverFrame > curve.values.size() || curve.name.isEmpty()) continue;
             const float value = curve.values[hoverFrame - 1];
-            lines << (std::isfinite(value) ? tr("%1: %2 dB").arg(curve.name).arg(value, 0, 'f', 2) : tr("%1: -").arg(curve.name));
+            lines << (std::isfinite(value) ? tr("%1: %2%3").arg(curve.name).arg(value, 0, 'f', decimals + 1 > 2 ? 2 : decimals).arg(unit.isEmpty() ? QString() : QStringLiteral(" ") + unit) : tr("%1: -").arg(curve.name));
         }
 
         painter.setFont(font());
@@ -233,6 +241,12 @@ SnrGraph::SnrGraph(bool withStack, QWidget *parent)
     measureCheck = new QCheckBox(tr("Measure"));
     measureCheck->setToolTip(tr("Measure the SNR from the test signal lines of the fields of the source, instead of reading the one in its metadata (it takes a while, in the background)"));
     row->addWidget(measureCheck);
+    if (!withStack) {
+        // (the main graph: the dropout graph under it, as View > Dropout graph)
+        dropoutCheck = new QCheckBox(tr("Dropouts"));
+        dropoutCheck->setToolTip(tr("Shows the graph of the dropouts of the captures under this one (View > Dropout graph)"));
+        row->addWidget(dropoutCheck);
+    }
     if (withStack) {
         stackCheck = new QCheckBox(tr("Compare with the stack (grey)"));
         stackCheck->setChecked(false);   // the window is of the source: the stack is only there if asked for
@@ -249,8 +263,9 @@ SnrGraph::SnrGraph(bool withStack, QWidget *parent)
     layout->addWidget(plot, 1);
 
     connect(plot, &SnrPlot::frameRequested, this, &SnrGraph::frameRequested);
-    connect(whiteCheck, &QCheckBox::toggled, this, [this]() { redraw(); });
-    connect(blackCheck, &QCheckBox::toggled, this, [this]() { redraw(); });
+    connect(whiteCheck, &QCheckBox::toggled, this, [this]() { redraw(); updatePlotVisibility(); });
+    connect(blackCheck, &QCheckBox::toggled, this, [this]() { redraw(); updatePlotVisibility(); });
+    if (dropoutCheck) connect(dropoutCheck, &QCheckBox::toggled, this, &SnrGraph::dropoutsToggled);
     connect(measureCheck, &QCheckBox::toggled, this, &SnrGraph::measureToggled);
     if (stackCheck) connect(stackCheck, &QCheckBox::toggled, this, [this]() { redraw(); });
 }
@@ -284,6 +299,28 @@ void SnrGraph::setMeasure(bool on, bool enabled, const QString &tip)
     measureCheck->setToolTip(tip.isEmpty() ? tr("Measure the SNR from the test signal lines of the fields of the source, instead of reading the one in its metadata (it takes a while, in the background)") : tip);
 }
 
+void SnrGraph::setDropoutsChecked(bool on)
+{
+    if (!dropoutCheck) return;
+    const QSignalBlocker blocker(dropoutCheck);
+    dropoutCheck->setChecked(on);
+}
+
+void SnrGraph::setPlotFixedHeight(qint32 height)
+{
+    plot->setFixedHeight(height);
+}
+
+// The graph of the main window goes away when neither curve is ticked, and the boxes stay to bring it back
+void SnrGraph::updatePlotVisibility()
+{
+    if (!dropoutCheck) return;
+    const bool show = whiteCheck->isChecked() || blackCheck->isChecked();
+    if (show == !plot->isHidden()) return;
+    plot->setVisible(show);
+    emit plotHeightChanged(show ? plot->minimumHeight() : -plot->minimumHeight());
+}
+
 void SnrGraph::redraw()
 {
     QVector<SnrCurve> curves;
@@ -295,4 +332,40 @@ void SnrGraph::redraw()
     curves.append({ white, whiteColor(), false, whiteCheck->isChecked(), tr("White SNR") });
     curves.append({ black, blackColor(), false, blackCheck->isChecked(), tr("Black PSNR") });
     plot->setCurves(curves);
+}
+
+// ---------------------------------------------------------------------------------------------
+
+DropoutGraph::DropoutGraph(QWidget *parent)
+    : QWidget(parent)
+{
+    QVBoxLayout *layout = new QVBoxLayout(this);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(0);
+    titleLabel = new QLabel;
+    titleLabel->setForegroundRole(QPalette::PlaceholderText);
+    titleLabel->setContentsMargins(6, 2, 6, 2);
+    titleLabel->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
+    layout->addWidget(titleLabel);
+    plot = new SnrPlot;
+    plot->setUnit(QString(), 0);
+    plot->setMinimumHeight(76);
+    layout->addWidget(plot, 1);
+    connect(plot, &SnrPlot::frameRequested, this, &DropoutGraph::frameRequested);
+}
+
+void DropoutGraph::setData(const QString &title, const QVector<SnrCurve> &curves)
+{
+    titleLabel->setText(title);
+    plot->setCurves(curves);
+}
+
+void DropoutGraph::setMarker(qint32 frame)
+{
+    plot->setMarker(frame);
+}
+
+void DropoutGraph::setRange(bool fixed, double low, double high)
+{
+    plot->setRange(fixed, low, high);
 }

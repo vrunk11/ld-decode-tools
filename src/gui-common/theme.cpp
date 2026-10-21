@@ -82,6 +82,8 @@ const QVector<ThemeColourRole> &themeColourRoles()
         // (no palette role is for these: the colours of the audio waveform ride on the visited link colour, which nothing else uses)
         { QPalette::All, QPalette::LinkVisited, "WaveformAnalogue", "Waveform: analogue audio" },
         { QPalette::Disabled, QPalette::LinkVisited, "WaveformEfm", "Waveform: audio from EFM" },
+        // (the colour of the dropouts that a stack is left with, in ld-stacker-gui: the visited link colour of the inactive group, which nothing uses either)
+        { QPalette::Inactive, QPalette::LinkVisited, "DropoutResidual", "Dropouts left by a stack (ld-stacker-gui)" },
     };
     return roles;
 }
@@ -100,12 +102,19 @@ static QColor themeColour(const QPalette &palette, const ThemeColourRole &entry)
     return palette.color(entry.group == QPalette::All ? QPalette::Active : entry.group, entry.role);
 }
 
+// The colour of the residual dropouts a theme has unless it says it: light on dark, dark on light
+static void setDefaultDropoutColour(QPalette &palette)
+{
+    palette.setColor(QPalette::Inactive, QPalette::LinkVisited, QColor(isDarkPalette(palette) ? "#ff5a5a" : "#d62020"));
+}
+
 // The waveform colours a theme has unless it says them: light on dark, dark on light
 static void setDefaultWaveformColours(QPalette &palette)
 {
     const bool dark = isDarkPalette(palette);
     palette.setColor(QPalette::All, QPalette::LinkVisited, QColor(dark ? "#4aa3ff" : "#1f6fc9"));
     palette.setColor(QPalette::Disabled, QPalette::LinkVisited, QColor(dark ? "#4cd964" : "#1e9e3a"));
+    setDefaultDropoutColour(palette);
 }
 
 // Build a palette from "key" -> colour pairs; roles not listed are left unset
@@ -122,6 +131,9 @@ static QPalette makePalette(std::initializer_list<std::pair<const char *, const 
     bool hasWaveform = false;
     for (const auto &colour : colours) hasWaveform |= qstrcmp(colour.first, "WaveformAnalogue") == 0;
     if (!hasWaveform) setDefaultWaveformColours(palette);
+    bool hasDropout = false;
+    for (const auto &colour : colours) hasDropout |= qstrcmp(colour.first, "DropoutResidual") == 0;
+    if (!hasDropout) setDefaultDropoutColour(palette);
     bool hasPlayButton = false;
     for (const auto &colour : colours) hasPlayButton |= qstrcmp(colour.first, "PlayButton") == 0;
     if (!hasPlayButton) palette.setColor(QPalette::All, QPalette::BrightText, palette.color(QPalette::Active, QPalette::ButtonText));
@@ -217,6 +229,7 @@ QPalette deserializePalette(const QString &text)
     // A palette saved before the play button had a colour: use the button text colour
     if (!text.contains("PlayButton=")) palette.setColor(QPalette::All, QPalette::BrightText, palette.color(QPalette::Active, QPalette::ButtonText));
     if (!text.contains("WaveformAnalogue=")) setDefaultWaveformColours(palette);
+    if (!text.contains("DropoutResidual=")) setDefaultDropoutColour(palette);
     return palette;
 }
 
@@ -474,6 +487,7 @@ bool applyAppearance(const QString &styleName, ThemeMode mode, const QString &cu
         if (!hasPalette) setDefaultWaveformColours(waveformSource = app->palette());
         app->setProperty("waveformAnalogueColour", waveformSource.color(QPalette::Active, QPalette::LinkVisited));
         app->setProperty("waveformEfmColour", waveformSource.color(QPalette::Disabled, QPalette::LinkVisited));
+        app->setProperty("dropoutResidualColour", waveformSource.color(QPalette::Inactive, QPalette::LinkVisited));
     }
 
     // The classic style's dark look is built from the colours just set, so its
@@ -494,6 +508,12 @@ QColor playButtonColour()
 {
     const QVariant colour = QCoreApplication::instance() ? QCoreApplication::instance()->property("playButtonColour") : QVariant();
     return colour.isValid() ? colour.value<QColor>() : QApplication::palette().color(QPalette::ButtonText);
+}
+
+QColor dropoutResidualColour()
+{
+    const QVariant colour = QCoreApplication::instance() ? QCoreApplication::instance()->property("dropoutResidualColour") : QVariant();
+    return colour.isValid() ? colour.value<QColor>() : QColor("#ff5a5a");
 }
 
 QColor waveformColour(bool fromEfm)

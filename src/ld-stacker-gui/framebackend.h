@@ -21,6 +21,7 @@
 #include <memory>
 
 #include "lddecodemetadata.h"
+#include "dropouts.h"
 #include "comb.h"
 #include "outputwriter.h"
 #include "palcolour.h"
@@ -44,6 +45,8 @@ struct SourceInfo {
     // Per frame (index 0 is frame 1): the SNR of the metadata, NaN where there is none
     QVector<float> whiteSnr;
     QVector<float> blackSnr;
+    // Per frame: the total length of the dropouts of the metadata (both fields, in samples), NaN where the frame is padded or marked as a dropout as a whole
+    QVector<float> dropoutLength;
     // What the information panel of the source shows
     QString metadataFormat;       // "SQLite", "JSON" or "CVBS"
     bool isMapped = false;        // the metadata say the source was mapped (ld-discmap)
@@ -71,6 +74,8 @@ struct FrameRequest {
         QString id;
         bool enabled = true;
         qint32 offset = 0;
+        bool showDropouts = false;    // the dropouts of the capture are drawn on the picture, in this colour (a field in a lighter shade than the other)
+        QRgb color = 0;
     };
 
     quint64 serial = 0;
@@ -82,6 +87,9 @@ struct FrameRequest {
     qint32 fieldIndex = 0;        // in mode 1, which field: 0 the first of the frame, 1 the second
     QVector<Entry> entries;       // in the order of the list
     StackSettings settings;
+    bool residualDropouts = false;   // in the stack, the dropouts that the stacking left are drawn too
+    QRgb residualColor = 0;
+    bool measureResidual = false;    // the measure of the stack reads whole fields and measures the dropouts the stack is left with, as well as its SNR
 };
 
 // The SNR of the stack at a frame, measured from the test signal lines of the stacked fields (NaN: none)
@@ -89,6 +97,7 @@ struct StackSnrPoint {
     qint32 frame = 0;
     float white = 0;
     float black = 0;
+    float residual = 0;     // the total length of the dropouts the stack is left with (NaN: not measured, or the frame is marked as a dropout as a whole)
 };
 
 struct FrameResult {
@@ -160,6 +169,10 @@ private:
     bool isPadded(Loaded &source, qint32 ownFrame);
     // A picture of a frame as one of its fields (lines doubled), or as both of them, one above the other
     static QImage applyView(const QImage &frame, qint32 viewMode, qint32 fieldIndex);
+    // Dropouts drawn on the picture of a frame (before the view is applied): the lines of the first field are the even rows, those of the second the odd ones
+    static void drawDropouts(QImage &image, const DropOuts &dropOuts, bool secondField, const QColor &color);
+    static bool isWholeDropout(const DropOuts &dropOuts, qint32 fieldWidth, qint32 fieldHeight);
+    void drawSourceDropouts(QImage &image, Loaded &source, qint32 ownFrame, const QColor &color);
     // A black picture of the size of the frames, for where a source (or the stack) has no frame
     QImage blankPicture(const FrameRequest &request) const;
     static QImage weave(const SourceVideo::Data &first, const SourceVideo::Data &second, qint32 width, qint32 fieldHeight);
@@ -173,6 +186,7 @@ private:
         SourceVideo::Data first, second;
         LdDecodeMetaData::VideoParameters videoParameters;
         qint32 mode = 0;
+        DropOuts firstDropOuts, secondDropOuts;     // the dropouts the stack is left with
     };
     // Stack a frame of the timeline from the sources that have it; false if none does
     // lines > 0: only the first lines of the fields (the test signal lines), which is all the SNR needs

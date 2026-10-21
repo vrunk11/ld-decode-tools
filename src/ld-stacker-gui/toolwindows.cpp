@@ -131,3 +131,55 @@ void StackOutputWindow::closeEvent(QCloseEvent *event)
     QDialog::closeEvent(event);
     emit closed();
 }
+
+// ---------------------------------------------------------------------------------------------
+
+DropoutWindow::DropoutWindow(QWidget *parent)
+    : QDialog(parent)
+{
+    setWindowFlag(Qt::WindowMaximizeButtonHint, true);
+    setWindowTitle(tr("Dropouts"));
+    resize(640, 220);
+
+    QVBoxLayout *layout = new QVBoxLayout(this);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(0);
+    accentBar = new QFrame;
+    accentBar->setFixedHeight(8);
+    layout->addWidget(accentBar);
+    graph = new DropoutGraph;
+    graph->setMinimumHeight(130);
+    layout->addWidget(graph, 1);
+    connect(graph, &DropoutGraph::frameRequested, this, &DropoutWindow::frameRequested);
+}
+
+void DropoutWindow::setAccent(const QColor &color)
+{
+    accentBar->setStyleSheet(QString("background-color: %1;").arg(color.name()));
+    QPixmap pixmap(16, 16);
+    pixmap.fill(Qt::transparent);
+    QPainter painter(&pixmap);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    painter.setBrush(color);
+    painter.setPen(Qt::NoPen);
+    painter.drawEllipse(QRectF(1, 1, 14, 14));
+    painter.end();
+    setWindowIcon(QIcon(pixmap));
+}
+
+void DropoutWindow::setContent(const QString &title, const QVector<SnrCurve> &curves, qint32 marker)
+{
+    setWindowTitle(title);
+    graph->setData(tr("Total length of the dropouts of each frame, in samples"), curves);
+    graph->setMarker(marker);
+}
+
+void DropoutWindow::setMarker(qint32 frame)
+{
+    graph->setMarker(frame);
+}
+
+void DropoutWindow::setRange(bool fixed, double low, double high)
+{
+    graph->setRange(fixed, low, high);
+}

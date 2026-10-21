@@ -9,6 +9,8 @@
  ******************************************************************************/
 
 #include "mainwindow.h"
+
+#include "stackercore.h"
 #include "ldxcapture.h"
 #include "tbcfiles.h"
 
@@ -272,8 +274,11 @@ void MainWindow::buildUi()
     mainLayout->addWidget(scrollArea, 1);
 
     snrPlot = new SnrGraph(false);
-    snrPlot->setFixedHeight(100);
+    snrPlot->setPlotFixedHeight(76);
     mainLayout->addWidget(snrPlot);
+    dropoutPlot = new DropoutGraph;
+    dropoutPlot->setVisible(false);
+    mainLayout->addWidget(dropoutPlot);
 
     // Navigation
     QWidget *navigation = new QWidget;
@@ -320,6 +325,7 @@ void MainWindow::buildUi()
     modeCombo = new QComboBox;
     for (const char *name: MODE_NAMES) modeCombo->addItem(tr(name));
     modeCombo->setToolTip(tr("Stacking mode"));
+    modeCombo->setSizeAdjustPolicy(QComboBox::AdjustToContents);
     chromaButton = new QPushButton(tr("Chroma"));
     chromaButton->setCheckable(true);
     chromaButton->setToolTip(tr("Decode the pictures to colour (with a 2D decoder)"));
@@ -417,6 +423,14 @@ void MainWindow::buildUi()
     statusShowing = new QLabel;
     statusBar()->addWidget(statusSources);
     statusBar()->addWidget(statusMode);
+    hideCaptureDropouts = new QCheckBox(tr("Hide capture dropouts"));
+    hideCaptureDropouts->setToolTip(tr("The dropouts of the captures (the ones their metadata have) are not drawn, whatever the boxes of the sources say"));
+    showResidualDropouts = new QCheckBox(tr("Show residual dropouts"));
+    showResidualDropouts->setToolTip(tr("On the stack, draws in red the dropouts that the stacking left: where every source that has the frame has a dropout"));
+    connect(hideCaptureDropouts, &QCheckBox::toggled, this, [this]() { requestFrame(); });
+    connect(showResidualDropouts, &QCheckBox::toggled, this, [this]() { requestFrame(); });
+    statusBar()->addPermanentWidget(hideCaptureDropouts);
+    statusBar()->addPermanentWidget(showResidualDropouts);
     statusBar()->addPermanentWidget(statusFormat);
     statusBar()->addPermanentWidget(statusShowing);
 
@@ -458,6 +472,9 @@ void MainWindow::buildUi()
     connect(nextButton, &QToolButton::clicked, this, [this]() { setFrame(frame + 1); });
     connect(lastButton, &QToolButton::clicked, this, [this]() { setFrame(viewOffset() + viewFrames()); });
     connect(snrPlot, &SnrGraph::frameRequested, this, [this](qint32 requested) { setFrame(requested + viewOffset()); });
+    connect(dropoutPlot, &DropoutGraph::frameRequested, this, [this](qint32 requested) { setFrame(requested + viewOffset()); });
+    connect(snrPlot, &SnrGraph::dropoutsToggled, this, &MainWindow::setDropoutGraphVisible);
+    connect(snrPlot, &SnrGraph::plotHeightChanged, this, &MainWindow::resizeHeightBy);
     connect(snrPlot, &SnrGraph::measureToggled, this, [this](bool on) {
         const QString id = measureTargetId();
         if (!id.isEmpty()) setSourceMeasure(id, on);
@@ -539,10 +556,25 @@ void MainWindow::buildMenus()
             stackWindow->hide();
         }
     });
+    dropoutGraphAction = view->addAction(tr("Dropout graph"));
+    dropoutGraphAction->setCheckable(true);
+    dropoutGraphAction->setToolTip(tr("The graph of the dropouts of the captures, under the SNR graph"));
+    connect(dropoutGraphAction, &QAction::toggled, this, &MainWindow::setDropoutGraphVisible);
+    dropoutGraphAction->setChecked(QSettings().value("dropoutGraph", false).toBool());
     view->addAction(tr("&Chroma decoder configuration..."), this, [this]() { chromaDialog->show(); chromaDialog->raise(); });
     view->addAction(tr("&Enhance..."), this, [this]() { enhanceDialog->show(); enhanceDialog->raise(); });
+    // The first source imported sets the size of the picture and of the window, unless this is off (kept in the settings)
+    resizeOnFirstImport = QSettings().value("resizeOnFirstImport", true).toBool();
+    QAction *resizeAction = view->addAction(tr("Resize on first file import"));
+    resizeAction->setCheckable(true);
+    resizeAction->setChecked(resizeOnFirstImport);
+    resizeAction->setToolTip(tr("The first source that is imported is shown at its original size and the window is resized to it"));
+    connect(resizeAction, &QAction::toggled, this, [this](bool on) {
+        resizeOnFirstImport = on;
+        QSettings().setValue("resizeOnFirstImport", on);
+    });
     // How the picture is enlarged: line doubling keeps the pixels as they are
-    QMenu *enlarge = view->addMenu(tr("Enlarge the picture"));
+    QMenu *enlarge = view->addMenu(tr("Scaling algorithm"));
     QActionGroup *enlargeGroup = new QActionGroup(this);
     const QStringList methods = { tr("Line doubling"), tr("Smooth") };
     for (qint32 i = 0; i < methods.size(); i++) {
@@ -612,7 +644,7 @@ void MainWindow::addSourcesDialog()
 void MainWindow::addSources(const QStringList &files)
 {
     // The first source imported shows at its original size; those after it change nothing
-    if (project.sources.isEmpty()) fitFirstSource = true;
+    if (project.sources.isEmpty() && resizeOnFirstImport) fitFirstSource = true;
     for (const QString &name: files) {
         // What a name gives: a capture, or, for an LDX file that holds several and is not named by a track, each of them
         QVector<qint32> tracks = { 0 };
@@ -668,6 +700,7 @@ void MainWindow::removeSource(const QString &id)
     project.sources.remove(index);
     states.remove(id);
     delete snrWindows.take(id);
+    delete dropoutWindows.take(id);
     QMetaObject::invokeMethod(backend, "removeSource", Qt::QueuedConnection, Q_ARG(QString, id));
     QTimer::singleShot(0, this, [this]() { startNextMeasure(); });
     rebuildSourceList();
@@ -721,6 +754,8 @@ void MainWindow::applySession(const StackProject &loaded, const QString &fileNam
 
     qDeleteAll(snrWindows);
     snrWindows.clear();
+    qDeleteAll(dropoutWindows);
+    dropoutWindows.clear();
 
     project = loaded;
     // (the stacking is off when a session is opened too: turning it on asks to map the sources that follow the map and have no mapping)
@@ -1316,6 +1351,12 @@ void MainWindow::rebuildSourceList()
         snrButton->setToolTip(tr("The SNR of this source over the disc, in a window"));
         top->addWidget(snrButton);
         connect(snrButton, &QToolButton::clicked, this, [this, id]() { openSnrWindow(id); });
+        QToolButton *dropoutButton = new QToolButton;
+        dropoutButton->setIcon(QIcon(":/icons/dropout.svg"));
+        dropoutButton->setIconSize(QSize(22, 22));
+        dropoutButton->setToolTip(tr("The dropouts of this source over the disc, in a window"));
+        top->addWidget(dropoutButton);
+        connect(dropoutButton, &QToolButton::clicked, this, [this, id]() { openDropoutWindow(id); });
         layout->addLayout(top);
 
         // Second line: offset and SNR
@@ -1330,6 +1371,14 @@ void MainWindow::rebuildSourceList()
         offset->setToolTip(tr("Offset in frames, added to the alignment by the numbers of the disc (the sources are lined up by them, mapped or not): the source is shifted by this many frames more"));
         offset->setMinimumWidth(90);
         bottom->addWidget(offset);
+        QCheckBox *dropoutsBox = new QCheckBox(tr("Show dropouts"));
+        dropoutsBox->setChecked(state.showDropouts);
+        dropoutsBox->setToolTip(tr("Draws the dropouts of this capture on the picture, in its colour (the first field lighter, the second darker); not for a frame that is marked as a dropout as a whole"));
+        bottom->addWidget(dropoutsBox);
+        connect(dropoutsBox, &QCheckBox::toggled, this, [this, id](bool on) {
+            states[id].showDropouts = on;
+            requestFrame();
+        });
         bottom->addStretch(1);
         QCheckBox *follow = new QCheckBox(tr("Follow map"));
         follow->setChecked(state.followMap);
@@ -1376,6 +1425,37 @@ void MainWindow::rebuildSourceList()
         if (id == selected) sourceList->setCurrentItem(item);
     }
     for (const StackSource &source: project.sources) updateMapBar(source.id);
+    fitSourceListWidth();
+}
+
+// The side panel is as wide as the rows of the list need (they are cut otherwise: the list has no scroll bar of its own sideways)
+void MainWindow::fitSourceListWidth()
+{
+    if (!mainSplitter || !sourceList) return;
+    qint32 needed = 0;
+    for (qint32 row = 0; row < sourceList->count(); row++) {
+        if (QWidget *widget = sourceList->itemWidget(sourceList->item(row))) needed = qMax(needed, widget->sizeHint().width());
+    }
+    if (needed == 0) return;
+    QWidget *side = sourceList->parentWidget();
+    // (the frame of the list, the bar of its sources, and the margins of the panel)
+    needed += 2 * sourceList->frameWidth() + sourceList->verticalScrollBar()->sizeHint().width() + 2 * 8 + 4;
+    side->setMinimumWidth(needed);
+    const qint32 current = side->width();
+    if (current >= needed) return;
+    const qint32 grow = needed - current;
+    QList<qint32> sizes = mainSplitter->sizes();
+    if (sizes.size() == 3) {
+        sizes[0] += grow;
+        const qint32 available = sizes[2] - 360;      // (what the picture can give up before the window grows)
+        if (available < grow) {
+            sizes[2] = qMax(360, sizes[2] - grow);
+            if (isVisible() && !isMaximized() && !isFullScreen()) resize(width() + grow - qMax(0, available), height());
+        } else {
+            sizes[2] -= grow;
+        }
+        mainSplitter->setSizes(sizes);
+    }
 }
 
 // The tabs: the stack, then a tab for each source
@@ -1579,6 +1659,7 @@ void MainWindow::updateInfoPanel()
 // What is stacked changed (a source on or off, an offset, the mode): the stack is worked out again
 void MainWindow::sourcesChanged()
 {
+    dropoutRangeDirty = true;
     updateInfoPanel();
     snrRangeDirty = true;
     updateTimeline();
@@ -1641,6 +1722,11 @@ void MainWindow::setFrame(qint32 newFrame)
         frameSlider->setValue(frame - offset);
     }
     snrPlot->setMarker(frame - viewOffset());
+    dropoutPlot->setMarker(frame - viewOffset());
+    for (auto it = dropoutWindows.constBegin(); it != dropoutWindows.constEnd(); ++it) {
+        const qint32 at = project.indexOfSource(it.key());
+        if (at >= 0) it.value()->setMarker(frame - effectiveOffset(at));
+    }
     updateTabTexts();
     updateStatus();
     requestFrame();
@@ -1685,12 +1771,16 @@ void MainWindow::sendRequest(const QString &view, qint32 channel)
     request.chroma = project.chroma;
     request.viewMode = fieldView ? (fieldSplit ? 2 : 1) : 0;
     request.fieldIndex = fieldIndex;
+    request.residualDropouts = showResidualDropouts->isChecked();
+    request.residualColor = dropoutResidualColour().rgb();
     request.settings = project.stacking;
     for (const StackSource &source: project.sources) {
         FrameRequest::Entry entry;
         entry.id = source.id;
         entry.enabled = source.enabled;
         entry.offset = effectiveOffset(request.entries.size());
+        entry.showDropouts = !hideCaptureDropouts->isChecked() && states.value(source.id).showDropouts;
+        entry.color = colorFor(source.id).rgb();
         request.entries.append(entry);
     }
     backend->latest[channel].store(request.serial);
@@ -1761,7 +1851,10 @@ void MainWindow::openSnrWindow(const QString &id)
     if (!window) {
         window = new SnrWindow(this);
         window->setWindowFlag(Qt::Window, true);
-        connect(window, &SnrWindow::frameRequested, this, &MainWindow::setFrame);
+        connect(window, &SnrWindow::frameRequested, this, [this, id](qint32 requested) {
+            const qint32 at = project.indexOfSource(id);
+            if (at >= 0) setFrame(requested + effectiveOffset(at));
+        });
         connect(window, &SnrWindow::measureToggled, this, [this, id](bool on) { setSourceMeasure(id, on); });
         window->move(pos() + QPoint(60 + 30 * snrWindows.size(), 80 + 30 * snrWindows.size()));
         snrWindows.insert(id, window);
@@ -1788,8 +1881,9 @@ void MainWindow::updateSnrWindow()
         window->setMeasure(states.value(source.id).measure, true);
         updateSnrRange();
         window->setRange(snrSameScale && snrRangeAny, snrLow, snrHigh);
-        window->setContent(tr("SNR - source %1 (%2)").arg(index + 1).arg(sourceTitle(source)), sourceCurve(index, true),
-                           sourceCurve(index, false), stackWhite, stackBlack, frame);
+        // (along the frames of the file: the stack behind is the part of its timeline that the file covers)
+        window->setContent(tr("SNR - source %1 (%2)").arg(index + 1).arg(sourceTitle(source)), sourceCurve(index, true, true),
+                           sourceCurve(index, false, true), ownFrames(stackWhite, index), ownFrames(stackBlack, index), frame - effectiveOffset(index));
     }
 }
 
@@ -1804,6 +1898,7 @@ void MainWindow::viewChanged()
 
 void MainWindow::updatePlot()
 {
+    updateDropoutPlot();
     // (the graph of a source is along the frames of that source, the one of the stack along the timeline)
     snrPlot->setMarker(frame - viewOffset());
     applySnrRange(snrPlot);
@@ -1848,6 +1943,147 @@ void MainWindow::updatePlot()
     const bool ownAxis = view != "stack";
     snrPlot->setData(label, sourceCurve(index, true, ownAxis), sourceCurve(index, false, ownAxis));
     snrPlot->setMeasure(state.measure, true);
+}
+
+void MainWindow::resizeHeightBy(qint32 delta)
+{
+    if (!isVisible() || isMaximized() || isFullScreen() || delta == 0) return;
+    const qint32 target = height() + delta;
+    QTimer::singleShot(0, this, [this, target]() {
+        // (the layout has the minimum of what is shown now: it is worked out again before the window is resized, or the old one would keep the window tall)
+        layout()->invalidate();
+        layout()->activate();
+        resize(width(), qMax(minimumSizeHint().height(), target));
+    });
+}
+
+// View > Dropout graph, and the box of the SNR graph, which are the same: the graph is under the SNR graph when it is ticked, and gone when it is not
+void MainWindow::setDropoutGraphVisible(bool visible)
+{
+    {
+        const QSignalBlocker blocker(dropoutGraphAction);
+        dropoutGraphAction->setChecked(visible);
+    }
+    snrPlot->setDropoutsChecked(visible);
+    if (visible != !dropoutPlot->isHidden()) resizeHeightBy(visible ? dropoutPlot->sizeHint().height() : -dropoutPlot->height());
+    dropoutPlot->setVisible(visible);
+    QSettings().setValue("dropoutGraph", visible);
+    // (shown while the stack was measured without its dropouts: it is measured again with them)
+    if (visible && !stackMeasuredResidual && stackSnrActive) startStackSnr();
+    updateDropoutPlot();
+}
+
+// The total length of the dropouts of each frame of a source, along the timeline shifted by its offset, or from its own first frame (the graph of its tab)
+QVector<float> MainWindow::dropoutCurve(qint32 index, bool ownAxis) const
+{
+    const StackSource &source = project.sources[index];
+    const SourceState state = states.value(source.id);
+    if (!state.loaded) return QVector<float>();
+    const QVector<float> &own = state.info.dropoutLength;
+    if (ownAxis) return own;
+    QVector<float> values(totalFrames, std::nanf(""));
+    const qint32 offset = effectiveOffset(index);
+    for (qint32 at = 1; at <= totalFrames; at++) {
+        const qint32 ownFrame = at - offset;
+        if (ownFrame >= 1 && ownFrame <= own.size()) values[at - 1] = own[ownFrame - 1];
+    }
+    return values;
+}
+
+// The graph of the dropouts: on the stack, one curve for each source that is on, in its colour; on a tab, that source. The scale is the same for all of them.
+// The scale of the graphs of the dropouts, the same for all of them (the main one and those of the sources): from 0 to the longest dropouts of any frame of any
+// source, so that nothing is cut off
+void MainWindow::updateDropoutRange()
+{
+    if (!dropoutRangeDirty) return;
+    dropoutRangeDirty = false;
+    float largest = 0;
+    for (const StackSource &source: project.sources) {
+        const SourceState state = states.value(source.id);
+        if (!state.loaded) continue;
+        for (const float value: state.info.dropoutLength) {
+            if (!std::isfinite(value)) continue;
+            largest = qMax(largest, value);
+        }
+    }
+    dropoutHigh = largest;
+}
+
+void MainWindow::openDropoutWindow(const QString &id)
+{
+    DropoutWindow *window = dropoutWindows.value(id);
+    if (!window) {
+        window = new DropoutWindow(this);
+        window->setWindowFlag(Qt::Window, true);
+        connect(window, &DropoutWindow::frameRequested, this, [this, id](qint32 requested) {
+            const qint32 at = project.indexOfSource(id);
+            if (at >= 0) setFrame(requested + effectiveOffset(at));
+        });
+        window->move(pos() + QPoint(80 + 30 * dropoutWindows.size(), 100 + 30 * dropoutWindows.size()));
+        dropoutWindows.insert(id, window);
+    }
+    window->show();
+    window->raise();
+    updateDropoutWindows();
+}
+
+// The window of a source: its dropouts along the timeline, and what the stack is left with when that was measured
+void MainWindow::updateDropoutWindows()
+{
+    updateDropoutRange();
+    for (auto it = dropoutWindows.constBegin(); it != dropoutWindows.constEnd(); ++it) {
+        DropoutWindow *window = it.value();
+        if (!window->isVisible()) continue;
+        const qint32 index = project.indexOfSource(it.key());
+        if (index < 0) {
+            window->hide();
+            continue;
+        }
+        const StackSource &source = project.sources[index];
+        window->setAccent(colorFor(source.id));
+        QVector<SnrCurve> curves;
+        curves.append({ dropoutCurve(index, true), colorFor(source.id), false, true, sourceTitle(source) });
+        if (stackMeasuredResidual) curves.append({ ownFrames(stackResidual, index), dropoutResidualColour(), true, true, tr("Residual (stack)") });
+        window->setRange(true, 0, qMax(1.0, dropoutHigh));
+        window->setContent(tr("Dropouts - source %1 (%2)").arg(index + 1).arg(sourceTitle(source)), curves, frame - effectiveOffset(index));
+    }
+}
+
+// The graph of the dropouts: on the stack, one curve for each source that is on, in its colour; on a tab, that source. The scale is the same for all of them.
+void MainWindow::updateDropoutPlot()
+{
+    updateDropoutWindows();
+    if (!dropoutPlot || !dropoutGraphAction || !dropoutGraphAction->isChecked()) return;
+    updateDropoutRange();
+    dropoutPlot->setMarker(frame - viewOffset());
+    const QString view = currentView();
+    QVector<SnrCurve> curves;
+    if (view == "stack") {
+        for (qint32 index = 0; index < project.sources.size(); index++) {
+            const StackSource &source = project.sources[index];
+            if (!source.enabled || !states.value(source.id).loaded) continue;
+            curves.append({ dropoutCurve(index, false), colorFor(source.id), false, true, sourceTitle(source) });
+        }
+        // What the stack is left with, measured with its SNR
+        curves.append({ stackResidual, dropoutResidualColour(), false, true, tr("Residual (stack)") });
+    } else {
+        const qint32 index = project.indexOfSource(view);
+        if (index >= 0 && states.value(view).loaded) curves.append({ dropoutCurve(index, true), colorFor(view), false, true, sourceTitle(project.sources[index]) });
+    }
+    dropoutPlot->setRange(true, 0, qMax(1.0, dropoutHigh));
+    dropoutPlot->setData(tr("Dropouts of the captures: total length per frame, in samples (the frames marked as a dropout as a whole are left out)"), curves);
+}
+
+QVector<float> MainWindow::ownFrames(const QVector<float> &timeline, qint32 index) const
+{
+    const SourceState state = states.value(project.sources[index].id);
+    QVector<float> values(state.loaded ? state.info.frames : 0, std::nanf(""));
+    const qint32 offset = effectiveOffset(index);
+    for (qint32 own = 1; own <= values.size(); own++) {
+        const qint32 at = own + offset;
+        if (at >= 1 && at <= timeline.size()) values[own - 1] = timeline[at - 1];
+    }
+    return values;
 }
 
 // The SNR of a source along the timeline, shifted by its offset
@@ -2006,9 +2242,9 @@ QString MainWindow::sourceCacheKey(const QString &id) const
 }
 
 // The stack: the sources that are on, each with its file and where it begins on the timeline, and the options that change what is stacked
-QString MainWindow::stackCacheKey() const
+QString MainWindow::stackCacheKey(bool withResidual) const
 {
-    QString key = QStringLiteral("stack");
+    QString key = withResidual ? QStringLiteral("stack+dropouts") : QStringLiteral("stack");
     for (qint32 index = 0; index < project.sources.size(); index++) {
         const StackSource &source = project.sources[index];
         if (!source.enabled || !states.value(source.id).loaded) continue;
@@ -2020,12 +2256,12 @@ QString MainWindow::stackCacheKey() const
     return key;
 }
 
-void MainWindow::storeInCache(const QString &key, const QVector<float> &white, const QVector<float> &black)
+void MainWindow::storeInCache(const QString &key, const QVector<float> &white, const QVector<float> &black, const QVector<float> &residual)
 {
     if (key.isEmpty()) return;
     // (a few measures at most: the oldest are let go of when there are many)
     if (snrCache.size() > 24) snrCache.clear();
-    snrCache.insert(key, { white, black });
+    snrCache.insert(key, { white, black, residual });
 }
 
 // What is stacked changed: what was measured of the stack is forgotten and the measure in progress stops. The measure of the stack reads the test signals of every
@@ -2037,6 +2273,8 @@ void MainWindow::startStackSnr()
     snrRangeDirty = true;
     stackWhite = QVector<float>(totalFrames, std::nanf(""));
     stackBlack = QVector<float>(totalFrames, std::nanf(""));
+    stackResidual = QVector<float>(totalFrames, std::nanf(""));
+    stackMeasuredResidual = false;
     stackSnrDone = 0;
     stackSnrActive = false;
     backend->snrGeneration.store(++snrJob);
@@ -2056,12 +2294,20 @@ void MainWindow::ensureStackSnr()
     if (!wanted) return;
     stackSnrActive = true;
 
-    // Measured before, from the same files, offsets and options: nothing to do
-    const QString key = stackCacheKey();
-    const auto cached = snrCache.constFind(key);
+    // With the dropout graph shown the measure reads whole fields and measures the dropouts the stack is left with, as well as the SNR
+    const bool withResidual = dropoutGraphAction && dropoutGraphAction->isChecked();
+    stackMeasuredResidual = withResidual;
+
+    // Measured before, from the same files, offsets and options: nothing to do (a measure with the dropouts has the SNR too)
+    auto cached = snrCache.constFind(stackCacheKey(withResidual));
+    if (cached == snrCache.constEnd() && !withResidual) cached = snrCache.constFind(stackCacheKey(true));
     if (cached != snrCache.constEnd() && cached->white.size() == totalFrames) {
         stackWhite = cached->white;
         stackBlack = cached->black;
+        if (cached->residual.size() == totalFrames) {
+            stackResidual = cached->residual;
+            stackMeasuredResidual = true;
+        }
         stackSnrDone = totalFrames;
         snrRangeDirty = true;
         updateTabTexts();
@@ -2072,6 +2318,7 @@ void MainWindow::ensureStackSnr()
 
     FrameRequest request;
     request.settings = project.stacking;
+    request.measureResidual = withResidual;
     for (qint32 index = 0; index < project.sources.size(); index++) {
         FrameRequest::Entry entry;
         entry.id = project.sources[index].id;
@@ -2091,11 +2338,12 @@ void MainWindow::on_stackSnrReady(quint64 generation, const QVector<StackSnrPoin
         if (point.frame < 1 || point.frame > stackWhite.size()) continue;
         stackWhite[point.frame - 1] = point.white;
         stackBlack[point.frame - 1] = point.black;
+        if (point.frame <= stackResidual.size()) stackResidual[point.frame - 1] = point.residual;
         stackSnrDone = qMax(stackSnrDone, point.frame);
     }
     if (finished) {
         stackSnrDone = totalFrames;
-        storeInCache(stackCacheKey(), stackWhite, stackBlack);
+        storeInCache(stackCacheKey(stackMeasuredResidual), stackWhite, stackBlack, stackMeasuredResidual ? stackResidual : QVector<float>());
     }
     updateTabTexts();
     updatePlot();
@@ -2181,6 +2429,7 @@ void MainWindow::updateStatus()
     }
 
     if (project.sources.isEmpty()) {
+        modeCombo->setItemText(0, tr("Auto"));
         statusSources->setText(tr("No sources"));
         statusMode->clear();
         statusShowing->clear();
@@ -2196,11 +2445,14 @@ void MainWindow::updateStatus()
 
     qint32 mode = project.stacking.mode;
     QString modeText = tr(MODE_NAMES[qBound(0, mode + 1, 5)]);
-    if (mode == -1 && on > 0) {
-        static const char *const resolved[] = { "Mean", "Median", "Smart mean", "Smart neighbour", "Neighbour" };
-        const qint32 used = on <= 2 ? 0 : (on <= 4 ? 2 : 3);
-        modeText = tr("Auto: %1").arg(tr(resolved[used]));
+    // (auto goes by how many sources there are: the list says which mode that is now)
+    QString autoText = tr("Auto");
+    if (on > 0) {
+        const qint32 used = StackerCore::autoMode(on);
+        autoText = tr("Auto (%1)").arg(tr(MODE_NAMES[qBound(0, used + 1, 5)]));
+        if (mode == -1) modeText = tr("Auto: %1").arg(tr(MODE_NAMES[qBound(0, used + 1, 5)]));
     }
+    modeCombo->setItemText(0, autoText);
     statusMode->setText(tr("Mode: %1").arg(modeText));
 
     const qint32 viewIndex = project.indexOfSource(currentView());
@@ -2428,6 +2680,7 @@ void MainWindow::updateAppearance()
     rebuildSourceList();
     for (QWidget *widget: QApplication::allWidgets()) widget->update();
     applyZoom();
+    requestFrame();
 }
 
 // View > Theme > Customize...: edit the custom theme with a live preview

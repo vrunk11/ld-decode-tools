@@ -41,6 +41,8 @@ public:
     // The range of the vertical scale, in dB: the one given (the same for all the graphs, so that they can be compared) or, when it is not fixed, the
     // one of the curves that are shown. A little room is left above and below either way.
     void setRange(bool fixed, double low = 0, double high = 0);
+    // What the scale is in: the unit written after the values (none: the number only) and how many decimals they have (dB: 1; a count: 0)
+    void setUnit(const QString &unit, qint32 decimals);
 
     QSize sizeHint() const override { return QSize(400, 70); }
     QSize minimumSizeHint() const override { return QSize(100, 40); }
@@ -57,6 +59,8 @@ protected:
 private:
     bool fixedRange = false;
     double fixedLow = 0, fixedHigh = 0;
+    QString unit = QStringLiteral("dB");
+    qint32 decimals = 1;
     static constexpr qint32 AXIS_WIDTH = 56;     // room on the right for the scale
 
     qint32 plotWidth() const { return qMax(1, width() - AXIS_WIDTH); }
@@ -85,6 +89,10 @@ public:
     // changed (the SNR of a stack is always measured), and what its tooltip says (empty: the usual one)
     void setMeasure(bool on, bool enabled, const QString &tip = QString());
     void setRange(bool fixed, double low = 0, double high = 0);
+    // The box that shows the dropout graph (the same as View > Dropout graph), when this graph has it: set without sending dropoutsToggled
+    void setDropoutsChecked(bool on);
+    // The height of the plot, apart from the row of boxes (the plot goes away when neither the white SNR nor the black PSNR is ticked)
+    void setPlotFixedHeight(qint32 height);
 
     static QColor whiteColor() { return QColor("#378ADD"); }
     static QColor blackColor() { return QColor("#E8833A"); }
@@ -92,9 +100,12 @@ public:
 signals:
     void frameRequested(qint32 frame);
     void measureToggled(bool on);       // the person ticked or cleared it
+    void dropoutsToggled(bool on);
+    void plotHeightChanged(qint32 delta);     // the plot came (+) or went (-): by how many pixels the graph grew or shrank
 
 private:
     void redraw();
+    void updatePlotVisibility();
 
     SnrPlot *plot = nullptr;
     QLabel *titleLabel = nullptr;
@@ -102,7 +113,29 @@ private:
     QCheckBox *blackCheck = nullptr;
     QCheckBox *stackCheck = nullptr;
     QCheckBox *measureCheck = nullptr;
+    QCheckBox *dropoutCheck = nullptr;
     QVector<float> white, black, stackWhite, stackBlack;
+};
+
+// The graph of the dropouts of the captures: the total length of the dropouts of each frame (the metadata of the captures), one curve for each source in
+// its colour, along the same frames as the SNR graph and on a scale that is the same for all the sources
+class DropoutGraph : public QWidget
+{
+    Q_OBJECT
+
+public:
+    explicit DropoutGraph(QWidget *parent = nullptr);
+
+    void setData(const QString &title, const QVector<SnrCurve> &curves);
+    void setMarker(qint32 frame);
+    void setRange(bool fixed, double low = 0, double high = 0);
+
+signals:
+    void frameRequested(qint32 frame);
+
+private:
+    SnrPlot *plot = nullptr;
+    QLabel *titleLabel = nullptr;
 };
 
 #endif // SNRPLOT_H
