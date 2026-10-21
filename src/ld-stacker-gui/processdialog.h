@@ -58,6 +58,8 @@ private:
     void log(const QString &text);
     void setRunning(bool running);
     void runNextStep();
+    void formatChanged();
+    QString formatSuffix() const;
     void startLdx(const QString &output);
     void finish(bool success, const QString &message);
     QString toolPath(const QString &name) const;
@@ -66,6 +68,7 @@ private:
 
     StackProject project;
     QLineEdit *outputEdit = nullptr;
+    QComboBox *formatCombo = nullptr;
     QComboBox *metadataCombo = nullptr;
     QComboBox *codecCombo = nullptr;
     QLabel *summary = nullptr;

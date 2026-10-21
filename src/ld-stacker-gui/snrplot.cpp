@@ -143,11 +143,18 @@ void SnrPlot::paintEvent(QPaintEvent *)
                 QPainterPath path;
                 bool drawing = false;
                 for (qint32 i = 0; i < curve.values.size(); i++) {
-                    if (!std::isfinite(curve.values[i])) { drawing = false; continue; }
+                    if (!std::isfinite(curve.values[i])) { if (!curve.bridge) drawing = false; continue; }
                     const QPointF at = toPoint(i, curve.values[i]);
                     if (!drawing) { path.moveTo(at); drawing = true; } else { path.lineTo(at); }
                 }
                 painter.drawPath(path);
+                if (curve.bridge) {
+                    painter.setBrush(color);
+                    for (qint32 i = 0; i < curve.values.size(); i++) {
+                        if (std::isfinite(curve.values[i])) painter.drawEllipse(toPoint(i, curve.values[i]), 1.8, 1.8);
+                    }
+                    painter.setBrush(Qt::NoBrush);
+                }
             }
         }
     }
@@ -241,6 +248,14 @@ SnrGraph::SnrGraph(bool withStack, QWidget *parent)
     measureCheck = new QCheckBox(tr("Measure"));
     measureCheck->setToolTip(tr("Measure the SNR from the test signal lines of the fields of the source, instead of reading the one in its metadata (it takes a while, in the background)"));
     row->addWidget(measureCheck);
+    // (how the measure goes: shown when the box is ticked)
+    stackModeCombo = new QComboBox;
+    stackModeCombo->addItem(tr("Rough"));
+    stackModeCombo->addItem(tr("Full"));
+    stackModeCombo->addItem(tr("Seek"));
+    stackModeCombo->setToolTip(tr("How the SNR is measured. Rough: one frame in five seconds of video, and more as you seek. Full: every frame, in the background (it takes a while, and slows slower machines). Seek: only the frames you go to."));
+    stackModeCombo->setVisible(false);
+    row->addWidget(stackModeCombo);
     if (!withStack) {
         // (the main graph: the dropout graph under it, as View > Dropout graph)
         dropoutCheck = new QCheckBox(tr("Dropouts"));
@@ -267,6 +282,7 @@ SnrGraph::SnrGraph(bool withStack, QWidget *parent)
     connect(blackCheck, &QCheckBox::toggled, this, [this]() { redraw(); updatePlotVisibility(); });
     if (dropoutCheck) connect(dropoutCheck, &QCheckBox::toggled, this, &SnrGraph::dropoutsToggled);
     connect(measureCheck, &QCheckBox::toggled, this, &SnrGraph::measureToggled);
+    connect(stackModeCombo, &QComboBox::currentIndexChanged, this, [this](qint32 index) { emit measureModeChanged(index); });
     if (stackCheck) connect(stackCheck, &QCheckBox::toggled, this, [this]() { redraw(); });
 }
 
@@ -296,7 +312,22 @@ void SnrGraph::setMeasure(bool on, bool enabled, const QString &tip)
     const QSignalBlocker blocker(measureCheck);
     measureCheck->setChecked(on);
     measureCheck->setEnabled(enabled);
+    // (the choice of how is for the main graph, whose measure it is: the windows of the sources follow it)
+    stackModeCombo->setVisible(on && dropoutCheck != nullptr);
     measureCheck->setToolTip(tip.isEmpty() ? tr("Measure the SNR from the test signal lines of the fields of the source, instead of reading the one in its metadata (it takes a while, in the background)") : tip);
+}
+
+void SnrGraph::setMeasureMode(qint32 mode)
+{
+    const QSignalBlocker blocker(stackModeCombo);
+    stackModeCombo->setCurrentIndex(qBound(0, mode, stackModeCombo->count() - 1));
+}
+
+void SnrGraph::setBridgeGaps(bool bridge)
+{
+    if (bridge == bridgeGaps) return;
+    bridgeGaps = bridge;
+    redraw();
 }
 
 void SnrGraph::setDropoutsChecked(bool on)
@@ -329,8 +360,8 @@ void SnrGraph::redraw()
         curves.append({ stackWhite, QColor("#C8C8C0"), true, whiteCheck->isChecked(), tr("Stack white") });
         curves.append({ stackBlack, QColor("#8A8A84"), true, blackCheck->isChecked(), tr("Stack black") });
     }
-    curves.append({ white, whiteColor(), false, whiteCheck->isChecked(), tr("White SNR") });
-    curves.append({ black, blackColor(), false, blackCheck->isChecked(), tr("Black PSNR") });
+    curves.append({ white, whiteColor(), false, whiteCheck->isChecked(), tr("White SNR"), bridgeGaps });
+    curves.append({ black, blackColor(), false, blackCheck->isChecked(), tr("Black PSNR"), bridgeGaps });
     plot->setCurves(curves);
 }
 

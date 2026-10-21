@@ -474,6 +474,24 @@ void MainWindow::buildUi()
     connect(snrPlot, &SnrGraph::frameRequested, this, [this](qint32 requested) { setFrame(requested + viewOffset()); });
     connect(dropoutPlot, &DropoutGraph::frameRequested, this, [this](qint32 requested) { setFrame(requested + viewOffset()); });
     connect(snrPlot, &SnrGraph::dropoutsToggled, this, &MainWindow::setDropoutGraphVisible);
+    measureMode = qBound(0, QSettings().value("measureMode", 0).toInt(), 2);
+    connect(snrPlot, &SnrGraph::measureModeChanged, this, [this](qint32 mode) {
+        measureMode = mode;
+        QSettings().setValue("measureMode", mode);
+        // (what was measured stays; the measures in progress stop and the new ones go on from the start)
+        backend->snrGeneration.store(++snrJob);
+        stackSnrActive = false;
+        ensureStackSnr();
+        backend->sourceSnrGeneration.store(++sourceSnrJob);
+        measuringId.clear();
+        measureQueue.clear();
+        for (const StackSource &source: project.sources) {
+            const SourceState state = states.value(source.id);
+            if (state.loaded && state.measure && !state.measuredFull && measureMode != 2) measureQueue.append(source.id);
+        }
+        startNextMeasure();
+        updatePlot();
+    });
     connect(snrPlot, &SnrGraph::plotHeightChanged, this, &MainWindow::resizeHeightBy);
     connect(snrPlot, &SnrGraph::measureToggled, this, [this](bool on) {
         const QString id = measureTargetId();
@@ -1808,6 +1826,7 @@ void MainWindow::sendRequest(const QString &view, qint32 channel)
         request.entries.append(entry);
     }
     backend->latest[channel].store(request.serial);
+    backend->lastInteraction.store(QDateTime::currentMSecsSinceEpoch());
     QMetaObject::invokeMethod(backend, "render", Qt::QueuedConnection, Q_ARG(FrameRequest, request));
 }
 
@@ -1838,15 +1857,29 @@ void MainWindow::on_frameReady(const FrameResult &result)
         }
     }
 
+    if (result.view != "stack") {
+        const qint32 at = project.indexOfSource(result.view);
+        if (at >= 0 && states.value(result.view).measure) {
+            SourceState &state = states[result.view];
+            const qint32 own = result.frame - effectiveOffset(at);
+            if (own >= 1 && own <= state.measuredWhite.size() && std::isfinite(result.sourceWhiteSnr)) {
+                state.measuredWhite[own - 1] = static_cast<float>(result.sourceWhiteSnr);
+                if (own <= state.measuredBlack.size() && std::isfinite(result.sourceBlackSnr)) state.measuredBlack[own - 1] = static_cast<float>(result.sourceBlackSnr);
+                snrRangeDirty = true;
+                scheduleRefresh();
+            }
+        }
+    }
+
     if (result.view == "stack") {
         lastStackResult = result;
         if (result.frame >= 1 && result.frame <= stackWhite.size()) {
             if (std::isfinite(result.stackWhiteSnr)) stackWhite[result.frame - 1] = static_cast<float>(result.stackWhiteSnr);
             if (std::isfinite(result.stackBlackSnr)) stackBlack[result.frame - 1] = static_cast<float>(result.stackBlackSnr);
+            if (std::isfinite(result.stackResidual) && result.frame <= stackResidual.size()) stackResidual[result.frame - 1] = static_cast<float>(result.stackResidual);
         }
         if (stackWindow->isVisible()) showStackPicture(result);
-        updateTabTexts();
-        updatePlot();
+        scheduleRefresh();
     }
     updateStatus();
 }
@@ -1903,6 +1936,7 @@ void MainWindow::updateSnrWindow()
         const StackSource &source = project.sources[index];
         window->setAccent(colorFor(source.id));
         window->setMeasure(states.value(source.id).measure, true);
+        window->setBridgeGaps(states.value(source.id).measure && measureMode != 1 && !states.value(source.id).measuredFull);
         updateSnrRange();
         window->setRange(snrSameScale && snrRangeAny, snrLow, snrHigh);
         // (along the frames of the file: the stack behind is the part of its timeline that the file covers)
@@ -1936,10 +1970,13 @@ void MainWindow::updatePlot()
         for (const StackSource &source: project.sources) on += (source.enabled && states.value(source.id).loaded) ? 1 : 0;
         if (on >= 2) {
             // The SNR of a stack is in no metadata: it is measured, whatever the box says
-            QString label = tr("Stack, measured from the stacked test signals");
-            if (totalFrames > 0 && stackSnrDone < totalFrames) label += tr(" - %1%").arg(stackSnrDone * 100 / totalFrames);
+            static const char *const modeNames[] = { "rough: one frame in five seconds, and the frames you seek to", "full", "only the frames you seek to" };
+            QString label = tr("Stack, measured from the stacked test signals (%1)").arg(tr(modeNames[qBound(0, measureMode, 2)]));
+            if (measureMode == 1 && totalFrames > 0 && stackSnrDone < totalFrames) label += tr(" - %1%").arg(stackSnrDone * 100 / totalFrames);
             snrPlot->setData(label, stackWhite, stackBlack);
-            snrPlot->setMeasure(true, false, tr("The SNR of a stack is in no metadata: it is always measured from the stacked test signals (only when the stack is shown, and again only when something it depends on has changed)."));
+            snrPlot->setMeasure(true, false, tr("The SNR of a stack is in no metadata: it is always measured from the stacked test signals; the choice beside says how (only when the stack is shown, and again only when something it depends on has changed)."));
+            snrPlot->setMeasureMode(measureMode);
+            snrPlot->setBridgeGaps(measureMode != 1);
             return;
         }
         // One source on: the stack is that source
@@ -1962,11 +1999,13 @@ void MainWindow::updatePlot()
         label = tr("%1, from its metadata").arg(title);
     } else {
         label = tr("%1, measured from its fields").arg(title);
-        if (state.measuredDone < state.info.frames) label += tr(" - %1%").arg(state.info.frames > 0 ? state.measuredDone * 100 / state.info.frames : 0);
+        if (measureMode == 1 && !state.measuredFull && state.measuredDone < state.info.frames) label += tr(" - %1%").arg(state.info.frames > 0 ? state.measuredDone * 100 / state.info.frames : 0);
     }
     const bool ownAxis = view != "stack";
     snrPlot->setData(label, sourceCurve(index, true, ownAxis), sourceCurve(index, false, ownAxis));
     snrPlot->setMeasure(state.measure, true);
+    snrPlot->setMeasureMode(measureMode);
+    snrPlot->setBridgeGaps(state.measure && measureMode != 1 && !state.measuredFull);
 }
 
 void MainWindow::resizeHeightBy(qint32 delta)
@@ -2067,7 +2106,7 @@ void MainWindow::updateDropoutWindows()
         window->setAccent(colorFor(source.id));
         QVector<SnrCurve> curves;
         curves.append({ dropoutCurve(index, true), colorFor(source.id), false, true, sourceTitle(source) });
-        if (stackMeasuredResidual) curves.append({ ownFrames(stackResidual, index), dropoutResidualColour(), true, true, tr("Residual (stack)") });
+        if (stackMeasuredResidual) curves.append({ ownFrames(stackResidual, index), dropoutResidualColour(), true, true, tr("Residual (stack)"), measureMode != 1 });
         window->setRange(true, 0, qMax(1.0, dropoutHigh));
         window->setContent(tr("Dropouts - source %1 (%2)").arg(index + 1).arg(sourceTitle(source)), curves, frame - effectiveOffset(index));
     }
@@ -2089,7 +2128,7 @@ void MainWindow::updateDropoutPlot()
             curves.append({ dropoutCurve(index, false), colorFor(source.id), false, true, sourceTitle(source) });
         }
         // What the stack is left with, measured with its SNR
-        curves.append({ stackResidual, dropoutResidualColour(), false, true, tr("Residual (stack)") });
+        curves.append({ stackResidual, dropoutResidualColour(), false, true, tr("Residual (stack)"), measureMode != 1 });
     } else {
         const qint32 index = project.indexOfSource(view);
         if (index >= 0 && states.value(view).loaded) curves.append({ dropoutCurve(index, true), colorFor(view), false, true, sourceTitle(project.sources[index]) });
@@ -2188,18 +2227,20 @@ void MainWindow::setSourceMeasure(const QString &id, bool on)
     if (on) {
         // (measured before, from the same file: it is not measured again)
         const auto cached = snrCache.constFind(sourceCacheKey(id));
-        if (state.measuredDone < state.info.frames && cached != snrCache.constEnd() && cached->white.size() == state.info.frames) {
+        if (!state.measuredFull && cached != snrCache.constEnd() && cached->white.size() == state.info.frames) {
             state.measuredWhite = cached->white;
             state.measuredBlack = cached->black;
             state.measuredDone = state.info.frames;
+            state.measuredFull = true;
         }
-        // (what was measured stays, and a measure that was not finished goes on from the start)
-        if (state.measuredDone < state.info.frames && measuringId != id && !measureQueue.contains(id)) {
+        // (what was measured stays; the frames not measured are empty. Rough and full measure by themselves, seek only the frames that are gone to)
+        if (state.measuredWhite.size() != state.info.frames) {
             state.measuredWhite = QVector<float>(state.info.frames, std::nanf(""));
             state.measuredBlack = QVector<float>(state.info.frames, std::nanf(""));
             state.measuredDone = 0;
-            measureQueue.append(id);
+            state.measuredFull = false;
         }
+        if (!state.measuredFull && measureMode != 2 && measuringId != id && !measureQueue.contains(id)) measureQueue.append(id);
         startNextMeasure();
     } else {
         measureQueue.removeAll(id);
@@ -2207,6 +2248,7 @@ void MainWindow::setSourceMeasure(const QString &id, bool on)
             backend->sourceSnrGeneration.store(++sourceSnrJob);    // (the one that was going stops)
             measuringId.clear();
             state.measuredDone = 0;
+            state.measuredFull = false;
             state.measuredWhite.clear();
             state.measuredBlack.clear();
             startNextMeasure();
@@ -2220,11 +2262,15 @@ void MainWindow::startNextMeasure()
     if (!measuringId.isEmpty()) return;
     while (!measureQueue.isEmpty()) {
         const QString id = measureQueue.takeFirst();
-        if (!states.contains(id) || !states.value(id).loaded || !states.value(id).measure) continue;
+        if (!states.contains(id) || !states.value(id).loaded || !states.value(id).measure || measureMode == 2) continue;
         measuringId = id;
         const quint64 job = ++sourceSnrJob;
         backend->sourceSnrGeneration.store(job);
-        QMetaObject::invokeMethod(backend, "computeSourceSnr", Qt::QueuedConnection, Q_ARG(QString, id), Q_ARG(qint32, 1), Q_ARG(quint64, job));
+        // Rough: one frame in five seconds of video; full: all of them
+        qint32 framesPerSecond = states.value(id).info.system == PAL ? 25 : 30;
+        sourceJobFull = measureMode == 1;
+        QMetaObject::invokeMethod(backend, "computeSourceSnr", Qt::QueuedConnection, Q_ARG(QString, id), Q_ARG(qint32, 1), Q_ARG(quint64, job),
+                                  Q_ARG(qint32, measureMode == 0 ? 5 * framesPerSecond : 1));
         return;
     }
 }
@@ -2241,12 +2287,16 @@ void MainWindow::on_sourceSnrReady(const QString &id, quint64 generation, const 
         state.measuredDone = qMax(state.measuredDone, point.frame);
     }
     if (finished) {
-        state.measuredDone = state.info.frames;
-        storeInCache(sourceCacheKey(id), state.measuredWhite, state.measuredBlack);
+        // (only a measure of every frame is kept: a rough one has gaps)
+        if (sourceJobFull) {
+            state.measuredDone = state.info.frames;
+            state.measuredFull = true;
+            storeInCache(sourceCacheKey(id), state.measuredWhite, state.measuredBlack);
+        }
         measuringId.clear();
         startNextMeasure();
     }
-    updatePlot();
+    scheduleRefresh();
 }
 
 QString MainWindow::sourceCacheKey(const QString &id) const
@@ -2321,6 +2371,9 @@ void MainWindow::ensureStackSnr()
         return;
     }
 
+    // Seek: nothing is measured on its own, the frames that are seeked to give theirs (the picture of the stack measures its own frame)
+    if (measureMode == 2) return;
+
     FrameRequest request;
     request.settings = project.stacking;
     request.measureResidual = withResidual;
@@ -2331,8 +2384,33 @@ void MainWindow::ensureStackSnr()
         entry.offset = effectiveOffset(index);
         request.entries.append(entry);
     }
+    stackJobFull = measureMode == 1;
+    // Rough: one frame in five seconds of video; full: all of them
+    qint32 framesPerSecond = 30;
+    for (const StackSource &source: project.sources) {
+        const SourceState state = states.value(source.id);
+        if (state.loaded) {
+            framesPerSecond = state.info.system == PAL ? 25 : 30;
+            break;
+        }
+    }
+    request.sampleStep = measureMode == 0 ? 5 * framesPerSecond : 1;
     QMetaObject::invokeMethod(backend, "computeStackSnr", Qt::QueuedConnection, Q_ARG(FrameRequest, request),
                               Q_ARG(qint32, 1), Q_ARG(quint64, snrJob));
+}
+
+// The plots are redrawn at most every so often: measures come in by chunks, and pictures by the frame, and the plots are of every frame of the disc
+void MainWindow::scheduleRefresh()
+{
+    if (!plotRefreshTimer) {
+        plotRefreshTimer = new QTimer(this);
+        plotRefreshTimer->setSingleShot(true);
+        connect(plotRefreshTimer, &QTimer::timeout, this, [this]() {
+            updateTabTexts();
+            updatePlot();
+        });
+    }
+    if (!plotRefreshTimer->isActive()) plotRefreshTimer->start(400);
 }
 
 void MainWindow::on_stackSnrReady(quint64 generation, const QVector<StackSnrPoint> &points, bool finished)
@@ -2348,10 +2426,10 @@ void MainWindow::on_stackSnrReady(quint64 generation, const QVector<StackSnrPoin
     }
     if (finished) {
         stackSnrDone = totalFrames;
-        storeInCache(stackCacheKey(stackMeasuredResidual), stackWhite, stackBlack, stackMeasuredResidual ? stackResidual : QVector<float>());
+        // (only a measure of every frame is kept: a rough one has gaps, which are not the stack's)
+        if (stackJobFull) storeInCache(stackCacheKey(stackMeasuredResidual), stackWhite, stackBlack, stackMeasuredResidual ? stackResidual : QVector<float>());
     }
-    updateTabTexts();
-    updatePlot();
+    scheduleRefresh();
 }
 
 // A number of the disc as it is read: the picture of a CAV disc, or the time of a CLV one (hours:minutes:seconds, and the picture of the second)

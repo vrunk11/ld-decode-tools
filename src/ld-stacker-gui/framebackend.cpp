@@ -12,6 +12,7 @@
 
 #include "stackedvideo.h"
 
+#include <QDateTime>
 #include <QFileInfo>
 #include <QHash>
 #include <QSet>
@@ -459,6 +460,15 @@ void FrameBackend::render(const FrameRequest &request)
                                               : weave(firstData, secondData, videoParameters.fieldWidth, videoParameters.fieldHeight);
                 if (request.entries[i].showDropouts) drawSourceDropouts(result.image, source, frames[i], QColor(request.entries[i].color));
                 result.image = applyView(result.image, request.viewMode, request.fieldIndex);
+                // (the fields are whole here: the SNR of the frame is known, and a measure of the source that goes by the frames that are seeked to takes it)
+                {
+                    double whiteTotal = 0, blackTotal = 0;
+                    qint32 whitePoints = 0, blackPoints = 0;
+                    measureField(firstData, videoParameters, whiteTotal, whitePoints, blackTotal, blackPoints);
+                    measureField(secondData, videoParameters, whiteTotal, whitePoints, blackTotal, blackPoints);
+                    if (whitePoints) result.sourceWhiteSnr = whiteTotal / whitePoints;
+                    if (blackPoints) result.sourceBlackSnr = blackTotal / blackPoints;
+                }
             }
         }
         emit frameReady(result);
@@ -515,6 +525,15 @@ void FrameBackend::render(const FrameRequest &request)
     measureField(main.second, main.videoParameters, whiteTotal, whitePoints, blackTotal, blackPoints);
     if (whitePoints) result.stackWhiteSnr = whiteTotal / whitePoints;
     if (blackPoints) result.stackBlackSnr = blackTotal / blackPoints;
+    // (and the dropouts it is left with: its fields are whole here, so they are known)
+    if (!isWholeDropout(main.firstDropOuts, main.videoParameters.fieldWidth, main.videoParameters.fieldHeight)
+        && !isWholeDropout(main.secondDropOuts, main.videoParameters.fieldWidth, main.videoParameters.fieldHeight)) {
+        qint64 length = 0;
+        for (const DropOuts *dropOuts: { &main.firstDropOuts, &main.secondDropOuts }) {
+            for (qint32 i = 0; i < dropOuts->size(); i++) length += qMax(0, dropOuts->endx(i) - dropOuts->startx(i));
+        }
+        result.stackResidual = static_cast<double>(length);
+    }
 
     emit frameReady(result);
 }
@@ -643,7 +662,8 @@ StackSnrPoint FrameBackend::measureStackFrame(const FrameRequest &request, qint3
 // How many threads measure the SNR of the stack: all but one of the machine's (the one that is left is for the pictures and the window), up to eight
 qint32 FrameBackend::snrThreadCount()
 {
-    return qBound(1, QThread::idealThreadCount() - 1, 8);
+    // (half of the machine, not all but one: the measure is in the background, and a slow machine has to be left room to show the pictures)
+    return qBound(1, QThread::idealThreadCount() / 2, 6);
 }
 
 // Each thread reads the files with a handle of its own (a SourceVideo is not for two threads): opened for a job, and let go of when it is done
@@ -665,6 +685,12 @@ void FrameBackend::openSnrReaders(const FrameRequest &request, qint32 threads, q
         }
     }
     snrReadersGeneration = generation;
+}
+
+// The measure in the background waits for the person to be done navigating (a picture asked for in the last moments), unless it was stopped meanwhile
+void FrameBackend::yieldToInteraction(const std::atomic<quint64> &generationNow, quint64 generation) const
+{
+    while (QDateTime::currentMSecsSinceEpoch() - lastInteraction.load() < 400 && generationNow.load() == generation) QThread::msleep(40);
 }
 
 // The SNR of the stack over the whole timeline.
@@ -698,30 +724,34 @@ void FrameBackend::computeStackSnr(const FrameRequest &request, qint32 startFram
     {
         const qint32 threads = snrThreadCount();
         openSnrReaders(request, threads, generation);
-        const qint32 chunk = qMax(40, threads * 12);
-        const qint32 count = qMin(chunk, total - startFrame + 1);
+        // (a short chunk: the pictures asked for in between wait for it, as it is the thread of the backend that waits for its workers)
+        const qint32 step = qMax(1, request.sampleStep);
+        const qint32 chunk = qMax(8, threads * 4);
+        const qint32 count = qMin(chunk, (total - startFrame) / step + 1);
         points.resize(count);
         std::atomic<qint32> next{0};
         QVector<QThread *> workers;
         for (qint32 t = 0; t < threads; t++) {
             QMap<QString, SourceVideo *> videos;
             for (auto it = snrReaders[t].cbegin(); it != snrReaders[t].cend(); ++it) videos.insert(it.key(), it.value().get());
-            QThread *worker = QThread::create([this, &request, &points, &next, videos, count, startFrame, inStack, generation]() {
+            QThread *worker = QThread::create([this, &request, &points, &next, videos, count, startFrame, step, inStack, generation]() {
                 for (;;) {
                     const qint32 k = next.fetch_add(1);
                     if (k >= count || generation != snrGeneration.load()) return;
-                    points[k] = measureStackFrame(request, startFrame + k, inStack, &videos);
+                    yieldToInteraction(snrGeneration, generation);
+                    if (generation != snrGeneration.load()) return;
+                    points[k] = measureStackFrame(request, startFrame + k * step, inStack, &videos);
                 }
             });
             workers.append(worker);
-            worker->start();
+            worker->start(QThread::LowestPriority);
         }
         for (QThread *worker: workers) {
             worker->wait();
             delete worker;
         }
         if (generation != snrGeneration.load()) return;
-        frame = startFrame + count;
+        frame = startFrame + count * step;
     }
 
     const bool finished = frame > total;
@@ -772,7 +802,7 @@ StackSnrPoint FrameBackend::measureSourceFrame(Loaded &source, SourceVideo &vide
 
 // The SNR of one source over its own frames, measured instead of read from the metadata: shared between several threads, each with a handle of its
 // own on the file, a chunk of frames at a time (so that pictures asked for in between are not kept waiting)
-void FrameBackend::computeSourceSnr(const QString &id, qint32 startFrame, quint64 generation)
+void FrameBackend::computeSourceSnr(const QString &id, qint32 startFrame, quint64 generation, qint32 step)
 {
     if (generation != sourceSnrGeneration.load()) return;
     const auto found = sources.constFind(id);
@@ -801,21 +831,24 @@ void FrameBackend::computeSourceSnr(const QString &id, qint32 startFrame, quint6
     }
 
     const qint32 workers = sourceReaders.size();
-    const qint32 count = qMin(qMax(40, workers * 12), total - startFrame + 1);
+    step = qMax(1, step);
+    const qint32 count = qMin(qMax(8, workers * 4), (total - startFrame) / step + 1);
     QVector<StackSnrPoint> points(count);
     std::atomic<qint32> next{0};
     QVector<QThread *> threadList;
     for (qint32 t = 0; t < workers; t++) {
         SourceVideo *video = sourceReaders[t].get();
-        QThread *worker = QThread::create([this, &source, &points, &next, video, count, startFrame, generation]() {
+        QThread *worker = QThread::create([this, &source, &points, &next, video, count, startFrame, step, generation]() {
             for (;;) {
                 const qint32 k = next.fetch_add(1);
                 if (k >= count || generation != sourceSnrGeneration.load()) return;
-                points[k] = measureSourceFrame(source, *video, startFrame + k);
+                yieldToInteraction(sourceSnrGeneration, generation);
+                if (generation != sourceSnrGeneration.load()) return;
+                points[k] = measureSourceFrame(source, *video, startFrame + k * step);
             }
         });
         threadList.append(worker);
-        worker->start();
+        worker->start(QThread::LowestPriority);
     }
     for (QThread *worker: threadList) {
         worker->wait();
@@ -823,13 +856,13 @@ void FrameBackend::computeSourceSnr(const QString &id, qint32 startFrame, quint6
     }
     if (generation != sourceSnrGeneration.load()) return;
 
-    const qint32 frame = startFrame + count;
+    const qint32 frame = startFrame + count * step;
     const bool finished = frame > total;
     emit sourceSnrReady(id, generation, points, finished);
     if (finished) {
         sourceReaders.clear();
         sourceReadersGeneration = 0;
     } else {
-        QMetaObject::invokeMethod(this, "computeSourceSnr", Qt::QueuedConnection, Q_ARG(QString, id), Q_ARG(qint32, frame), Q_ARG(quint64, generation));
+        QMetaObject::invokeMethod(this, "computeSourceSnr", Qt::QueuedConnection, Q_ARG(QString, id), Q_ARG(qint32, frame), Q_ARG(quint64, generation), Q_ARG(qint32, step));
     }
 }

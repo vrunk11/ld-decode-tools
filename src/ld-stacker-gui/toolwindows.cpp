@@ -62,6 +62,11 @@ void SnrWindow::setMarker(qint32 frame)
     graph->setMarker(frame);
 }
 
+void SnrWindow::setBridgeGaps(bool bridge)
+{
+    graph->setBridgeGaps(bridge);
+}
+
 void SnrWindow::setMeasure(bool on, bool enabled)
 {
     graph->setMeasure(on, enabled);

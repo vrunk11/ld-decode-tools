@@ -12,6 +12,7 @@
 #define FRAMEBACKEND_H
 
 #include <QImage>
+#include <cmath>
 #include <QMap>
 #include <QObject>
 #include <QString>
@@ -90,6 +91,7 @@ struct FrameRequest {
     bool residualDropouts = false;   // in the stack, the dropouts that the stacking left are drawn too
     QRgb residualColor = 0;
     bool measureResidual = false;    // the measure of the stack reads whole fields and measures the dropouts the stack is left with, as well as its SNR
+    qint32 sampleStep = 1;           // the measure of the stack takes one frame in this many (1: all of them; the rough measure: one in five seconds of video)
 };
 
 // The SNR of the stack at a frame, measured from the test signal lines of the stacked fields (NaN: none)
@@ -112,6 +114,9 @@ struct FrameResult {
     qint32 modeUsed = -1;
     double stackWhiteSnr = 0;     // of the stacked frame, NaN if it was not measured
     double stackBlackSnr = 0;
+    double stackResidual = std::nan("");    // the total length of the dropouts the stack is left with in this frame (NaN: none, or the frame is marked as a dropout as a whole)
+    double sourceWhiteSnr = std::nan("");   // the SNR of the frame of a source that is shown (NaN: none, or it is the stack)
+    double sourceBlackSnr = std::nan("");
 };
 
 Q_DECLARE_METATYPE(PalColour::Configuration)
@@ -133,6 +138,8 @@ public:
     // The serial of the newest request, set by the sender before it posts it, so that requests
     // that have been overtaken are skipped
     std::atomic<quint64> latest[2] = { 0, 0 };
+    // When the person last asked for a picture (ms since the epoch): the measures in the background wait while the person navigates, so that the pictures are not kept waiting
+    std::atomic<qint64> lastInteraction{0};
     // The generation of the stack SNR job that is wanted: a newer one makes the older stop
     std::atomic<quint64> snrGeneration{0};
     // The same for the SNR of a source that is measured from its fields (one job at a time)
@@ -148,7 +155,7 @@ public slots:
     // for in between are not kept waiting
     void computeStackSnr(const FrameRequest &request, qint32 startFrame, quint64 generation);
     // Measure the SNR of one source over its own frames, from the test signal lines of its fields (instead of reading it from its metadata), in the same way
-    void computeSourceSnr(const QString &id, qint32 startFrame, quint64 generation);
+    void computeSourceSnr(const QString &id, qint32 startFrame, quint64 generation, qint32 step);
 
 signals:
     void sourceLoaded(const SourceInfo &info);
@@ -195,6 +202,7 @@ private:
                     const QMap<QString, SourceVideo *> *videos = nullptr);
     StackSnrPoint measureStackFrame(const FrameRequest &request, qint32 frame, qint32 inStack, const QMap<QString, SourceVideo *> *videos);
     static qint32 snrThreadCount();
+    void yieldToInteraction(const std::atomic<quint64> &generationNow, quint64 generation) const;
     StackSnrPoint measureSourceFrame(Loaded &source, SourceVideo &video, qint32 frame);
     void openSnrReaders(const FrameRequest &request, qint32 threads, quint64 generation);
     QImage chromaPicture(Loaded &source, qint32 ownFrame, const QVector<StackedFrame> *around, qint32 lookBehind);

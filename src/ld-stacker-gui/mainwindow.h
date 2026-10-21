@@ -82,6 +82,7 @@ private:
         bool measure = false;
         QVector<float> measuredWhite, measuredBlack;
         qint32 measuredDone = 0;
+        bool measuredFull = false;     // what was measured is of every frame (from a measure of all of them, or the cache)
     };
 
     void buildUi();
@@ -207,6 +208,11 @@ private:
     quint64 snrJob = 0;
     QTimer *stackSnrTimer = nullptr;   // the measure of the stack begins a moment after the last change, and only if something shows it
     bool stackSnrActive = false;       // the measure for what is stacked now was begun
+    qint32 measureMode = 0;       // how the measures go (the stack, and each source that has its box ticked): 0 rough (one frame in five seconds, and the frames that are seeked to), 1 full, 2 seek only
+    bool stackJobFull = false;         // the measure in progress is of every frame (only that one is kept in the cache and the session)
+    bool sourceJobFull = false;        // the same, for the measure of a source in progress
+    QTimer *plotRefreshTimer = nullptr;   // the plots are redrawn at most every so often while measures and pictures come in
+    void scheduleRefresh();
     void ensureStackSnr();
     // What was measured is kept for as long as the program runs, by what it was measured from (the file, with its size and date, and for the stack the offsets
     // and the stacking options), so that it is measured again only when something that it depends on has changed

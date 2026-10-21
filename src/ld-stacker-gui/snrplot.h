@@ -12,6 +12,7 @@
 #define SNRPLOT_H
 
 #include <QCheckBox>
+#include <QComboBox>
 #include <QColor>
 #include <QLabel>
 #include <QString>
@@ -25,6 +26,7 @@ struct SnrCurve {
     bool thin = false;       // drawn finer, behind the others (what is compared with)
     bool visible = true;
     QString name;            // as the value under the cursor calls it
+    bool bridge = false;     // a sparse curve (a rough measure): the points that there are are joined across the frames that have none, and marked
 };
 
 // SNR curves over the frames, in dB, with the scale on the right, a marker on the frame being viewed and the
@@ -88,6 +90,11 @@ public:
     // The box that says the SNR of the source is measured from its fields instead of read from its metadata: whether it is ticked, whether it can be
     // changed (the SNR of a stack is always measured), and what its tooltip says (empty: the usual one)
     void setMeasure(bool on, bool enabled, const QString &tip = QString());
+    // How the measure goes, shown beside the box Measure when it is ticked (the main graph): 0 rough (one frame in five seconds of video, and more as the person
+    // seeks), 1 full, 2 seek (only the frames that the person goes to)
+    void setMeasureMode(qint32 mode);
+    // The curves of the SNR are joined across the frames that have none (a measure that is not of every frame)
+    void setBridgeGaps(bool bridge);
     void setRange(bool fixed, double low = 0, double high = 0);
     // The box that shows the dropout graph (the same as View > Dropout graph), when this graph has it: set without sending dropoutsToggled
     void setDropoutsChecked(bool on);
@@ -101,6 +108,7 @@ signals:
     void frameRequested(qint32 frame);
     void measureToggled(bool on);       // the person ticked or cleared it
     void dropoutsToggled(bool on);
+    void measureModeChanged(qint32 mode);
     void plotHeightChanged(qint32 delta);     // the plot came (+) or went (-): by how many pixels the graph grew or shrank
 
 private:
@@ -113,6 +121,8 @@ private:
     QCheckBox *blackCheck = nullptr;
     QCheckBox *stackCheck = nullptr;
     QCheckBox *measureCheck = nullptr;
+    QComboBox *stackModeCombo = nullptr;
+    bool bridgeGaps = false;
     QCheckBox *dropoutCheck = nullptr;
     QVector<float> white, black, stackWhite, stackBlack;
 };

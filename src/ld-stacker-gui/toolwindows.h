@@ -35,6 +35,7 @@ public:
     void setAccent(const QColor &color);
     void setMarker(qint32 frame);
     void setMeasure(bool on, bool enabled);
+    void setBridgeGaps(bool bridge);
     void setRange(bool fixed, double low, double high);
 
 signals:

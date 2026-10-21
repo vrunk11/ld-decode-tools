@@ -42,6 +42,12 @@ ProcessDialog::ProcessDialog(const StackProject &stackProject, const QString &su
     layout->addWidget(summary);
 
     QFormLayout *form = new QFormLayout;
+    // The format of the file, chosen here and not by the name: TBC or CVBS (a video and its metadata beside it), or an LDX file
+    formatCombo = new QComboBox;
+    formatCombo->addItem(tr("LDX (.ldx)"), "ldx");
+    formatCombo->addItem(tr("TBC (.tbc)"), "tbc");
+    formatCombo->addItem(tr("CVBS (.cvbs)"), "cvbs");
+    form->addRow(tr("Format:"), formatCombo);
     QHBoxLayout *outputRow = new QHBoxLayout;
     outputEdit = new QLineEdit(suggestedOutput);
     QPushButton *browseButton = new QPushButton(tr("Browse..."));
@@ -61,7 +67,23 @@ ProcessDialog::ProcessDialog(const StackProject &stackProject, const QString &su
     codecCombo->setToolTip(tr("For an .ldx file: how the video and the audio are kept in it"));
     form->addRow(tr("In an .ldx file:"), codecCombo);
 
-    QLabel *formatNote = new QLabel(tr("The video is in the format the file name gives: .tbc, or .cvbs. A format other than that of "
+    {
+        const QString suffix = QFileInfo(suggestedOutput).suffix().toLower();
+        qint32 index = formatCombo->findData(suffix == "cvbs" || suffix == "ldx" ? suffix : QStringLiteral("tbc"));
+        if (suffix != "tbc" && suffix != "cvbs" && suffix != "ldx") {
+            for (const StackSource &source: project.sources) {
+                if (source.enabled) {
+                    index = formatCombo->findData(isCvbs(source.reference()) ? QStringLiteral("cvbs") : QStringLiteral("tbc"));
+                    break;
+                }
+            }
+        }
+        formatCombo->setCurrentIndex(index);
+    }
+    connect(formatCombo, &QComboBox::currentIndexChanged, this, [this]() { formatChanged(); });
+    formatChanged();
+
+    QLabel *formatNote = new QLabel(tr("The video is in the format chosen above (the extension of the file follows it). A format other than that of "
                                        "the sources is made with ld-tbc-to-cvbs or ld-cvbs-to-tbc after the stacking, and a metadata "
                                        "format other than the one the stacking writes with ld-sqlite-to-json or ld-json-converter."));
     formatNote->setWordWrap(true);
@@ -98,6 +120,28 @@ ProcessDialog::ProcessDialog(const StackProject &stackProject, const QString &su
     connect(closeButton, &QPushButton::clicked, this, &QDialog::close);
 }
 
+QString ProcessDialog::formatSuffix() const
+{
+    return formatCombo->currentData().toString();
+}
+
+// The format changed: the extension of the name follows it, and what is for the other formats is left alone (the metadata are beside a TBC or CVBS file, the
+// compression is for an LDX one)
+void ProcessDialog::formatChanged()
+{
+    const QString suffix = formatSuffix();
+    QString text = outputEdit ? outputEdit->text().trimmed() : QString();
+    if (!text.isEmpty()) {
+        const QFileInfo info(text);
+        const QString current = info.suffix().toLower();
+        if (current == "tbc" || current == "cvbs" || current == "ldx") text = text.left(text.length() - current.length()) + suffix;
+        else text += QLatin1Char('.') + suffix;
+        outputEdit->setText(text);
+    }
+    metadataCombo->setEnabled(suffix != "ldx");
+    codecCombo->setEnabled(suffix == "ldx");
+}
+
 bool ProcessDialog::isCvbs(const QString &file)
 {
     // (a .stack source has the format of its first source)
@@ -125,17 +169,21 @@ void ProcessDialog::setRunning(bool running)
     startButton->setEnabled(!running);
     cancelButton->setEnabled(running);
     outputEdit->setEnabled(!running);
-    metadataCombo->setEnabled(!running);
-    codecCombo->setEnabled(!running);
+    formatCombo->setEnabled(!running);
+    metadataCombo->setEnabled(!running && formatSuffix() != "ldx");
+    codecCombo->setEnabled(!running && formatSuffix() == "ldx");
     progress->setRange(0, running ? 0 : 1);
     progress->setValue(0);
 }
 
 void ProcessDialog::browse()
 {
-    const QString chosen = QFileDialog::getSaveFileName(this, tr("Save the stack as"), outputEdit->text(),
-                                                        tr("TBC (*.tbc);;CVBS (*.cvbs);;LDX (*.ldx)"), nullptr, QFileDialog::DontConfirmOverwrite);
-    if (!chosen.isEmpty()) outputEdit->setText(chosen);
+    const QString suffix = formatSuffix();
+    const QString filter = suffix == "tbc" ? tr("TBC (*.tbc)") : (suffix == "cvbs" ? tr("CVBS (*.cvbs)") : tr("LDX (*.ldx)"));
+    const QString chosen = QFileDialog::getSaveFileName(this, tr("Save the stack as"), outputEdit->text(), filter, nullptr, QFileDialog::DontConfirmOverwrite);
+    if (chosen.isEmpty()) return;
+    outputEdit->setText(chosen);
+    formatChanged();      // (the extension is the one of the format)
 }
 
 void ProcessDialog::start()
@@ -158,12 +206,13 @@ void ProcessDialog::start()
     }
 
     // Where it goes, and in which video format
-    finalVideo = QDir::cleanPath(QFileInfo(outputEdit->text().trimmed()).absoluteFilePath());
-    const QString suffix = QFileInfo(finalVideo).suffix().toLower();
-    if (outputEdit->text().trimmed().isEmpty() || (suffix != "tbc" && suffix != "cvbs" && suffix != "ldx")) {
-        QMessageBox::warning(this, tr("Process"), tr("Name the file to save with the extension of the format: .tbc, .cvbs or .ldx."));
+    if (outputEdit->text().trimmed().isEmpty()) {
+        QMessageBox::warning(this, tr("Process"), tr("Name the file to save."));
         return;
     }
+    formatChanged();      // (the extension is the one of the format chosen)
+    finalVideo = QDir::cleanPath(QFileInfo(outputEdit->text().trimmed()).absoluteFilePath());
+    const QString suffix = formatSuffix();
     const bool toLdx = suffix == "ldx";
     const bool wantCvbs = toLdx ? inputCvbs : suffix == "cvbs";
     const bool wantJson = metadataCombo->currentData().toString() == "json";
