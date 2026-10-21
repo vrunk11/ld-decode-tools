@@ -22,9 +22,13 @@ struct StackSource {
     QString label;
     bool enabled = true;   // an off source stays in the list but is left out of the stack
     qint32 offset = 0;     // the source is shifted by this many frames to align it with the others
+    bool followMap = true;  // the mapping of the source (ld-discmap) is used when there is one; off, the capture it was made from is
 
     // What opens the capture: the file, or, for a track of an LDX file, the file and "#" and the id of the track
     QString reference() const;
+    // What the tools read for the source: reference(), or, by followMap, its mapping or the capture it is the mapping of (see the specification, section 13).
+    // Nothing is made: a source that has no mapping is read as it is.
+    QString resolvedReference() const;
 };
 
 // How the sources are stacked (the options of ld-disc-stacker)

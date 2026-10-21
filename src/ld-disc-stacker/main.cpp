@@ -253,7 +253,7 @@ int main(int argc, char *argv[])
         QStringList sessionArguments;
         for (const StackSource &source: session.sources) {
             if (!source.enabled) continue;
-            sessionArguments.append(source.reference());
+            sessionArguments.append(source.resolvedReference());
             offsets.append(source.offset);
         }
         if (sessionArguments.count() < 2) {

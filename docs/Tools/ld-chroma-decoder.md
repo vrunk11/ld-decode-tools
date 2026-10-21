@@ -9,7 +9,7 @@ Syntax:
 
 `ld-chroma-decoder [options] <input TBC file name> [output file name]`
 
-The input can also be a `.stack` stacking session: the stack of its sources is made as the frames are decoded, with the same result as stacking to a file with ld-disc-stacker and decoding that. The sources are lined up by the numbers of the disc that their VBI gives (then by their offsets), the stack goes from the earliest frame of any source to the latest of any, and a frame that no source has is a padded one. A source that has a mapping beside it (name_map, or the track of an LDX file that is its mapping) is read from the mapping, one that has none as it is. The metadata is that of the first source that has each frame (without dropouts or VITS measurements).
+The input can also be a `.stack` stacking session: the stack of its sources is made as the frames are decoded, with the same result as stacking to a file with ld-disc-stacker and decoding that. The sources are lined up by the numbers of the disc that their VBI gives (then by their offsets), the stack goes from the earliest frame of any source to the latest of any, and a frame that no source has is a padded one. A source that has a mapping beside it (name_map, or the track of an LDX file that is its mapping) is read from the mapping unless its `followMap` is off in the session, one that has none as it is. The metadata is that of the first source that has each frame (without dropouts or VITS measurements).
 
 > [!NOTE]
 > This is mostly automated with FFmpeg profiles today with [tbc-video-export](https://github.com/JuniorIsAJitterbug/tbc-video-export#readme).

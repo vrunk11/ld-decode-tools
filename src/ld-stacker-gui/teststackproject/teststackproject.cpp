@@ -413,6 +413,31 @@ int main(int argc, char *argv[])
         CHECK(mappedAlready.save(sessionFile, error));
         LdDecodeMetaData same;
         CHECK(StackedVideo::readMetadata(sessionFile, same, error) && same.getNumberOfFrames() == 5);
+
+        // followMap: the mapping beside a source is the one that is read, unless the source says not to follow it; a source that is a mapping already stays
+        {
+            StackSource follow = plain;
+            const QString mappedFile = TbcFiles::mappedFileName(plain.file);
+            CHECK(follow.resolvedReference() == mappedFile);
+            follow.followMap = false;
+            CHECK(follow.resolvedReference() == plain.file);
+            StackSource onMapping;
+            onMapping.file = mappedFile;
+            CHECK(onMapping.resolvedReference() == mappedFile);
+            onMapping.followMap = false;
+            CHECK(onMapping.resolvedReference() == plain.file);
+            CHECK(done.resolvedReference() == done.file);
+            // (kept in the session only when it is off; a session that does not say follows)
+            StackProject saved;
+            follow.id = "a";
+            StackSource other = plain;
+            other.id = "b";
+            saved.sources = { follow, other };
+            CHECK(saved.save(sessionFile, error));
+            StackProject reread;
+            CHECK(reread.load(sessionFile, error));
+            CHECK(reread.sources.size() == 2 && !reread.sources[0].followMap && reread.sources[1].followMap);
+        }
     }
 
     std::fprintf(stderr, "teststackproject: all tests passed\n");

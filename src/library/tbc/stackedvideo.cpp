@@ -103,27 +103,6 @@ QVector<qint32> StackedVideo::alignedPositions(const QVector<qint32> &origins, c
     return positions;
 }
 
-// What a source is read from: its mapping (ld-discmap) if it has one that exists, the file beside it with _map in its name or the track of an LDX file that is the
-// mapping of it, unless the metadata of the source say it is mapped already; the source as it is when it has none. Nothing is made here: the mapping is made by
-// ld-discmap (or ld-stacker-gui), and a source that has none is used as it is.
-static QString resolvedReference(const StackSource &source)
-{
-    const QString reference = source.reference();
-    QString mapped;
-    if (LdxCapture::isLdxName(reference)) {
-        mapped = LdxCapture::mappedOfOriginal(reference);
-    } else {
-        const QString name = TbcFiles::mappedFileName(reference);
-        if (!name.isEmpty() && QFileInfo::exists(name)) mapped = name;
-    }
-    if (mapped.isEmpty() || mapped == reference) return reference;
-    if (!metadataThere(LdDecodeMetaData::findMetadataFile(mapped))) return reference;
-    LdDecodeMetaData own;
-    const QString ownMetadata = LdDecodeMetaData::findMetadataFile(reference);
-    if (metadataThere(ownMetadata) && own.read(ownMetadata) && own.getVideoParameters().isMapped) return reference;
-    return mapped;
-}
-
 bool StackedVideo::readMetadata(const QString &stackFile, LdDecodeMetaData &metadata, QString &error)
 {
     StackProject session;
@@ -135,7 +114,7 @@ bool StackedVideo::readMetadata(const QString &stackFile, LdDecodeMetaData &meta
         return false;
     }
 
-    const QString referenceName = resolvedReference(*reference);
+    const QString referenceName = reference->resolvedReference();
     const QString metadataFile = LdDecodeMetaData::findMetadataFile(referenceName);
     if (!metadataThere(metadataFile) || !metadata.read(metadataFile)) {
         error = QObject::tr("Could not read the metadata of %1").arg(referenceName);
@@ -157,7 +136,7 @@ bool StackedVideo::readMetadata(const QString &stackFile, LdDecodeMetaData &meta
             continue;
         }
         auto other = std::make_unique<LdDecodeMetaData>();
-        const QString otherName = resolvedReference(entry);
+        const QString otherName = entry.resolvedReference();
         const QString otherFile = LdDecodeMetaData::findMetadataFile(otherName);
         if (!metadataThere(otherFile) || !other->read(otherFile)) {
             error = QObject::tr("Could not read the metadata of %1").arg(otherName);
@@ -241,7 +220,7 @@ bool StackedVideo::open(const QString &stackFile, QString &error)
     bool firstIsCvbs = false;
     for (const StackSource &entry: project.sources) {
         if (!entry.enabled) continue;
-        const QString name = resolvedReference(entry);
+        const QString name = entry.resolvedReference();
 
         // TBC and CVBS are not mixed
         const bool isCvbs = Cvbs::isDataFileName(StackProject::referenceFile(name));

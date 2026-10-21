@@ -27,6 +27,7 @@
 #include <QGridLayout>
 #include <QFileDialog>
 #include <QDir>
+#include <QDateTime>
 #include <QFileInfo>
 #include <QHBoxLayout>
 #include <QMenu>
@@ -459,15 +460,7 @@ void MainWindow::buildUi()
     connect(snrPlot, &SnrGraph::frameRequested, this, [this](qint32 requested) { setFrame(requested + viewOffset()); });
     connect(snrPlot, &SnrGraph::measureToggled, this, [this](bool on) {
         const QString id = measureTargetId();
-        if (!id.isEmpty()) {
-            setSourceMeasure(id, on);
-            return;
-        }
-        // (a stack of several sources: its SNR is in no metadata, so it is measured only when the box is ticked)
-        stackMeasure = on;
-        startStackSnr();
-        updatePlot();
-        updateSnrWindow();
+        if (!id.isEmpty()) setSourceMeasure(id, on);
     });
     connect(modeCombo, &QComboBox::currentIndexChanged, this, [this](qint32 index) {
         project.stacking.mode = index - 1;
@@ -521,6 +514,7 @@ void MainWindow::buildUi()
 void MainWindow::buildMenus()
 {
     QMenu *file = menuBar()->addMenu(tr("&File"));
+    file->addAction(tr("&New session"), QKeySequence::New, this, &MainWindow::newSession);
     file->addAction(tr("&Open session..."), QKeySequence::Open, this, &MainWindow::openSession);
     file->addAction(tr("&Add source..."), this, &MainWindow::addSourcesDialog);
     file->addSeparator();
@@ -655,6 +649,7 @@ void MainWindow::addSources(const QStringList &files)
 void MainWindow::startSource(const StackSource &source)
 {
     colorFor(source.id);
+    states[source.id].followMap = source.followMap;
     states[source.id].loaded = false;
     states[source.id].failed = false;
     QMetaObject::invokeMethod(backend, "addSource", Qt::QueuedConnection, Q_ARG(QString, source.id),
@@ -688,6 +683,23 @@ void MainWindow::loadSession(const QString &fileName)
         QMessageBox::warning(this, tr("Open session"), error);
         return;
     }
+    applySession(loaded, fileName);
+}
+
+void MainWindow::newSession()
+{
+    if (mappingBusy) return;
+    if (!project.sources.isEmpty()
+        && QMessageBox::question(this, tr("New session"), tr("Start an empty session? The sources are taken out of the list; the files are not touched, and the session is not saved."),
+                                 QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Cancel) != QMessageBox::Yes) {
+        return;
+    }
+    StackProject empty;
+    applySession(empty, QString());
+}
+
+void MainWindow::applySession(const StackProject &loaded, const QString &fileName)
+{
     fitFirstSource = false;   // a session has its own zoom
     fitPicture = false;
     fitWindow = true;
@@ -714,7 +726,7 @@ void MainWindow::loadSession(const QString &fileName)
     // (the stacking is off when a session is opened too: turning it on asks to map the sources that follow the map and have no mapping)
     project.showStack = false;
     // (the session an LDX file keeps is saved to a .stack file of its own, never over the LDX file)
-    sessionFile = LdxCapture::isLdxName(fileName) ? QString() : fileName;
+    sessionFile = (fileName.isEmpty() || LdxCapture::isLdxName(fileName)) ? QString() : fileName;
     for (const StackSource &source: project.sources) startSource(source);
 
     {
@@ -733,7 +745,7 @@ void MainWindow::loadSession(const QString &fileName)
         const QSignalBlocker blocker(chromaButton);
         chromaButton->setChecked(project.chroma);
     }
-    setWindowTitle(tr("ld-stacker-gui - %1").arg(QFileInfo(fileName).fileName()));
+    setWindowTitle(fileName.isEmpty() ? tr("ld-stacker-gui") : tr("ld-stacker-gui - %1").arg(QFileInfo(fileName).fileName()));
 
     rebuildSourceList();
     rebuildTabs();
@@ -1036,7 +1048,7 @@ void MainWindow::mappingFinished(const QStringList &ids, const QStringList &relo
             // (the file was written again: the source is read again, and the mapping that was added to it is taken if it was made)
             switchSource(id, project.sources[index].reference());
             if (mapped.contains(id)) {
-                states[id].followMap = true;
+                setFollowMap(id, true);
                 if (followBoxes.contains(id)) {
                     const QSignalBlocker blocker(followBoxes.value(id));
                     followBoxes.value(id)->setChecked(true);
@@ -1044,7 +1056,7 @@ void MainWindow::mappingFinished(const QStringList &ids, const QStringList &relo
             }
         } else if (mapped.contains(id)) {
             // (the mapping was asked for: it is the one that is used)
-            states[id].followMap = true;
+            setFollowMap(id, true);
             if (followBoxes.contains(id)) {
                 const QSignalBlocker blocker(followBoxes.value(id));
                 followBoxes.value(id)->setChecked(true);
@@ -1104,6 +1116,13 @@ void MainWindow::updateSnrOfSelectedSource()
     startMapping({ index }, false, false, MapDialog::UpdateSnr);
 }
 
+void MainWindow::setFollowMap(const QString &id, bool follow)
+{
+    states[id].followMap = follow;
+    const qint32 index = project.indexOfSource(id);
+    if (index >= 0) project.sources[index].followMap = follow;
+}
+
 // The Map button of the panel: the source that is chosen, if it has no mapped version; the Follow map box does not matter, the button was pressed
 void MainWindow::mapSelectedSource()
 {
@@ -1120,7 +1139,7 @@ void MainWindow::mapSelectedSource()
     if (!mapped.isEmpty() && (LdxCapture::isLdxName(reference) || QFileInfo::exists(mapped))) {
         // A mapped version is there: it is the one to use (nothing is made again)
         QMessageBox::information(this, tr("Map"), tr("A mapped version exists beside it (%1): it is the one that is used.").arg(QFileInfo(mapped).fileName()));
-        states[id].followMap = true;
+        setFollowMap(id, true);
         resolveFollowMap(id);
         rebuildSourceList();
         return;
@@ -1320,7 +1339,7 @@ void MainWindow::rebuildSourceList()
         bottom->addWidget(follow);
         connect(follow, &QCheckBox::toggled, this, [this, id](bool on) {
             if (!states.contains(id)) return;
-            states[id].followMap = on;
+            setFollowMap(id, on);
             resolveFollowMap(id);
             // (where the source is on the timeline depends on it, even when no other file is read)
             sourcesChanged();
@@ -1798,10 +1817,10 @@ void MainWindow::updatePlot()
         for (const StackSource &source: project.sources) on += (source.enabled && states.value(source.id).loaded) ? 1 : 0;
         if (on >= 2) {
             // The SNR of a stack is in no metadata: it is measured, whatever the box says
-            QString label = stackMeasure ? tr("Stack, measured from the stacked test signals") : tr("Stack: tick Measure to measure its SNR from the stacked test signals");
-            if (stackMeasure && totalFrames > 0 && stackSnrDone < totalFrames) label += tr(" - %1%").arg(stackSnrDone * 100 / totalFrames);
+            QString label = tr("Stack, measured from the stacked test signals");
+            if (totalFrames > 0 && stackSnrDone < totalFrames) label += tr(" - %1%").arg(stackSnrDone * 100 / totalFrames);
             snrPlot->setData(label, stackWhite, stackBlack);
-            snrPlot->setMeasure(stackMeasure, true, tr("The SNR of a stack is in no metadata: it is measured from the stacked test signals, which reads the video of every source (it is not measured while this is off)."));
+            snrPlot->setMeasure(true, false, tr("The SNR of a stack is in no metadata: it is always measured from the stacked test signals (only when the stack is shown, and again only when something it depends on has changed)."));
             return;
         }
         // One source on: the stack is that source
@@ -1907,6 +1926,13 @@ void MainWindow::setSourceMeasure(const QString &id, bool on)
     if (state.measure == on) return;
     state.measure = on;
     if (on) {
+        // (measured before, from the same file: it is not measured again)
+        const auto cached = snrCache.constFind(sourceCacheKey(id));
+        if (state.measuredDone < state.info.frames && cached != snrCache.constEnd() && cached->white.size() == state.info.frames) {
+            state.measuredWhite = cached->white;
+            state.measuredBlack = cached->black;
+            state.measuredDone = state.info.frames;
+        }
         // (what was measured stays, and a measure that was not finished goes on from the start)
         if (state.measuredDone < state.info.frames && measuringId != id && !measureQueue.contains(id)) {
             state.measuredWhite = QVector<float>(state.info.frames, std::nanf(""));
@@ -1956,15 +1982,56 @@ void MainWindow::on_sourceSnrReady(const QString &id, quint64 generation, const 
     }
     if (finished) {
         state.measuredDone = state.info.frames;
+        storeInCache(sourceCacheKey(id), state.measuredWhite, state.measuredBlack);
         measuringId.clear();
         startNextMeasure();
     }
     updatePlot();
 }
 
+// What a measure depends on: the file (its name, size and date), so that a file that was changed is measured again
+static QString fileStamp(const QString &reference)
+{
+    QString path;
+    qint32 track;
+    LdxCapture::split(reference, path, track);
+    const QFileInfo info(path);
+    return QStringLiteral("%1#%2|%3|%4").arg(info.absoluteFilePath()).arg(track).arg(info.size()).arg(info.lastModified().toMSecsSinceEpoch());
+}
+
+QString MainWindow::sourceCacheKey(const QString &id) const
+{
+    const qint32 index = project.indexOfSource(id);
+    return index < 0 ? QString() : QStringLiteral("source|") + fileStamp(project.sources[index].reference());
+}
+
+// The stack: the sources that are on, each with its file and where it begins on the timeline, and the options that change what is stacked
+QString MainWindow::stackCacheKey() const
+{
+    QString key = QStringLiteral("stack");
+    for (qint32 index = 0; index < project.sources.size(); index++) {
+        const StackSource &source = project.sources[index];
+        if (!source.enabled || !states.value(source.id).loaded) continue;
+        key += QStringLiteral("|%1@%2").arg(fileStamp(source.reference())).arg(effectiveOffset(index));
+    }
+    const StackSettings &stacking = project.stacking;
+    key += QStringLiteral("|%1,%2,%3,%4,%5,%6").arg(stacking.mode).arg(stacking.smartThreshold).arg(stacking.diffDod).arg(stacking.passthrough)
+               .arg(stacking.reverseFields).arg(totalFrames);
+    return key;
+}
+
+void MainWindow::storeInCache(const QString &key, const QVector<float> &white, const QVector<float> &black)
+{
+    if (key.isEmpty()) return;
+    // (a few measures at most: the oldest are let go of when there are many)
+    if (snrCache.size() > 24) snrCache.clear();
+    snrCache.insert(key, { white, black });
+}
+
 // What is stacked changed: what was measured of the stack is forgotten and the measure in progress stops. The measure of the stack reads the test signals of every
 // field of every source, which is a lot of reading from the disk: it begins a moment after the last change (an offset that is being turned, sources that are
-// being added), and only when the box Measure of the graph of the stack is ticked (what is shown otherwise is read from the metadata, or nothing)
+// being added), and only when the stack is shown (or the SNR window of a source, which has the stack behind its curve). What was measured is kept: the same files, offsets
+// and options are not measured again
 void MainWindow::startStackSnr()
 {
     snrRangeDirty = true;
@@ -1984,8 +2051,24 @@ void MainWindow::startStackSnr()
 void MainWindow::ensureStackSnr()
 {
     if (stackSnrActive || totalFrames < 1 || referenceIndex() < 0) return;
-    if (!stackMeasure) return;
+    bool wanted = project.showStack;
+    for (auto it = snrWindows.constBegin(); it != snrWindows.constEnd(); ++it) wanted = wanted || it.value()->isVisible();
+    if (!wanted) return;
     stackSnrActive = true;
+
+    // Measured before, from the same files, offsets and options: nothing to do
+    const QString key = stackCacheKey();
+    const auto cached = snrCache.constFind(key);
+    if (cached != snrCache.constEnd() && cached->white.size() == totalFrames) {
+        stackWhite = cached->white;
+        stackBlack = cached->black;
+        stackSnrDone = totalFrames;
+        snrRangeDirty = true;
+        updateTabTexts();
+        updatePlot();
+        updateSnrWindow();
+        return;
+    }
 
     FrameRequest request;
     request.settings = project.stacking;
@@ -2010,7 +2093,10 @@ void MainWindow::on_stackSnrReady(quint64 generation, const QVector<StackSnrPoin
         stackBlack[point.frame - 1] = point.black;
         stackSnrDone = qMax(stackSnrDone, point.frame);
     }
-    if (finished) stackSnrDone = totalFrames;
+    if (finished) {
+        stackSnrDone = totalFrames;
+        storeInCache(stackCacheKey(), stackWhite, stackBlack);
+    }
     updateTabTexts();
     updatePlot();
 }

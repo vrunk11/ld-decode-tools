@@ -55,6 +55,12 @@ ProcessDialog::ProcessDialog(const StackProject &stackProject, const QString &su
     metadataCombo->setCurrentIndex(project.metadataFormat == "json" ? 1 : 0);
     form->addRow(tr("Metadata:"), metadataCombo);
 
+    codecCombo = new QComboBox;
+    codecCombo->addItem(tr("Not compressed"), "raw");
+    codecCombo->addItem(tr("Lossless (FLAC for TBC and audio, FFV1 for CVBS)"), "auto");
+    codecCombo->setToolTip(tr("For an .ldx file: how the video and the audio are kept in it"));
+    form->addRow(tr("In an .ldx file:"), codecCombo);
+
     QLabel *formatNote = new QLabel(tr("The video is in the format the file name gives: .tbc, or .cvbs. A format other than that of "
                                        "the sources is made with ld-tbc-to-cvbs or ld-cvbs-to-tbc after the stacking, and a metadata "
                                        "format other than the one the stacking writes with ld-sqlite-to-json or ld-json-converter."));
@@ -120,6 +126,7 @@ void ProcessDialog::setRunning(bool running)
     cancelButton->setEnabled(running);
     outputEdit->setEnabled(!running);
     metadataCombo->setEnabled(!running);
+    codecCombo->setEnabled(!running);
     progress->setRange(0, running ? 0 : 1);
     progress->setValue(0);
 }
@@ -127,7 +134,7 @@ void ProcessDialog::setRunning(bool running)
 void ProcessDialog::browse()
 {
     const QString chosen = QFileDialog::getSaveFileName(this, tr("Save the stack as"), outputEdit->text(),
-                                                        tr("TBC (*.tbc);;CVBS (*.cvbs)"), nullptr, QFileDialog::DontConfirmOverwrite);
+                                                        tr("TBC (*.tbc);;CVBS (*.cvbs);;LDX (*.ldx)"), nullptr, QFileDialog::DontConfirmOverwrite);
     if (!chosen.isEmpty()) outputEdit->setText(chosen);
 }
 
@@ -153,11 +160,12 @@ void ProcessDialog::start()
     // Where it goes, and in which video format
     finalVideo = QDir::cleanPath(QFileInfo(outputEdit->text().trimmed()).absoluteFilePath());
     const QString suffix = QFileInfo(finalVideo).suffix().toLower();
-    if (outputEdit->text().trimmed().isEmpty() || (suffix != "tbc" && suffix != "cvbs")) {
-        QMessageBox::warning(this, tr("Process"), tr("Name the file to save with the extension of the format: .tbc or .cvbs."));
+    if (outputEdit->text().trimmed().isEmpty() || (suffix != "tbc" && suffix != "cvbs" && suffix != "ldx")) {
+        QMessageBox::warning(this, tr("Process"), tr("Name the file to save with the extension of the format: .tbc, .cvbs or .ldx."));
         return;
     }
-    const bool wantCvbs = suffix == "cvbs";
+    const bool toLdx = suffix == "ldx";
+    const bool wantCvbs = toLdx ? inputCvbs : suffix == "cvbs";
     const bool wantJson = metadataCombo->currentData().toString() == "json";
     for (const QString &input: inputs) {
         if (QFileInfo(input).absoluteFilePath() == QFileInfo(finalVideo).absoluteFilePath()) {
@@ -173,12 +181,18 @@ void ProcessDialog::start()
     // The tools needed
     const bool convertVideo = wantCvbs != inputCvbs;
     QStringList needed = { "ld-disc-stacker" };
+    if (toLdx) needed.append("ld-container");
     if (convertVideo) needed.append(inputCvbs ? "ld-cvbs-to-tbc" : "ld-tbc-to-cvbs");
     for (const QString &tool: needed) {
         if (toolPath(tool).isEmpty()) {
             QMessageBox::warning(this, tr("Process"), tr("%1 was not found beside this program.").arg(tool));
             return;
         }
+    }
+
+    if (toLdx) {
+        startLdx(finalVideo);
+        return;
     }
 
     // The session the stacking is given
@@ -258,6 +272,96 @@ void ProcessDialog::start()
     runNextStep();
 }
 
+// An .ldx file: asks what it holds. The sources as tracks of the file, with the session that stacks them (the file is read as the stack of its sources, and
+// nothing is stacked now); or the stack itself as a capture, which ld-disc-stacker sends as an LDX stream to a file and ld-container writes again with its index.
+void ProcessDialog::startLdx(const QString &output)
+{
+    QMessageBox box(this);
+    box.setIcon(QMessageBox::Question);
+    box.setWindowTitle(tr("Save as an LDX file"));
+    box.setText(tr("What does the LDX file hold?"));
+    box.setInformativeText(tr("The sources and the session: the sources are brought into the file as tracks (with their metadata and audio), with the session (.stack) that stacks them. "
+                              "The tools read the file as the stack of its sources, and nothing is stacked now.\n\n"
+                              "Only the stack: the sources are stacked now, and the file holds the stacked capture."));
+    QPushButton *withSources = box.addButton(tr("The sources and the session"), QMessageBox::AcceptRole);
+    QPushButton *onlyStack = box.addButton(tr("Only the stack"), QMessageBox::AcceptRole);
+    box.addButton(QMessageBox::Cancel);
+    box.setDefaultButton(onlyStack);
+    box.exec();
+    if (box.clickedButton() != withSources && box.clickedButton() != onlyStack) return;
+    const bool sourcesAndSession = box.clickedButton() == withSources;
+    const QString codec = codecCombo->currentData().toString();
+
+    sessionDirectory = std::make_unique<QTemporaryDir>();
+    if (!sessionDirectory->isValid()) {
+        QMessageBox::warning(this, tr("Process"), tr("Could not make a folder for the session."));
+        return;
+    }
+    steps.clear();
+    created.clear();
+    temporary.clear();
+    cancelled = false;
+    QString error;
+
+    if (sourcesAndSession) {
+        // The first source that is a file of its own is the one the LDX file begins with (a track 1); the others are brought in by the session
+        qint32 first = -1;
+        for (qint32 i = 0; i < project.sources.size() && first < 0; i++) {
+            const StackSource &source = project.sources[i];
+            const QString suffix = QFileInfo(source.file).suffix().toLower();
+            if (source.track < 1 && (suffix == "tbc" || suffix == "cvbs")) first = i;
+        }
+        if (first < 0) {
+            QMessageBox::warning(this, tr("Process"), tr("None of the sources is a .tbc or .cvbs file to put in the LDX file (the tracks of other LDX files stay links)."));
+            return;
+        }
+        const auto audioOf = [](const StackSource &source) {
+            const QFileInfo info(source.file);
+            const QString pcm = info.dir().filePath(info.completeBaseName() + ".pcm");
+            return info.suffix().toLower() == "cvbs" || !QFileInfo::exists(pcm) ? QString() : pcm;
+        };
+        const StackSource &begin = project.sources[first];
+        const QString base = sessionDirectory->filePath("base.ldx");
+        QStringList pack = { "pack", begin.file, "-o", base, "--name", begin.label.isEmpty() ? QFileInfo(begin.file).fileName() : begin.label, "--codec", codec };
+        if (!audioOf(begin).isEmpty()) pack << "--pcm" << audioOf(begin);
+        steps.append({ tr("Putting %1 in the file as track 1").arg(QFileInfo(begin.file).fileName()), toolPath("ld-container"), pack, nullptr });
+
+        StackProject session = project;
+        session.outputFile.clear();
+        session.sources[first].file.clear();
+        session.sources[first].track = 1;
+        const QString sessionFile = sessionDirectory->filePath("session.stack");
+        if (!session.save(sessionFile, error)) {
+            QMessageBox::warning(this, tr("Process"), error);
+            return;
+        }
+        steps.append({ tr("Bringing the other sources in, with the session"), toolPath("ld-container"),
+                       { "stack", base, sessionFile, "-o", output, "--embed", "--codec", codec }, [=]() { created.append(output); } });
+    } else {
+        StackProject session = project;
+        const QString stream = output + QStringLiteral(".stacking");
+        if (QFileInfo::exists(stream)) {
+            QMessageBox::warning(this, tr("Process"), tr("%1 is in the way: remove it first.").arg(stream));
+            return;
+        }
+        session.outputFile = output;
+        const QString sessionFile = sessionDirectory->filePath("session.stack");
+        if (!session.save(sessionFile, error)) {
+            QMessageBox::warning(this, tr("Process"), error);
+            return;
+        }
+        steps.append({ tr("Stacking %1 sources").arg(project.sources.size()), toolPath("ld-disc-stacker"), { sessionFile, "-" }, nullptr, stream });
+        steps.append({ tr("Writing the LDX file"), toolPath("ld-container"), { "recompress", stream, "--codec", codec, "-o", output }, [=]() { created.append(output); } });
+        // (what is on the way is taken away if the stacking does not finish)
+        temporary.append(stream);
+    }
+
+    log(tr("Saving to %1").arg(output));
+    setRunning(true);
+    currentStep = -1;
+    runNextStep();
+}
+
 void ProcessDialog::runNextStep()
 {
     currentStep++;
@@ -315,11 +419,20 @@ void ProcessDialog::runNextStep()
     }
 
     process = new QProcess(this);
-    process->setProcessChannelMode(QProcess::MergedChannels);
-    connect(process, &QProcess::readyRead, this, [this]() {
-        const QString text = QString::fromLocal8Bit(process->readAll()).trimmed();
-        if (!text.isEmpty()) log(text);
-    });
+    if (step.stdoutFile.isEmpty()) {
+        process->setProcessChannelMode(QProcess::MergedChannels);
+        connect(process, &QProcess::readyRead, this, [this]() {
+            const QString text = QString::fromLocal8Bit(process->readAll()).trimmed();
+            if (!text.isEmpty()) log(text);
+        });
+    } else {
+        // (an LDX stream goes to the file, and what the program says goes to the log)
+        process->setStandardOutputFile(step.stdoutFile);
+        connect(process, &QProcess::readyReadStandardError, this, [this]() {
+            const QString text = QString::fromLocal8Bit(process->readAllStandardError()).trimmed();
+            if (!text.isEmpty()) log(text);
+        });
+    }
     connect(process, &QProcess::errorOccurred, this, [this](QProcess::ProcessError error) {
         if (error == QProcess::FailedToStart && !cancelled) finish(false, tr("%1 could not be started").arg(steps[currentStep].program));
     });

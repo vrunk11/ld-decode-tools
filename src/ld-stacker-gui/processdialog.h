@@ -29,7 +29,7 @@
 
 // Stacks the sources to a file: asks where, and in which video and metadata format, runs ld-disc-stacker on
 // the session, then the other tools (ld-tbc-to-cvbs, ld-cvbs-to-tbc, ld-sqlite-to-json, ld-json-converter)
-// to get the format asked for
+// to get the format asked for. An .ldx file can be asked for too: the stack as a capture in it, or the sources as tracks with the session that stacks them.
 class ProcessDialog : public QDialog
 {
     Q_OBJECT
@@ -52,11 +52,13 @@ private:
         QString program;
         QStringList arguments;
         std::function<void()> after;     // when the step succeeded
+        QString stdoutFile;              // if the standard output of the program goes to a file (an LDX stream), and not to the log
     };
 
     void log(const QString &text);
     void setRunning(bool running);
     void runNextStep();
+    void startLdx(const QString &output);
     void finish(bool success, const QString &message);
     QString toolPath(const QString &name) const;
     static bool isCvbs(const QString &file);
@@ -65,6 +67,7 @@ private:
     StackProject project;
     QLineEdit *outputEdit = nullptr;
     QComboBox *metadataCombo = nullptr;
+    QComboBox *codecCombo = nullptr;
     QLabel *summary = nullptr;
     QPlainTextEdit *logView = nullptr;
     QProgressBar *progress = nullptr;

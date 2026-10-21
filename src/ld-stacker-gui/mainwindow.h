@@ -13,6 +13,7 @@
 
 #include <QColor>
 #include <QComboBox>
+#include <QHash>
 #include <QImage>
 #include <QLabel>
 #include <QListWidget>
@@ -85,6 +86,9 @@ private:
     void buildUi();
     void buildMenus();
     void loadSession(const QString &fileName);
+    // Puts a session in the window (an empty one for a new session; fileName is empty when there is no file)
+    void applySession(const StackProject &loaded, const QString &fileName);
+    void newSession();
     void addSources(const QStringList &files);
     void startSource(const StackSource &source);
     void removeSource(const QString &id);
@@ -131,6 +135,8 @@ private:
     QPointer<MapDialog> mapDialog;
     bool mappingBusy = false;
     void mapSelectedSource();
+    // Whether the source follows its mapping: kept in the session (the tools that read it use it) and in the state of the window
+    void setFollowMap(const QString &id, bool follow);
     void updateSnrOfSelectedSource();
     void updateFollowEnabled();
     QHash<QString, QPointer<QCheckBox>> followBoxes;
@@ -197,8 +203,16 @@ private:
     quint64 snrJob = 0;
     QTimer *stackSnrTimer = nullptr;   // the measure of the stack begins a moment after the last change, and only if something shows it
     bool stackSnrActive = false;       // the measure for what is stacked now was begun
-    bool stackMeasure = false;         // the box Measure of the graph of a stack of several sources: off, nothing of the stack is measured
     void ensureStackSnr();
+    // What was measured is kept for as long as the program runs, by what it was measured from (the file, with its size and date, and for the stack the offsets
+    // and the stacking options), so that it is measured again only when something that it depends on has changed
+    struct SnrCacheEntry {
+        QVector<float> white, black;
+    };
+    QHash<QString, SnrCacheEntry> snrCache;
+    QString sourceCacheKey(const QString &id) const;
+    QString stackCacheKey() const;
+    void storeInCache(const QString &key, const QVector<float> &white, const QVector<float> &black);
 
     QListWidget *sourceList = nullptr;
     SourceInfoPanel *infoPanel = nullptr;     // what is known of the source that is chosen, between the list and the picture

@@ -11,6 +11,8 @@
 #include "stackproject.h"
 
 #include "ldxcapture.h"
+#include "lddecodemetadata.h"
+#include "tbcfiles.h"
 
 #include <QDir>
 #include <QFile>
@@ -100,6 +102,7 @@ bool StackProject::load(const QString &fileName, QString &error)
         source.label = object.value("label").toString();
         source.enabled = object.value("enabled").toBool(true);
         source.offset = object.value("offset").toInt(0);
+        source.followMap = object.value("followMap").toBool(true);
         loaded.sources.append(source);
     }
 
@@ -151,6 +154,7 @@ bool StackProject::save(const QString &fileName, QString &error) const
         if (!source.label.isEmpty()) object["label"] = source.label;
         object["enabled"] = source.enabled;
         object["offset"] = source.offset;
+        if (!source.followMap) object["followMap"] = false;
         sourceArray.append(object);
     }
 
@@ -195,6 +199,44 @@ bool StackProject::save(const QString &fileName, QString &error) const
         return false;
     }
     return true;
+}
+
+// Whether the metadata of a capture are there: in a file, or in an LDX file
+static bool metadataThere(const QString &metadataFile)
+{
+    if (LdxCapture::isLdxName(metadataFile)) {
+        QString path;
+        qint32 track;
+        LdxCapture::split(metadataFile, path, track);
+        return QFileInfo::exists(path);
+    }
+    return QFileInfo::exists(metadataFile);
+}
+
+QString StackSource::resolvedReference() const
+{
+    const QString name = reference();
+    const bool ldx = LdxCapture::isLdxName(name);
+    if (!followMap) {
+        // The capture the mapping was made from, when this is a mapping
+        const QString original = ldx ? LdxCapture::originalOfMapped(name) : TbcFiles::originalFileName(name);
+        if (original.isEmpty() || original == name || (!ldx && !QFileInfo::exists(original))) return name;
+        return original;
+    }
+    QString mapped;
+    if (ldx) {
+        mapped = LdxCapture::mappedOfOriginal(name);
+    } else {
+        const QString beside = TbcFiles::mappedFileName(name);
+        if (!beside.isEmpty() && QFileInfo::exists(beside)) mapped = beside;
+    }
+    if (mapped.isEmpty() || mapped == name) return name;
+    if (!metadataThere(LdDecodeMetaData::findMetadataFile(mapped))) return name;
+    // (a source whose metadata say it is mapped already is the mapping)
+    LdDecodeMetaData own;
+    const QString ownMetadata = LdDecodeMetaData::findMetadataFile(name);
+    if (metadataThere(ownMetadata) && own.read(ownMetadata) && own.getVideoParameters().isMapped) return name;
+    return mapped;
 }
 
 QString StackSource::reference() const
