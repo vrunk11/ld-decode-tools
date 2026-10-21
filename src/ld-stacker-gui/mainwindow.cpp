@@ -448,6 +448,7 @@ void MainWindow::buildUi()
         updateFollowEnabled();
         updateInfoPanel();
         viewChanged();
+        ensureStackSnr();
     });
     connect(frameSpin, &QSpinBox::valueChanged, this, [this](qint32 value) { setFrame(value + viewOffset()); });
     connect(frameSlider, &QSlider::valueChanged, this, [this](qint32 value) { setFrame(value + viewOffset()); });
@@ -458,7 +459,15 @@ void MainWindow::buildUi()
     connect(snrPlot, &SnrGraph::frameRequested, this, [this](qint32 requested) { setFrame(requested + viewOffset()); });
     connect(snrPlot, &SnrGraph::measureToggled, this, [this](bool on) {
         const QString id = measureTargetId();
-        if (!id.isEmpty()) setSourceMeasure(id, on);
+        if (!id.isEmpty()) {
+            setSourceMeasure(id, on);
+            return;
+        }
+        // (a stack of several sources: its SNR is in no metadata, so it is measured only when the box is ticked)
+        stackMeasure = on;
+        startStackSnr();
+        updatePlot();
+        updateSnrWindow();
     });
     connect(modeCombo, &QComboBox::currentIndexChanged, this, [this](qint32 index) {
         project.stacking.mode = index - 1;
@@ -1741,6 +1750,7 @@ void MainWindow::openSnrWindow(const QString &id)
     window->show();
     window->raise();
     updateSnrWindow();   // (they only follow what is stacked once they are visible)
+    ensureStackSnr();
 }
 
 // The SNR windows follow what is stacked and the frame viewed
@@ -1788,10 +1798,10 @@ void MainWindow::updatePlot()
         for (const StackSource &source: project.sources) on += (source.enabled && states.value(source.id).loaded) ? 1 : 0;
         if (on >= 2) {
             // The SNR of a stack is in no metadata: it is measured, whatever the box says
-            QString label = tr("Stack, measured from the stacked test signals");
-            if (totalFrames > 0 && stackSnrDone < totalFrames) label += tr(" - %1%").arg(stackSnrDone * 100 / totalFrames);
+            QString label = stackMeasure ? tr("Stack, measured from the stacked test signals") : tr("Stack: tick Measure to measure its SNR from the stacked test signals");
+            if (stackMeasure && totalFrames > 0 && stackSnrDone < totalFrames) label += tr(" - %1%").arg(stackSnrDone * 100 / totalFrames);
             snrPlot->setData(label, stackWhite, stackBlack);
-            snrPlot->setMeasure(true, false, tr("The SNR of a stack is not in any metadata: it is always measured from the stacked test signals."));
+            snrPlot->setMeasure(stackMeasure, true, tr("The SNR of a stack is in no metadata: it is measured from the stacked test signals, which reads the video of every source (it is not measured while this is off)."));
             return;
         }
         // One source on: the stack is that source
@@ -1952,17 +1962,30 @@ void MainWindow::on_sourceSnrReady(const QString &id, quint64 generation, const 
     updatePlot();
 }
 
-// Start measuring the SNR of the stack over the whole timeline, in the background (and stop any earlier one)
+// What is stacked changed: what was measured of the stack is forgotten and the measure in progress stops. The measure of the stack reads the test signals of every
+// field of every source, which is a lot of reading from the disk: it begins a moment after the last change (an offset that is being turned, sources that are
+// being added), and only when the box Measure of the graph of the stack is ticked (what is shown otherwise is read from the metadata, or nothing)
 void MainWindow::startStackSnr()
 {
     snrRangeDirty = true;
     stackWhite = QVector<float>(totalFrames, std::nanf(""));
     stackBlack = QVector<float>(totalFrames, std::nanf(""));
     stackSnrDone = 0;
+    stackSnrActive = false;
+    backend->snrGeneration.store(++snrJob);
+    if (!stackSnrTimer) {
+        stackSnrTimer = new QTimer(this);
+        stackSnrTimer->setSingleShot(true);
+        connect(stackSnrTimer, &QTimer::timeout, this, &MainWindow::ensureStackSnr);
+    }
+    stackSnrTimer->start(800);
+}
 
-    const quint64 job = ++snrJob;
-    backend->snrGeneration.store(job);
-    if (totalFrames < 1 || referenceIndex() < 0) return;
+void MainWindow::ensureStackSnr()
+{
+    if (stackSnrActive || totalFrames < 1 || referenceIndex() < 0) return;
+    if (!stackMeasure) return;
+    stackSnrActive = true;
 
     FrameRequest request;
     request.settings = project.stacking;
@@ -1974,7 +1997,7 @@ void MainWindow::startStackSnr()
         request.entries.append(entry);
     }
     QMetaObject::invokeMethod(backend, "computeStackSnr", Qt::QueuedConnection, Q_ARG(FrameRequest, request),
-                              Q_ARG(qint32, 1), Q_ARG(quint64, job));
+                              Q_ARG(qint32, 1), Q_ARG(quint64, snrJob));
 }
 
 void MainWindow::on_stackSnrReady(quint64 generation, const QVector<StackSnrPoint> &points, bool finished)

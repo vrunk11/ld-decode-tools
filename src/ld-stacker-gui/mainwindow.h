@@ -195,6 +195,10 @@ private:
     QVector<float> stackBlack;
     qint32 stackSnrDone = 0;      // how many frames of it have been measured
     quint64 snrJob = 0;
+    QTimer *stackSnrTimer = nullptr;   // the measure of the stack begins a moment after the last change, and only if something shows it
+    bool stackSnrActive = false;       // the measure for what is stacked now was begun
+    bool stackMeasure = false;         // the box Measure of the graph of a stack of several sources: off, nothing of the stack is measured
+    void ensureStackSnr();
 
     QListWidget *sourceList = nullptr;
     SourceInfoPanel *infoPanel = nullptr;     // what is known of the source that is chosen, between the list and the picture
