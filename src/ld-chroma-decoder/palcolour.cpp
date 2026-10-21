@@ -31,6 +31,7 @@
 // Contact the author at palcolour@techmind.org
 
 #include "palcolour.h"
+#include "lumacoring.h"
 
 #include "transformpal2d.h"
 #include "transformpal3d.h"
@@ -400,28 +401,8 @@ void PalColour::doYNR(double *Yline)
     // High-pass result
     std::vector<double> hpY(videoParameters.activeVideoEnd + delay);
 
-    // Feed zeros into the filter outside the active area
-    for (qint32 h = videoParameters.activeVideoStart - delay; h < videoParameters.activeVideoStart; h++) {
-        yFilter.feed(0.0);
-    }
-    for (qint32 h = videoParameters.activeVideoStart; h < videoParameters.activeVideoEnd; h++) {
-        hpY[h] = yFilter.feed(Yline[h]);
-    }
-    for (qint32 h = videoParameters.activeVideoEnd; h < videoParameters.activeVideoEnd + delay; h++) {
-        hpY[h] = yFilter.feed(0.0);
-    }
-
-    for (qint32 h = videoParameters.activeVideoStart; h < videoParameters.activeVideoEnd; h++) {
-        // Offset to cover the filter delay
-        double a = hpY[h + delay];
-
-        // Clip the filter strength
-        if (fabs(a) > nr_y) {
-            a = (a > 0) ? nr_y : -nr_y;
-        }
-
-        Yline[h] -= a;
-    }
+    coreLumaLine(Yline, videoParameters.activeVideoStart, videoParameters.activeVideoEnd,
+                 yFilter, delay, nr_y, hpY);
 }
 
 // Decode one line into componentFrame.

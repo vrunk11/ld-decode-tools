@@ -9,6 +9,8 @@
  ******************************************************************************/
 
 #include "mainwindow.h"
+#include "aspectratio.h"
+#include "discnumbering.h"
 
 #include "stackercore.h"
 #include "ldxcapture.h"
@@ -83,17 +85,8 @@ MainWindow::MainWindow(const QStringList &arguments, QWidget *parent)
     // --force-dark-theme overrides the theme for this session without changing the setting.
     {
         QSettings settings;
-        customPalette = settings.value("customPalette").toString();
-        const qint32 savedTheme = settings.value("themeMode", static_cast<qint32>(ThemeMode::Auto)).toInt();
-        themeMode = (savedTheme >= static_cast<qint32>(ThemeMode::Auto) && savedTheme <= static_cast<qint32>(ThemeMode::DarkGrey))
-            ? static_cast<ThemeMode>(savedTheme) : ThemeMode::Auto;
-        if (themeMode == ThemeMode::Custom && customPalette.isEmpty()) themeMode = ThemeMode::Auto;
-        if (qApp->property("forceDarkTheme").toBool()) themeMode = ThemeMode::Dark;
-
-        // A saved style that is not installed here falls back to Auto
-        styleName = settings.value("styleName").toString();
-        if (!styleName.isEmpty() && !availableStyles().contains(styleName, Qt::CaseInsensitive)) styleName.clear();
-        isDarkTheme = applyAppearance(styleName, themeMode, customPalette);
+        appearance = new AppearanceMenus(settings.value("themeMode", static_cast<qint32>(ThemeMode::Auto)).toInt(),
+                                         settings.value("customPalette").toString(), settings.value("styleName").toString(), this);
     }
 
     backend = new FrameBackend;
@@ -1617,7 +1610,7 @@ void MainWindow::updateTimeline()
     bool numbered = false;
     for (const StackSource &source: project.sources) {
         const SourceState state = states.value(source.id);
-        if (state.loaded && source.enabled && state.followMap && state.info.originDisc >= 0) numbered = true;
+        if (state.loaded && source.enabled && state.followMap && state.info.originDisc != DiscNumbering::NoNumber) numbered = true;
     }
     QVector<qint32> position(count, 0);
     qint32 lowest = std::numeric_limits<qint32>::max();
@@ -1626,7 +1619,7 @@ void MainWindow::updateTimeline()
         const SourceState state = states.value(source.id);
         if (!state.loaded) continue;
         // (a source that does not follow the map is used as the capture is: its numbers are not trusted, and it begins at the start of the timeline)
-        const qint32 shift = state.followMap ? qMax(0, state.info.originDisc) : 0;
+        const qint32 shift = state.followMap && state.info.originDisc != DiscNumbering::NoNumber ? state.info.originDisc : 0;
         position[index] = shift + source.offset;
         if (source.enabled) lowest = qMin(lowest, position[index]);
     }
@@ -1647,8 +1640,8 @@ void MainWindow::updateTimeline()
         }
     }
     // The picture stays on the same moment of the disc when the start of the timeline moves (a source that begins earlier, an offset changed)
-    const qint32 newDiscAtStart = numbered ? lowest : -1;
-    if (discAtStart >= 0 && newDiscAtStart >= 0 && newDiscAtStart != discAtStart) frame += discAtStart - newDiscAtStart;
+    const qint32 newDiscAtStart = numbered ? lowest : DiscNumbering::NoNumber;
+    if (discAtStart != DiscNumbering::NoNumber && newDiscAtStart != DiscNumbering::NoNumber && newDiscAtStart != discAtStart) frame += discAtStart - newDiscAtStart;
     discAtStart = newDiscAtStart;
     totalFrames = total;
 
@@ -2267,7 +2260,7 @@ void MainWindow::startNextMeasure()
         const quint64 job = ++sourceSnrJob;
         backend->sourceSnrGeneration.store(job);
         // Rough: one frame in five seconds of video; full: all of them
-        qint32 framesPerSecond = states.value(id).info.system == PAL ? 25 : 30;
+        qint32 framesPerSecond = timecodeFramesPerSecond(states.value(id).info.system);
         sourceJobFull = measureMode == 1;
         QMetaObject::invokeMethod(backend, "computeSourceSnr", Qt::QueuedConnection, Q_ARG(QString, id), Q_ARG(qint32, 1), Q_ARG(quint64, job),
                                   Q_ARG(qint32, measureMode == 0 ? 5 * framesPerSecond : 1));
@@ -2390,7 +2383,7 @@ void MainWindow::ensureStackSnr()
     for (const StackSource &source: project.sources) {
         const SourceState state = states.value(source.id);
         if (state.loaded) {
-            framesPerSecond = state.info.system == PAL ? 25 : 30;
+            framesPerSecond = timecodeFramesPerSecond(state.info.system);
             break;
         }
     }
@@ -2435,6 +2428,8 @@ void MainWindow::on_stackSnrReady(quint64 generation, const QVector<StackSnrPoin
 // A number of the disc as it is read: the picture of a CAV disc, or the time of a CLV one (hours:minutes:seconds, and the picture of the second)
 QString MainWindow::discFormat(qint32 disc) const
 {
+    // (before the first number of the disc: the frames of a lead-in)
+    if (disc < 0) return tr("before the first number");
     qint32 type = 0;
     VideoSystem system = NTSC;
     for (const StackSource &source: project.sources) {
@@ -2444,12 +2439,8 @@ QString MainWindow::discFormat(qint32 disc) const
         system = state.info.system;
         break;
     }
-    if (type == 1) {
-        const qint32 fps = system == PAL ? 25 : 30;
-        const qint32 seconds = disc / fps;
-        return QStringLiteral("%1:%2:%3.%4").arg(seconds / 3600).arg((seconds / 60) % 60, 2, 10, QChar('0')).arg(seconds % 60, 2, 10, QChar('0')).arg(disc % fps, 2, 10, QChar('0'));
-    }
-    return type == 2 ? tr("picture %1").arg(disc) : tr("frame %1").arg(disc);
+    if (type == 1) return DiscNumbering::clvText(disc, system);
+    return type == 2 ? tr("picture %1").arg(DiscNumbering::cavText(disc)) : tr("frame %1").arg(disc);
 }
 
 void MainWindow::updateDiscLabel()
@@ -2470,9 +2461,9 @@ void MainWindow::updateDiscLabel()
         else if (own < 1 || own > state.info.frames) text = tr("no frame of this source here");
         else {
             text = tr("file frame %1").arg(own);
-            if (state.followMap && state.info.originDisc >= 0) text +=QStringLiteral(" - ") + discFormat(state.info.originDisc + own - 1);
+            if (state.followMap && state.info.originDisc != DiscNumbering::NoNumber) text += QStringLiteral(" - ") + discFormat(state.info.originDisc + own - 1);
         }
-    } else if (discAtStart >= 0) {
+    } else if (discAtStart != DiscNumbering::NoNumber) {
         text = discFormat(discAtStart + frame - 1);
     }
     discLabel->setText(text);
@@ -2674,126 +2665,20 @@ void MainWindow::resizeToImage(qint32 passesLeft)
     if (passesLeft > 0) QTimer::singleShot(0, this, [this, passesLeft]() { resizeToImage(passesLeft - 1); });
 }
 
-// View > Theme and View > Style, as in ld-analyse, with the current choices checked
+// View > Theme and View > Style, kept in the settings; what keeps colours of its own is redrawn when they change
 void MainWindow::setupAppearanceMenus(QMenu *menu)
 {
-    QSettings settings;
-
-    QMenu *themeMenu = new QMenu(tr("Theme"), this);
-    QActionGroup *themeGroup = new QActionGroup(this);
-    themeGroup->setExclusive(true);
-
-    const struct {
-        ThemeMode mode;
-        QString text;
-    } themeEntries[] = {
-        // The system's own appearance
-        { ThemeMode::Auto, tr("Auto (follow system)") },
-        { ThemeMode::Light, tr("Light") },
-        { ThemeMode::Dark, tr("Dark") },
-        // Fixed palettes
-        { ThemeMode::SoftLight, tr("Soft light") },
-        { ThemeMode::Dim, tr("Dim") },
-        { ThemeMode::DarkGrey, tr("Dark grey") },
-        { ThemeMode::Custom, tr("Custom") },
-    };
-
-    for (const auto &entry: themeEntries) {
-        if (entry.mode == ThemeMode::SoftLight) themeMenu->addSeparator();
-        QAction *action = themeMenu->addAction(entry.text);
-        action->setCheckable(true);
-        action->setChecked(entry.mode == themeMode);
-        themeGroup->addAction(action);
-        const ThemeMode mode = entry.mode;
-        if (mode == ThemeMode::Custom) {
-            // Only selectable once a custom theme has been saved
-            customThemeAction = action;
-            action->setEnabled(!customPalette.isEmpty());
-        }
-        connect(action, &QAction::triggered, this, [this, mode]() {
-            themeMode = mode;
-            QSettings().setValue("themeMode", static_cast<qint32>(mode));
-            updateAppearance();
-        });
-    }
-
-    themeMenu->addSeparator();
-    QAction *customizeAction = themeMenu->addAction(tr("Customize..."));
-    connect(customizeAction, &QAction::triggered, this, &MainWindow::customizeTheme);
-
-    QMenu *styleMenu = new QMenu(tr("Style"), this);
-    QActionGroup *styleGroup = new QActionGroup(this);
-    styleGroup->setExclusive(true);
-
-    // Auto first, then every style Qt finds on this machine
-    QStringList names = { QString() };
-    names += availableStyles();
-
-    for (const QString &name: names) {
-        QString text;
-        if (name.isEmpty()) {
-#ifdef Q_OS_WIN
-            text = tr("Auto (Classic look)");
-#else
-            text = tr("Auto (system)");
-#endif
-        } else {
-            text = styleDisplayName(name);
-        }
-
-        QAction *action = styleMenu->addAction(text);
-        action->setCheckable(true);
-        action->setChecked(name.compare(styleName, Qt::CaseInsensitive) == 0);
-        action->setData(name);
-        styleGroup->addAction(action);
-        connect(action, &QAction::triggered, this, [this, name]() {
-            styleName = name;
-            QSettings().setValue("styleName", name);
-            updateAppearance();
-        });
-    }
-
-    menu->addMenu(themeMenu);
-    menu->addMenu(styleMenu);
-}
-
-// Apply the theme and style now; what keeps colours of its own is redrawn
-void MainWindow::updateAppearance()
-{
-    isDarkTheme = applyAppearance(styleName, themeMode, customPalette);
-    rebuildSourceList();
-    for (QWidget *widget: QApplication::allWidgets()) widget->update();
-    applyZoom();
-    requestFrame();
-}
-
-// View > Theme > Customize...: edit the custom theme with a live preview
-void MainWindow::customizeTheme()
-{
-    const ThemeMode previousMode = themeMode;
-    const QString previousPalette = customPalette;
-
-    ThemeEditorDialog editor(QApplication::palette(), this);
-    connect(&editor, &ThemeEditorDialog::previewChanged, this, [this](const QString &palette) {
-        isDarkTheme = applyAppearance(styleName, ThemeMode::Custom, palette);
+    connect(appearance, &AppearanceMenus::themeModeStored, this, [](qint32 mode) { QSettings().setValue("themeMode", mode); });
+    connect(appearance, &AppearanceMenus::customPaletteStored, this, [](const QString &palette) { QSettings().setValue("customPalette", palette); });
+    connect(appearance, &AppearanceMenus::styleNameStored, this, [](const QString &name) { QSettings().setValue("styleName", name); });
+    connect(appearance, &AppearanceMenus::changed, this, [this]() {
+        rebuildSourceList();
+        for (QWidget *widget: QApplication::allWidgets()) widget->update();
+        applyZoom();
+        requestFrame();
     });
-
-    QSettings settings;
-    if (editor.exec() == QDialog::Accepted) {
-        customPalette = editor.palette();
-        themeMode = ThemeMode::Custom;
-        settings.setValue("customPalette", customPalette);
-        settings.setValue("themeMode", static_cast<qint32>(themeMode));
-        if (customThemeAction) {
-            customThemeAction->setEnabled(true);
-            customThemeAction->setChecked(true);
-        }
-    } else {
-        themeMode = previousMode;
-        customPalette = previousPalette;
-    }
-
-    updateAppearance();
+    connect(appearance, &AppearanceMenus::customizeRequested, this, [this](QWidget *parent) { appearance->customize(parent, QApplication::palette()); });
+    appearance->install(menu);
 }
 
 // How much wider (or narrower) than its samples a picture is shown, as ld-analyse does: the 4:3 or 16:9 of the
@@ -2804,8 +2689,7 @@ qint32 MainWindow::aspectAdjustment() const
     for (const StackSource &source: project.sources) {
         const SourceState state = states.value(source.id);
         if (!state.loaded) continue;
-        if (state.info.system == PAL) return state.info.widescreen ? 103 : -196;   // 625 lines
-        return state.info.widescreen ? 122 : -150;                                // 525 lines
+        return AspectRatio::widthAdjustment(state.info.system, state.info.widescreen);
     }
     return 0;
 }

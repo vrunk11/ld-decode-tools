@@ -536,6 +536,24 @@ static void testStreamReader(const QString &directory)
     }
 }
 
+// The 10-bit word of an LDX track of CVBS
+static void testWords()
+{
+    for (Cvbs::SampleEncoding encoding: { Cvbs::SampleEncoding::U10_4FSC, Cvbs::SampleEncoding::U16_4FSC, Cvbs::SampleEncoding::TPG21_4FSC, Cvbs::SampleEncoding::S16_4FSC }) {
+        for (VideoSystem system: { PAL, NTSC }) {
+            const Cvbs::SampleConverter converter(encoding, system);
+            for (qint32 stored = -2000; stored <= 2000; stored += 7) {
+                const qint16 sample = static_cast<qint16>(stored);
+                CHECK(converter.toWord(sample) == static_cast<quint16>(converter.toTbc(sample) >> 6));
+            }
+            // a 10-bit sample goes through the word and back as it was
+            if (encoding == Cvbs::SampleEncoding::U10_4FSC) {
+                for (qint32 value = 0; value < 1024; value++) CHECK(converter.fromWord(converter.toWord(static_cast<qint16>(value))) == value);
+            }
+        }
+    }
+}
+
 int main(int argc, char *argv[])
 {
     QCoreApplication app(argc, argv);
@@ -544,6 +562,7 @@ int main(int argc, char *argv[])
     CHECK(directory.isValid());
 
     testGeometry();
+    testWords();
     testFileNames();
     testTbcFiles(directory.path());
     testSampleConversion();

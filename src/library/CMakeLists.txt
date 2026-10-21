@@ -6,6 +6,8 @@ add_library(lddecode-library STATIC
     tbc/audioring.cpp
     tbc/biphasecode.cpp
     tbc/closedcaption.cpp
+    tbc/commonoptions.cpp
+    tbc/discnumbering.cpp
     tbc/dropouts.cpp
     tbc/efmchain.cpp
     tbc/filters.cpp
@@ -21,9 +23,13 @@ add_library(lddecode-library STATIC
     tbc/metadataoptions.cpp
     tbc/logging.cpp
     tbc/navigation.cpp
+    tbc/pipedinputoptions.cpp
     tbc/sourceaudio.cpp
+    tbc/fieldpool.cpp
+    tbc/sourcefilechecks.cpp
     tbc/sourcevideo.cpp
     tbc/stackercore.cpp
+    tbc/stackframe.cpp
     tbc/stackedvideo.cpp
     tbc/stackproject.cpp
     tbc/tbcfiles.cpp

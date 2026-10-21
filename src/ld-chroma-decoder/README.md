@@ -55,19 +55,20 @@ The NTSC phase of each field (its place in the 4-field colour sequence) is measu
 - `--chroma-phase <number>`: Phase rotation applied to chroma components (degrees; default 0.0)
 
 #### Video Area Control
-- `--ffll, --first_active_field_line <number>`: The first visible line of a field. Range 1-259 for NTSC (default: 20), 2-308 for PAL (default: 22)
-- `--lfll, --last_active_field_line <number>`: The last visible line of a field. Range 1-259 for NTSC (default: 259), 2-308 for PAL (default: 308)
-- `--ffrl, --first_active_frame_line <number>`: The first visible line of a frame. Range 1-525 for NTSC (default: 40), 1-620 for PAL (default: 44)
-- `--lfrl, --last_active_frame_line <number>`: The last visible line of a frame. Range 1-525 for NTSC (default: 525), 1-620 for PAL (default: 620)
+- `--ffll, --first-active-field-line, --first_active_field_line <number>`: The first visible line of a field. Range 1-259 for NTSC (default: 20), 2-308 for PAL (default: 22)
+- `--lfll, --last-active-field-line, --last_active_field_line <number>`: The last visible line of a field. Range 1-259 for NTSC (default: 259), 2-308 for PAL (default: 308)
+- `--ffrl, --first-active-frame-line, --first_active_frame_line <number>`: The first visible line of a frame. Range 1-525 for NTSC (default: 40), 1-620 for PAL (default: 44)
+- `--lfrl, --last-active-frame-line, --last_active_frame_line <number>`: The last visible line of a frame. Range 1-525 for NTSC (default: 525), 1-620 for PAL (default: 620)
 
 #### NTSC-Specific Options
 - `-o, --oftest`: NTSC: Overlay the adaptive filter map (only used for testing)
-- `--chroma-nr <number>`: NTSC: Chroma noise reduction level in dB (default 0.0)
-- `--luma-nr <number>`: Luma noise reduction level in dB (default 0.0)
+- `--chroma-nr <number>`: NTSC: Chroma noise reduction level in IRE (default 0.0)
+- `--luma-nr <number>`: Luma noise reduction level in IRE (default 0.0)
 - `--ntsc-phase-comp`: NTSC: Adjust phase per-line using burst phase
 
 #### NTSC-Specific 3D Options for Adaptive Threshold:
 - `-f ntsc3d`:  Default behavior (threshold = 1.0)
+- `-f ntsc3d --chroma-weight 1.0`: Chroma weight for the 3D adaptive filter (default 1.0, higher = more 2D)
 - `-f ntsc3d --adapt-threshold 1.5`: More aggressive 3D filtering (less fallback to 2D/1D)
 - `-f ntsc3d --adapt-threshold 0.1`: More conservative (more likely to use 2D/1D on motion)
 
@@ -79,16 +80,16 @@ The NTSC phase of each field (its place in the 4-field colour sequence) is measu
 - `--input-metadata <filename>`: Specify the input metadata file (default input.db, or input.json if only that exists)
 
 #### Active Area Selection
-- `--ffll, --first_active_field_line <number>`: The first visible line of a field
-- `--lfll, --last_active_field_line <number>`: The last visible line of a field  
-- `--ffrl, --first_active_frame_line <number>`: The first visible line of a frame
-- `--lfrl, --last_active_frame_line <number>`: The last visible line of a frame
+- `--ffll, --first-active-field-line, --first_active_field_line <number>`: The first visible line of a field
+- `--lfll, --last-active-field-line, --last_active_field_line <number>`: The last visible line of a field  
+- `--ffrl, --first-active-frame-line, --first_active_frame_line <number>`: The first visible line of a frame
+- `--lfrl, --last-active-frame-line, --last_active_frame_line <number>`: The last visible line of a frame
 
 #### Chroma Processing
 - `--chroma-gain <number>`: Gain factor applied to chroma components (default 1.0)
 - `--chroma-phase <number>`: Phase rotation applied to chroma components
 - `--chroma-nr <number>`: NTSC: Chroma noise reduction
-- `--luma-nr <number>`: Luma noise reduction level in dB
+- `--luma-nr <number>`: Luma noise reduction level in IRE
 
 #### NTSC Specific
 - `-o, --oftest`: NTSC: Overlay the adaptive filter

@@ -34,6 +34,7 @@
 
 #include "sourcevideo.h"
 #include "targetvideo.h"
+#include "discnumbering.h"
 #include "lddecodemetadata.h"
 #include "stacker.h"
 
@@ -120,9 +121,7 @@ private:
     QVector<qint32> offsets;
     bool useOffsets = false;
 
-    QVector<bool> sourceDiscTypeCav;
-    QVector<qint32> sourceMinimumVbiFrame;
-    QVector<qint32> sourceMaximumVbiFrame;
+    DiscNumbering::SourceRanges ranges;
 
     bool setMinAndMaxVbiFrames();
     qint32 convertSequentialFrameNumberToVbi(qint32 sequentialFrameNumber, qint32 sourceNumber);

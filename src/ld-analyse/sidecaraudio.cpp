@@ -15,6 +15,9 @@
 #include <QList>
 #include <QRegularExpression>
 
+#include "ldxcapture.h"
+#include "tbcfiles.h"
+
 namespace SidecarAudio {
 
 // What a capture keeps in files of its own name that are not audio to play (or are read in another way)
@@ -50,13 +53,13 @@ QStringList find(const QString &captureName)
 {
     QStringList found;
     if (captureName.isEmpty()) return found;
-    QString path = captureName;
-    const qint32 hash = path.lastIndexOf('#');
-    if (hash > 0 && path.mid(hash + 1).toInt() > 0) path = path.left(hash);        // (a track of an LDX file)
+    QString path;
+    qint32 track;
+    LdxCapture::split(captureName, path, track);        // (a track of an LDX file)
     const QFileInfo capture(path);
     // A Y/C capture's second file (.tbcc, or _chroma.tbc) has the name of the first
-    QString base = capture.completeBaseName();
-    if (base.endsWith("_chroma")) base.chop(7);
+    QString base = TbcFiles::baseName(capture.fileName());
+    if (base == capture.fileName()) base = capture.completeBaseName();
     QStringList candidates;
     const QFileInfoList entries = capture.absoluteDir().entryInfoList(QDir::Files | QDir::Readable, QDir::Name);
     for (const QFileInfo &entry: entries) {

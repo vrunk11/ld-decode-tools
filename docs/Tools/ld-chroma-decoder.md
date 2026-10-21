@@ -63,6 +63,8 @@ The `mono` filter treats the whole signal as luma, so it's the best choice when 
 
 `--first-active-field-line int`, `--ffll int`
 
+The name with underscores (`--first_active_field_line`) works too; so do the ones of the three options that follow (`--last_active_field_line`, `--first_active_frame_line`, `--last_active_frame_line`).
+
 The first visible line of a field.
 
 Ranges:
@@ -93,14 +95,14 @@ Ranges:
 
 `--first-active-frame-line int`, `--ffrl int`
 
-The first visible line of a field.
+The first visible line of a frame.
 
 Ranges:
 
 | Format | Range   | Default |
 | ------ | ------- | ------- |
 | NTSC   | 1 - 525 | 40      |
-| PAL    | 2 - 620 | 44      |
+| PAL    | 1 - 620 | 44      |
 
 
 ### Last Active Frame Line
@@ -108,7 +110,7 @@ Ranges:
 
 `--last-active-frame-line int`, `--lfrl int`
 
-The last visible line of a field.
+The last visible line of a frame.
 
 
 Ranges:
@@ -116,56 +118,31 @@ Ranges:
 | Format | Range   | Default |
 | ------ | ------- | ------- |
 | NTSC   | 1 - 525 | 525     |
-| PAL    | 2 - 620 | 620     |
+| PAL    | 1 - 620 | 620     |
 
 
 # Chroma Decoding Control
 
 
-### Luma Decoder
+### Decoder
 
 
-`--chroma-decoder-luma decoder`
+`-f decoder`, `--decoder decoder`
 
-Chroma decoder to use for the luma instance.
-
-
->[!CAUTION]
-> It is unlikely you need to adjust this.
+Chroma decoder to use. Without it, the decoder is chosen from the video system of the capture: `pal2d` for PAL and PAL-M, `ntsc2d` for NTSC.
 
 Available decoders:
 
-| Format | Decoder         | Default |
-| ------ | --------------- | ------- |
-| B/W    | `MONO`          | LUMA    |
-| PAL    | `PAL2D`         |         |
-| PAL    | `TRANSFORM2D`   |         |
-| PAL    | `TRANSFORM3D`   |         |
-| NTSC   | `NTSC1D`        |         |
-| NTSC   | `NTSC2D`        |         |
-| NTSC   | `NTSC3D`        |         |
-| NTSC   | `NTSC3DNOADAPT` |         |
-
-
-### Chroma Decoder
-
-
-`--chroma-decoder decoder`
-
-Chroma decoder to use.
-
-Available decoders:
-
-| Format | Decoder         | Default     |
-| ------ | --------------- | ----------- |
-| B/W    | `MONO`          | LUMA        |
-| PAL    | `PAL2D`         | PAL/PAL-M   |
-| PAL    | `TRANSFORM2D`   |             |
-| PAL    | `TRANSFORM3D`   | PAL CVBS/LD |
-| NTSC   | `NTSC1D`        |             |
-| NTSC   | `NTSC2D`        | NTSC        |
-| NTSC   | `NTSC3D`        | NTSC CVBS   |
-| NTSC   | `NTSC3DNOADAPT` |             |
+| Format | Decoder         | Default   |
+| ------ | --------------- | --------- |
+| B/W    | `mono`          |           |
+| PAL    | `pal2d`         | PAL/PAL-M |
+| PAL    | `transform2d`   |           |
+| PAL    | `transform3d`   |           |
+| NTSC   | `ntsc1d`        |           |
+| NTSC   | `ntsc2d`        | NTSC      |
+| NTSC   | `ntsc3d`        |           |
+| NTSC   | `ntsc3dnoadapt` |           |
 
 
 ### Chroma Gain
@@ -188,7 +165,7 @@ Phase rotation applied to chroma components (degrees `0~360`).
 
 `--luma-nr float`
 
-Luma noise reduction level in dB.
+Luma noise reduction level in IRE.
 
 >[!CAUTION]
 > It is unlikely you need to adjust this.
@@ -265,25 +242,25 @@ Options:
   -t, --threads <number>                      Specify the number of concurrent
                                               threads (default number of logical
                                               CPUs)
-  --ffll, --first_active_field_line <number>  The first visible line of a
+  --ffll, --first-active-field-line, --first_active_field_line <number>  The first visible line of a
                                               field. Range 1-259 for NTSC
                                               (default: 20), 2-308 for PAL
                                               (default: 22)
-  --lfll, --last_active_field_line <number>   The last visible line of a field.
+  --lfll, --last-active-field-line, --last_active_field_line <number>   The last visible line of a field.
                                               Range 1-259 for NTSC (default:
                                               259), 2-308 for PAL (default: 308)
-  --ffrl, --first_active_frame_line <number>  The first visible line of a
+  --ffrl, --first-active-frame-line, --first_active_frame_line <number>  The first visible line of a
                                               frame. Range 1-525 for NTSC
                                               (default: 40), 1-620 for PAL
                                               (default: 44)
-  --lfrl, --last_active_frame_line <number>   The last visible line of a frame.
+  --lfrl, --last-active-frame-line, --last_active_frame_line <number>   The last visible line of a frame.
                                               Range 1-525 for NTSC (default:
                                               525), 1-620 for PAL (default: 620)
   -o, --oftest                                NTSC: Overlay the adaptive filter
                                               map (only used for testing)
   --chroma-nr <number>                        NTSC: Chroma noise reduction
-                                              level in dB (default 0.0)
-  --luma-nr <number>                          Luma noise reduction level in dB
+                                              level in IRE (default 0.0)
+  --luma-nr <number>                          Luma noise reduction level in IRE
                                               (default 0.0)
   --ntsc-phase-comp                           NTSC: Adjust phase per-line using
                                               burst phase

@@ -103,7 +103,6 @@ private:
         void splitIQ();
         void splitIQlocked();
         void filterIQ();
-        void filterIQFull();
         void adjustY();
         void doCNR();
         void doYNR();

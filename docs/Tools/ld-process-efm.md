@@ -89,7 +89,7 @@ Options:
   -b, --data             Decode F1 frames as data instead of audio
   -D, --dts              Audio is DTS rather than PCM (allow non-standard F3
                          syncs)
-  -t, --time             Non-standard audio decode (no time-stamp information)
+  -t, --time             Non-standard audio decode (no timestamp information)
   --debug-efmtof3frames  Show EFM To F3 frame decode detailed debug
   --debug-syncf3frames   Show F3 frame synchronisation detailed debug
   --debug-f3tof2frames   Show F3 To F2 frame decode detailed debug
@@ -117,7 +117,7 @@ CLI options:
   * Pad start of audio from 00:00 to match initial disc time - Pads the start of the input sample to ensure the output starts from the 00:00 time of the disc.  Useful for assembling partial captures.
   * Decode F1 frames as audio - Decode F1 frames as audio data
   * Decode F1 frames as data - Decode F1 frames as data
-  * Non-standard audio decode (no time-stamp information in input EFM)
+  * Non-standard audio decode (no timestamp information in input EFM)
 
 * Detailed debugging for development
   * EFM to F3 Frame debug

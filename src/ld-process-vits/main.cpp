@@ -34,9 +34,11 @@
 #include "ldxfilter.h"
 #include "vitsmetrics.h"
 #include "tbc/metadataoptions.h"
+#include "tbc/commonoptions.h"
 #include "lddecodemetadata.h"
 #include "sourcevideo.h"
-#include "processingpool.h"
+#include "tbc/fieldpool.h"
+#include "vitsanalyser.h"
 
 int main(int argc, char *argv[])
 {
@@ -72,15 +74,12 @@ int main(int argc, char *argv[])
     metadataOptions.addTo(parser);
 
     // Option to disable metadata back-up (-n)
-    QCommandLineOption showNoBackupOption(QStringList() << "n" << "nobackup",
-                                       QCoreApplication::translate("main", "Do not create a backup of the input metadata"));
-    parser.addOption(showNoBackupOption);
+    NoBackupOption showNoBackupOption;
+    showNoBackupOption.addTo(parser);
 
     // Option to select the number of threads (-t)
-    QCommandLineOption threadsOption(QStringList() << "t" << "threads",
-                                        QCoreApplication::translate("main", "Specify the number of concurrent threads (default is the number of logical CPUs)"),
-                                        QCoreApplication::translate("main", "number"));
-    parser.addOption(threadsOption);
+    ThreadsOption threadsOption;
+    threadsOption.addTo(parser);
 
     // Positional argument to specify input TBC file
     parser.addPositionalArgument("input", QCoreApplication::translate("main", "Specify input TBC file"));
@@ -90,21 +89,13 @@ int main(int argc, char *argv[])
 
     // Standard logging options
     processStandardDebugOptions(parser);
-    if (!metadataOptions.process(parser)) return -1;
+    if (!metadataOptions.process(parser)) return 2;
 
     // Get the options from the parser
-    bool noBackup = parser.isSet(showNoBackupOption);
+    bool noBackup = showNoBackupOption.isSet(parser);
 
-    qint32 maxThreads = QThread::idealThreadCount();
-    if (parser.isSet(threadsOption)) {
-        maxThreads = parser.value(threadsOption).toInt();
-
-        if (maxThreads < 1) {
-            // Quit with error
-            qCritical("Specified number of threads must be greater than zero");
-            return -1;
-        }
-    }
+    qint32 maxThreads;
+    if (!threadsOption.process(parser, maxThreads)) return 2;
 
     // Get the arguments from the parser
     QString inputFilename;
@@ -114,7 +105,7 @@ int main(int argc, char *argv[])
     } else {
         // Quit with error
         qCritical("You must specify an input TBC file");
-        return -1;
+        return 2;
     }
 
     // An LDX stream on the standard input: the metadata of each field are made as the field goes by, and the stream
@@ -139,7 +130,7 @@ int main(int argc, char *argv[])
 
     // Work out the metadata filenames
     QString inputMetadataFilename;
-    if (!metadataOptions.selectInput(inputFilename, true, inputMetadataFilename)) return -1;
+    if (!metadataOptions.selectInput(inputFilename, true, inputMetadataFilename)) return 1;
 
     // Open the source video metadata
     LdDecodeMetaData metaData;
@@ -151,21 +142,21 @@ int main(int argc, char *argv[])
 
     // The output defaults to updating the input in place, in the same format
     QString outputMetadataFilename;
-    if (!metadataOptions.selectOutput(inputMetadataFilename, metaData.getFormat(), outputMetadataFilename)) return -1;
+    if (!metadataOptions.selectOutput(inputMetadataFilename, metaData.getFormat(), outputMetadataFilename)) return 2;
 
     // If we're overwriting the input metadata file, back it up first
-    if (inputMetadataFilename == outputMetadataFilename && !noBackup) {
-        qInfo().nospace().noquote() << "Backing up metadata to " << inputMetadataFilename << ".vbup";
-        if (!QFile::copy(inputMetadataFilename, inputMetadataFilename + ".vbup")) {
-            qCritical() << "Unable to back-up input metadata file - back-up already exists?";
-            return 1;
-        }
-    }
+    if (!NoBackupOption::backUp(inputMetadataFilename, outputMetadataFilename, noBackup, ".vbup")) return 1;
 
     // Perform the processing
     qInfo() << "Beginning VITS processing...";
-    ProcessingPool processingPool(inputFilename, outputMetadataFilename, maxThreads, metaData);
-    if (!processingPool.process()) return 1;
+    FieldPool::Settings pool;
+    pool.name = "VITS";
+    pool.createWorker = [](QAtomicInt &abort, FieldPool &fieldPool) -> QThread * { return new VitsAnalyser(abort, fieldPool); };
+    // Only the VITS metrics of a field change
+    pool.storeField = [](LdDecodeMetaData &metadata, qint32 fieldNumber, const LdDecodeMetaData::Field &field) {
+        metadata.updateFieldVitsMetrics(field.vitsMetrics, fieldNumber);
+    };
+    if (!FieldPool(pool, inputFilename, outputMetadataFilename, maxThreads, metaData).process()) return 1;
 
     if (outputMetadataFilename == inputMetadataFilename) {
         MetadataOptions::warnIfOtherFormatStale(inputFilename, outputMetadataFilename);

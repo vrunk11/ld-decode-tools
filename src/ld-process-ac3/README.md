@@ -21,17 +21,26 @@ ld-ac3-decode [options] source_file output_file [log_file]
 ## Options
 
 ### ld-ac3-demodulate
-This tool does not support `--help`
+#### Options
+- `-v <int>`, `--log-level <int>`: Set the logging level (0-3: DEBUG, INFO, WARN, ERR)
+- `-s <int>`, `--sliding-average-window <int>`: Set the sliding average window's size
+- `-d`, `--debug`: Show debug messages (the logging level DEBUG; an explicit `-v` wins)
+- `-q`, `--quiet`: Suppress info and warning messages (the logging level ERR)
+- `--version`: Print the version
+- `-h`, `--help`: Print help information
 
 #### Arguments
-- `source_file`: Input RF signal file (use '-' for stdin)
+- `source_file`: Input RF signal file, 46.08 MHz 8-bit unsigned samples (use '-' for stdin)
 - `output_file`: Output QPSK symbols file (use '-' for stdout)
 - `log_file`: Optional log file (defaults to stderr)
 
 ### ld-ac3-decode
 #### Options
-- `-v <int>`: Set the logging level (0-3: DEBUG, INFO, WARN, ERR)
-- `-h`: Print help information
+- `-v <int>`, `--log-level <int>`: Set the logging level (0-3: DEBUG, INFO, WARN, ERR)
+- `-d`, `--debug`: Show debug messages (the logging level DEBUG; an explicit `-v` wins)
+- `-q`, `--quiet`: Suppress info and warning messages (the logging level ERR)
+- `--version`: Print the version
+- `-h`, `--help`: Print help information
 
 #### Arguments
 - `source_file`: Input QPSK symbols file (use '-' for stdin)

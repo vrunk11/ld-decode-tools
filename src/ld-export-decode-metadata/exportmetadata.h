@@ -271,9 +271,6 @@ public:
     void setIsFirstFieldFirst(bool flag);
     bool getIsFirstFieldFirst();
 
-    qint32 convertClvTimecodeToFrameNumber(ExportMetaData::ClvTimecode clvTimeCode);
-    ExportMetaData::ClvTimecode convertFrameNumberToClvTimecode(qint32 clvFrameNumber);
-
     // PCM Analogue audio helper methods
     qint32 getFieldPcmAudioStart(qint32 sequentialFieldNumber);
     qint32 getFieldPcmAudioLength(qint32 sequentialFieldNumber);

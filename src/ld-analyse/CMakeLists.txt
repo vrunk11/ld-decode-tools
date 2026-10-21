@@ -2,7 +2,7 @@
 add_compile_definitions(_USE_MATH_DEFINES)
 
 set(ld-analyse_SOURCES
-    blacksnranalysisdialog.cpp blacksnranalysisdialog.ui
+    snranalysisdialog.cpp snranalysisdialog.ui
     busydialog.cpp busydialog.ui
     closedcaptionsdialog.cpp closedcaptionsdialog.ui
     main.cpp
@@ -30,8 +30,6 @@ set(ld-analyse_SOURCES
     vbidialog.cpp vbidialog.ui
     configuration.cpp
     dropoutanalysisdialog.cpp dropoutanalysisdialog.ui
-    visibledropoutanalysisdialog.cpp visibledropoutanalysisdialog.ui
-    whitesnranalysisdialog.cpp whitesnranalysisdialog.ui
     plotwidget.cpp
     videofilter.cpp
     videofilterdialog.cpp

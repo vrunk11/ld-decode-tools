@@ -1,5 +1,5 @@
 ## ld-dropout-correct
-This application uses the drop-out information in the metadata file (`.tbc.db` or `.tbc.json`) to perform dropout correction on the input TBC file and produces a new output file.  The current version of the corrector uses framing in order to provide inter-field correction.  Note that inter-field correction may not function correctly for NTSC pull-down sources.
+This application uses the dropout information in the metadata file (`.tbc.db` or `.tbc.json`) to perform dropout correction on the input TBC file and produces a new output file.  The current version of the corrector uses framing in order to provide inter-field correction.  Note that inter-field correction may not function correctly for NTSC pull-down sources.
 
 Syntax:
 

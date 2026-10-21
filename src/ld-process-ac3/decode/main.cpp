@@ -34,6 +34,7 @@
 #endif
 
 #include "../logger.hpp"
+#include "../standardoptions.hpp"
 #include "AC3Framer.hpp"
 #include "ac3_parsing.hpp" // mostly for debug & stats
 
@@ -49,6 +50,10 @@ void doHelp(const std::string &app) {
               << "\n  log_file be overwritten / created with any logging or error messages."
               << "\n  Options:"
               << "\n    -v (int)    Set the logging level. Must be 0-3, representing DEBUG, INFO, WARN and ERR."
+              << "\n    --log-level (int)  The same as -v."
+              << "\n    -d, --debug   Show debug messages (the logging level DEBUG; an explicit -v wins)."
+              << "\n    -q, --quiet   Suppress info and warning messages (the logging level ERR)."
+              << "\n    --version   Print the version."
               << "\n    -h          Print this help."
               << std::endl;
 }
@@ -60,14 +65,8 @@ int main(int argc, char *argv[]) {
     _setmode(_fileno(stdin), O_BINARY);	
 #endif
 
-    // -h and --help show the help and succeed; getopt only knows short options,
-    // so --help would otherwise be an unknown option and an error
-    for (int i = 1; i < argc; i++) {
-        if (std::strcmp(argv[i], "--help") == 0 || std::strcmp(argv[i], "-h") == 0) {
-            doHelp(argv[0]);
-            return 0;
-        }
-    }
+    // The options of the other tools (--help, --version, -d, -q) and the long names are taken first: getopt only knows short options
+    if (const int done = takeStandardOptions(argc, argv, "ld-ac3-decode", doHelp); done >= 0) return done;
 
     while (true) {
         switch (getopt(argc, argv, "v:h?")) {

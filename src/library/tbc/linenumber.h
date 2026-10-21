@@ -124,11 +124,6 @@ public:
         return LineNumber((field0Line * 2) + (isFirstField ? 0 : 1), system);
     }
 
-    // Construct from a 1-based line number within the field
-    static LineNumber fromField1(qint32 field1Line, bool isFirstField, VideoSystem system) {
-        return fromField0(field1Line - 1, isFirstField, system);
-    }
-
 protected:
     // Private constructor used by from* static methods
     LineNumber(qint32 number, VideoSystem system, bool isStandard = false)

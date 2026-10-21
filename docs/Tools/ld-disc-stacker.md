@@ -55,6 +55,8 @@ Arguments:
                                        piped output)
 ```
 
+**Field phases.** The fields of a video come in a sequence of colour phases (`fieldPhaseID`): 1 to 4 for NTSC and PAL-M, 1 to 8 for PAL, a field at a time and round again. The padded fields of the first source may have broken it, so the metadata of the stack have it put in sequence again, from the first field that is not padded.
+
 ## Stacking a session file
 
 Instead of the list of inputs, one `.stack` session file can be given, as saved by [ld-stacker-gui](ld-stacker-gui.md):

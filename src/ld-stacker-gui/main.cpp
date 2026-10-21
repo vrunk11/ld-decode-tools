@@ -37,9 +37,11 @@ int main(int argc, char *argv[])
         "Compare several captures of the same disc and the stack of them.");
     parser.addHelpOption();
     parser.addVersionOption();
+    addStandardDebugOptions(parser);
     parser.addOption(QCommandLineOption("force-dark-theme", "Force dark theme regardless of system settings"));
     parser.addPositionalArgument("files", QCoreApplication::translate("main", "A .stack session file, or the TBC sources to stack"), "[files...]");
     parser.process(application);
+    processStandardDebugOptions(parser);
     // The theme (View > Theme) is applied by MainWindow from the settings; this overrides it for this session
     application.setProperty("forceDarkTheme", parser.isSet("force-dark-theme"));
 

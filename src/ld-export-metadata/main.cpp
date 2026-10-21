@@ -113,7 +113,7 @@ int main(int argc, char *argv[])
         inputFileName = positionalArguments.at(0);
     } else {
         qCritical("You must specify the input metadata file");
-        return 1;
+        return 2;
     }
 
     // Load the source video metadata

@@ -23,6 +23,7 @@
 ************************************************************************/
 
 #include "discmap.h"
+#include "discnumbering.h"
 
 #include <algorithm>
 #include "tbc/logging.h"
@@ -137,9 +138,9 @@ DiscMap::DiscMap(const QFileInfo &metadataFileInfo, const bool reverseFieldOrder
     // Count how many frames are marked as CAV or CLV in the metadata
     for (qint32 frameNumber = 0; frameNumber < framesToCheck; frameNumber++) {
         // Look for a complete, valid CAV picture number or CLV time-code
-        if (vbiData[frameNumber].picNo > 0) cavCount++;
-        if (vbiData[frameNumber].clvHr != -1 && vbiData[frameNumber].clvMin != -1 &&
-                vbiData[frameNumber].clvSec != -1 && vbiData[frameNumber].clvPicNo != -1) clvCount++;
+        qint32 discNumber;
+        if (DiscNumbering::cavNumber(vbiData[frameNumber], discNumber)) cavCount++;
+        if (DiscNumbering::clvNumber(*ldDecodeMetaData, vbiData[frameNumber], discNumber)) clvCount++;
     }
 
     // If the metadata has no picture numbers or time-codes, we cannot use the source
@@ -167,13 +168,10 @@ DiscMap::DiscMap(const QFileInfo &metadataFileInfo, const bool reverseFieldOrder
     qint32 iecOffset = -1;
     for (qint32 frameNumber = 0; frameNumber < m_numberOfFrames; frameNumber++) {
         if (!m_isDiscCav) {
-            // Attempt to translate the CLV timecode into a frame number
-            LdDecodeMetaData::ClvTimecode clvTimecode;
-            clvTimecode.hours = vbiData[frameNumber].clvHr;
-            clvTimecode.minutes = vbiData[frameNumber].clvMin;
-            clvTimecode.seconds = vbiData[frameNumber].clvSec;
-            clvTimecode.pictureNumber = vbiData[frameNumber].clvPicNo;
-            m_frames[frameNumber].vbiFrameNumber(ldDecodeMetaData->convertClvTimecodeToFrameNumber(clvTimecode));
+            // Attempt to translate the CLV timecode into a frame number (-1 if it is not complete)
+            qint32 clvFrameNumber = -1;
+            DiscNumbering::clvNumber(*ldDecodeMetaData, vbiData[frameNumber], clvFrameNumber);
+            m_frames[frameNumber].vbiFrameNumber(clvFrameNumber);
 
             // Check for CLV timecode offset frame (actually, this marks the frame
             // that precedes the jump)
@@ -327,14 +325,7 @@ DiscMap::DiscMap(const QFileInfo &metadataFileInfo, const bool reverseFieldOrder
         DropOuts dropOuts1 = ldDecodeMetaData->getFieldDropOuts(ldDecodeMetaData->getFirstFieldNumber(frameNumber + 1));
         DropOuts dropOuts2 = ldDecodeMetaData->getFieldDropOuts(ldDecodeMetaData->getSecondFieldNumber(frameNumber + 1));
 
-        qint32 frameDoLength = 0;
-        for (qint32 i = 0; i < dropOuts1.size(); i++) {
-            frameDoLength += dropOuts1.endx(i) - dropOuts1.startx(i);
-        }
-
-        for (qint32 i = 0; i < dropOuts2.size(); i++) {
-            frameDoLength += dropOuts2.endx(i) - dropOuts2.startx(i);
-        }
+        const qint64 frameDoLength = dropOuts1.totalLength() + dropOuts2.totalLength();
 
         double frameDoPercent = 100.0 - (static_cast<double>(frameDoLength) / static_cast<double>(totalDotsInFrame));
 

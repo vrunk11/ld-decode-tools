@@ -88,7 +88,6 @@ public:
     // Whether the EFM may be decoded (asked when the source list is made): the source EFM digital is then there to be chosen
     void setEfmPossible(std::function<bool()> possible) { efmPossible = std::move(possible); }
     void setControlsVisible(bool visible);
-    bool controlsVisible() const { return controls->isVisible(); }
 
     bool leftOn() const;
     bool rightOn() const;

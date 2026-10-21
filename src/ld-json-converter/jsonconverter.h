@@ -12,9 +12,6 @@
 #define JSONCONVERTER_H
 
 #include <QString>
-#include <QSqlDatabase>
-#include <QSqlQuery>
-#include <QSqlError>
 #include "lddecodemetadata.h"
 
 class JsonConverter
@@ -28,13 +25,8 @@ public:
 private:
     QString m_inputJsonFilename;
     QString m_outputSqliteFilename;
-    QSqlDatabase m_database;
 
     void reportJsonContents(LdDecodeMetaData &metaData);
-    void countDropouts(const LdDecodeMetaData &metaData, qint32 &totalDropouts);
-    bool createDatabase();
-    bool createSchema();
-    bool insertData(LdDecodeMetaData &metaData);
 };
 
 #endif // JSONCONVERTER_H

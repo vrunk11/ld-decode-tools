@@ -85,7 +85,7 @@ int main(int argc, char *argv[])
 
     if (positionalArguments.count() != 2) {
         qWarning() << "You must specify the input VFS image filename and the bad sector map metadata filename";
-        return 1;
+        return 2;
     }
     inputFilename = positionalArguments.at(0);
     bsmFilename = positionalArguments.at(1);

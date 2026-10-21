@@ -19,6 +19,7 @@
 
 
 #include "tbc/logging.h"
+#include "tbc/pipedinputoptions.h"
 
 // Custom message handler that filters out harmless Qt system warnings
 void filteredDebugOutputHandler(QtMsgType type, const QMessageLogContext &context, const QString &msg)
@@ -71,35 +72,8 @@ int main(int argc, char *argv[])
     parser.addOption(QCommandLineOption("force-dark-theme", "Force dark theme regardless of system settings"));
 
     // -- Input from a pipe: ld-analyse - (or a named pipe) shows video as it arrives --
-    QCommandLineOption inputFormatOption(QStringList() << "input-format",
-                                         QCoreApplication::translate("main", "Piped input: ldx (an LDX stream, which says what it holds: the default when no video system is said), tbc (fields) or cvbs (frames, as decode-orc writes them)"),
-                                         QCoreApplication::translate("main", "format"));
-    parser.addOption(inputFormatOption);
-
-    QCommandLineOption systemOption(QStringList() << "system",
-                                    QCoreApplication::translate("main", "Piped input: the video system (pal, ntsc or pal-m)"),
-                                    QCoreApplication::translate("main", "system"));
-    parser.addOption(systemOption);
-
-    QCommandLineOption blackLevelOption(QStringList() << "black-level",
-                                        QCoreApplication::translate("main", "Piped TBC input: the black16bIre of the capture (default: the standard level of the system)"),
-                                        QCoreApplication::translate("main", "number"));
-    parser.addOption(blackLevelOption);
-
-    QCommandLineOption whiteLevelOption(QStringList() << "white-level",
-                                        QCoreApplication::translate("main", "Piped TBC input: the white16bIre of the capture (default: the standard level of the system)"),
-                                        QCoreApplication::translate("main", "number"));
-    parser.addOption(whiteLevelOption);
-
-    QCommandLineOption subcarrierLockedOption(QStringList() << "subcarrier-locked",
-                                              QCoreApplication::translate("main", "Piped input: whether PAL was sampled locked to the subcarrier, which puts the second field 2 samples off (yes or no; default yes for CVBS, no for TBC)"),
-                                              QCoreApplication::translate("main", "yes|no"));
-    parser.addOption(subcarrierLockedOption);
-
-    QCommandLineOption sampleEncodingOption(QStringList() << "sample-encoding",
-                                            QCoreApplication::translate("main", "Piped CVBS input: u10 (CVBS_U10_4FSC, the default), u16, tpg21 or s16"),
-                                            QCoreApplication::translate("main", "encoding"));
-    parser.addOption(sampleEncodingOption);
+    PipedInputOptions pipedOptions;
+    pipedOptions.addTo(parser);
 
     QCommandLineOption bufferFramesOption(QStringList() << "buffer-frames",
                                           QCoreApplication::translate("main", "Piped input: the size of each of the two buffers, in frames (default: 5 seconds of video). A paused input can be gone through in the frozen one while the other goes on filling"),
@@ -139,29 +113,24 @@ int main(int argc, char *argv[])
     if (isStream) {
         if (inputFileName != "-") {
             qCritical().noquote() << "ld-analyse reads a pipe from standard input: use -, as in `producer | ld-analyse -`";
-            return -1;
+            return 2;
         }
         setBinaryMode();
 
-        if (parser.isSet(inputFormatOption)) {
-            const QString format = parser.value(inputFormatOption).toLower();
-            if (format != "tbc" && format != "cvbs" && format != "ldx") {
-                qCritical().noquote() << "Unknown input format" << format << "- use ldx, tbc or cvbs";
-                return -1;
-            }
-            streamInput.cvbs = format == "cvbs";
-        }
+        QString inputFormat;
+        if (!pipedOptions.format(parser, inputFormat)) return 2;
+        if (!inputFormat.isEmpty()) streamInput.cvbs = inputFormat == "cvbs";
 
         // An LDX stream says by itself what it holds (the video system, TBC or CVBS): it is what a pipe is when no format is asked
         // for and no video system is said. Its video is shown as the video of any pipe is, as it arrives.
-        const bool formatGiven = parser.isSet(inputFormatOption);
+        const bool formatGiven = !inputFormat.isEmpty();
         // (with no format said, the way the input begins tells an LDX stream from raw video, whatever --system says)
-        const bool ldxInput = formatGiven ? parser.value(inputFormatOption).toLower() == "ldx" : LdxStream::stdinIsLdx();
+        const bool ldxInput = formatGiven ? inputFormat == "ldx" : LdxStream::stdinIsLdx();
         if (ldxInput) {
             QString streamError;
             if (!LdxStream::openStdin(streamError)) {
                 qCritical().noquote() << streamError;
-                return -1;
+                return 1;
             }
             streamInput.cvbs = LdxStream::instance()->isCvbs();
             streamInput.system = LdxStream::instance()->system();
@@ -170,47 +139,19 @@ int main(int argc, char *argv[])
 #endif
             qInfo().noquote() << "The LDX stream holds" << Cvbs::presetName(streamInput.system) << (streamInput.cvbs ? "CVBS" : "TBC") << "video";
         } else {
-            if (!parser.isSet(systemOption)) {
+            if (!pipedOptions.isSystemSet(parser)) {
                 qCritical("Piped input has no metadata: say the video system with --system pal, ntsc or pal-m "
                           "(and --input-format cvbs if it is CVBS rather than TBC), or pipe an LDX stream");
-                return -1;
+                return 2;
             }
-            if (!parseVideoSystemName(parser.value(systemOption).toUpper().replace('-', '_'), streamInput.system)) {
-                qCritical().noquote() << "Unknown video system" << parser.value(systemOption) << "- use pal, ntsc or pal-m";
-                return -1;
-            }
+            if (!pipedOptions.videoSystem(parser, streamInput.system)) return 2;
         }
 
-        if (parser.isSet(sampleEncodingOption)) {
-            const QString name = parser.value(sampleEncodingOption);
-            if (!Cvbs::parseSampleEncodingName(name, streamInput.encoding)
-                && !Cvbs::parseSampleEncodingName("CVBS_" + name + "_4FSC", streamInput.encoding)) {
-                qCritical().noquote() << "Unknown sample encoding" << name << "- use u10, u16, tpg21 or s16";
-                return -1;
-            }
-        }
-        if (parser.isSet(blackLevelOption)) streamInput.blackLevel = parser.value(blackLevelOption).toInt();
-        if (parser.isSet(whiteLevelOption)) streamInput.whiteLevel = parser.value(whiteLevelOption).toInt();
-        if ((parser.isSet(blackLevelOption) && streamInput.blackLevel < 0)
-            || (parser.isSet(whiteLevelOption) && streamInput.whiteLevel < 1)) {
-            qCritical("The black and white levels must be positive");
-            return -1;
-        }
-        if (streamInput.cvbs && (parser.isSet(blackLevelOption) || parser.isSet(whiteLevelOption))) {
-            qWarning() << "--black-level and --white-level apply to TBC input, not CVBS (which has standard levels): ignored";
-            streamInput.blackLevel = streamInput.whiteLevel = -1;
-        }
+        if (pipedOptions.isSampleEncodingSet(parser) && !pipedOptions.sampleEncoding(parser, streamInput.encoding)) return 2;
+        if (!pipedOptions.levels(parser, streamInput.cvbs, streamInput.blackLevel, streamInput.whiteLevel)) return 2;
 
         // ld-decode 8 and decode-orc mark the CVBS they write as locked
-        streamInput.isSubcarrierLocked = streamInput.cvbs;
-        if (parser.isSet(subcarrierLockedOption)) {
-            const QString value = parser.value(subcarrierLockedOption).toLower();
-            if (value != "yes" && value != "no") {
-                qCritical().noquote() << "--subcarrier-locked must be yes or no, not" << value;
-                return -1;
-            }
-            streamInput.isSubcarrierLocked = value == "yes";
-        }
+        if (!pipedOptions.subcarrierLocked(parser, streamInput.cvbs, streamInput.isSubcarrierLocked)) return 2;
         // Each of the two buffers holds about 5 seconds of video: how far back a paused input can be gone through
         streamInput.bufferFrames = streamInput.system == PAL ? 125 : 150;
         streamInput.throttle = parser.isSet(throttleOption);
@@ -218,10 +159,10 @@ int main(int argc, char *argv[])
             streamInput.bufferFrames = parser.value(bufferFramesOption).toInt();
             if (streamInput.bufferFrames < 1) {
                 qCritical("The buffer must hold at least 1 frame");
-                return -1;
+                return 2;
             }
         }
-    } else if (parser.isSet(inputFormatOption) || parser.isSet(systemOption) || parser.isSet(bufferFramesOption) || parser.isSet(throttleOption)) {
+    } else if (pipedOptions.isFormatSet(parser) || pipedOptions.isSystemSet(parser) || parser.isSet(bufferFramesOption) || parser.isSet(throttleOption)) {
         qWarning() << "--input-format, --system and the other piped input options only apply to piped input (ld-analyse -)";
     }
 

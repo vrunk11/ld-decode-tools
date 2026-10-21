@@ -35,21 +35,21 @@
 #include "lddecodemetadata.h"
 #include "sourcevideo.h"
 
-class ProcessingPool;
+class FieldPool;
 
 class VitsAnalyser : public QThread {
     Q_OBJECT
 
 public:
-    explicit VitsAnalyser(QAtomicInt& _abort, ProcessingPool& _processingPool, QObject *parent = nullptr);
+    explicit VitsAnalyser(QAtomicInt& _abort, FieldPool& _fieldPool, QObject *parent = nullptr);
 
 protected:
     void run() override;
 
 private:
-    // Decoder pool
+    // The pool that hands out the fields
     QAtomicInt& abort;
-    ProcessingPool& processingPool;
+    FieldPool& fieldPool;
 
     // Temporary output buffer
     LdDecodeMetaData::Field outputData;

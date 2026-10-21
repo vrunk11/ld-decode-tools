@@ -44,11 +44,6 @@ bool isChromaFile(const QString &fileName)
     return endsWith(fileName, ".tbcc") || endsWith(fileName, "_chroma.tbc");
 }
 
-bool isLumaFile(const QString &fileName)
-{
-    return endsWith(fileName, ".tbcy");
-}
-
 namespace {
 
 // The extension of a name that has a mapping: .tbc or .cvbs (with its dot, as it is written), or empty

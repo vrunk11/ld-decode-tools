@@ -44,6 +44,8 @@ ld-json-converter [options]
 
 ## SQLite Schema
 
+The database is written by the metadata library of the suite (`LdDecodeMetaData`), as every tool writes a new `.tbc.db`, and its schema is the one that ld-decode makes, table for table (the unit test `testsqliteschema` compares them with a `.tbc.db` that ld-decode made). A dropout that is in the JSON twice is kept once, since the table has a primary key. A file that is there already is replaced.
+
 ```sql
 ------------------------------------------------------------------
 -- Schema Versioning
@@ -164,7 +166,7 @@ CREATE TABLE vbi (
 );
 
 ------------------------------------------------------------------
--- 6. Drop-out elements (optional)
+-- 6. Dropout elements (optional)
 ------------------------------------------------------------------
 CREATE TABLE drop_outs (
     capture_id INTEGER NOT NULL,

@@ -1,5 +1,4 @@
 add_executable(ld-process-vbi
-    decoderpool.cpp
     main.cpp
     vbilinedecoder.cpp
 )

@@ -60,7 +60,7 @@ bool DiscMapper::process(QFileInfo _inputFileInfo, QFileInfo _inputMetadataFileI
     qInfo() << "to the ld-decode project).";
     qInfo() << "";
     qInfo() << "Some early LaserDiscs do not provide frame numbering or";
-    qInfo() << "time-code information and cannot be automatically mapped -";
+    qInfo() << "timecode information and cannot be automatically mapped -";
     qInfo() << "if in doubt verify your source TBC file using the ld-analyse";
     qInfo() << "application.";
     qInfo() << "";

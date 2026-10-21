@@ -51,30 +51,23 @@ public:
     // Axis management
     void setAxisTitle(Qt::Orientation orientation, const QString &title);
     void setAxisRange(Qt::Orientation orientation, double min, double max);
-    void setAxisAutoScale(Qt::Orientation orientation, bool enable);
     void setYAxisIntegerLabels(bool integerOnly);
     
     // Grid
     void setGridEnabled(bool enabled);
-    void setGridPen(const QPen &pen);
     
     // Series
     PlotSeries* addSeries(const QString &title = QString());
-    void removeSeries(PlotSeries *series);
     void clearSeries();
     
     // Markers
     PlotMarker* addMarker();
-    void removeMarker(PlotMarker *marker);
     void clearMarkers();
     
-    // Legend
-    void setLegendEnabled(bool enabled);
     
     // Zooming and panning
     void setZoomEnabled(bool enabled);
     void setPanEnabled(bool enabled);
-    void resetZoom();
     
     // Canvas
     void setCanvasBackground(const QColor &color);
@@ -88,7 +81,6 @@ public:
 
 signals:
     void plotAreaChanged(const QRectF &rect);
-    void seriesClicked(PlotSeries *series, const QPointF &point);
 
 protected:
     void resizeEvent(QResizeEvent *event) override;
@@ -143,7 +135,6 @@ private:
     // Helper methods
     void setupView();
     void updatePlotArea();
-    void updateAxisLabels();
     void updateHover(const QPoint &viewportPosition);
     void hideHover();
     void calculateDataRange();

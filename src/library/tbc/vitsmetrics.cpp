@@ -155,3 +155,31 @@ void computeVitsMetrics(const SourceVideo::Data &fieldLines, qint32 firstLineInD
 {
     applyVitsLevels(measureVitsRaw(fieldLines, firstLineInData, videoParameters), videoParameters, fieldMetadata);
 }
+
+void SnrAverage::add(double whiteSnr, double blackPsnr)
+{
+    if (std::isfinite(whiteSnr) && whiteSnr > 0) { whiteTotal += whiteSnr; whitePoints++; }
+    if (std::isfinite(blackPsnr) && blackPsnr > 0) { blackTotal += blackPsnr; blackPoints++; }
+}
+
+void SnrAverage::add(const VitsRawMeasurements &raw, const LdDecodeMetaData::VideoParameters &videoParameters)
+{
+    LdDecodeMetaData::Field field;
+    applyVitsLevels(raw, videoParameters, field, vitsIreSpan(videoParameters.system));
+    add(field.vitsMetrics);
+}
+
+void SnrAverage::add(const SourceVideo::Data &fieldLines, qint32 firstLineInData, const LdDecodeMetaData::VideoParameters &videoParameters)
+{
+    add(measureVitsRaw(fieldLines, firstLineInData, videoParameters), videoParameters);
+}
+
+double SnrAverage::white() const
+{
+    return whitePoints ? whiteTotal / whitePoints : std::nan("");
+}
+
+double SnrAverage::black() const
+{
+    return blackPoints ? blackTotal / blackPoints : std::nan("");
+}

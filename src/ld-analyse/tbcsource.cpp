@@ -12,6 +12,7 @@
 #include <limits>
 
 #include "tbcsource.h"
+#include "dropoutdrawing.h"
 #include <algorithm>
 #include "stackproject.h"
 #include "ldxcapture.h"
@@ -450,9 +451,6 @@ QImage TbcSource::getImage()
 
     // Highlight dropouts
     if (dropoutsOn) {
-        // Create a painter object
-        QPainter imagePainter(&outputImage);
-
         // Get the metadata for the video parameters
         LdDecodeMetaData::VideoParameters videoParameters = ldDecodeMetaData.getVideoParameters();
 
@@ -460,66 +458,23 @@ QImage TbcSource::getImage()
         const auto frameHeight = (videoParameters.fieldHeight * 2) - 1;
         const auto fieldN = getFieldViewEnabled() ? 1 : 2;
 
+        DropoutDrawing::Layout layout = DropoutDrawing::Layout::Frame;
+        if (getViewMode() == ViewMode::SPLIT_VIEW) layout = DropoutDrawing::Layout::Split;
+        else if (getViewMode() == ViewMode::FIELD_VIEW) layout = getStretchField() ? DropoutDrawing::Layout::FieldStretched : DropoutDrawing::Layout::Field;
+
+        // (a frame that ld-discmap could not number has a dropout over every line of its fields: it is not drawn, since it would colour the whole picture)
+        const bool unnumbered = firstField.dropOuts.coversWholeField(videoParameters.fieldWidth, videoParameters.fieldHeight)
+                                || secondField.dropOuts.coversWholeField(videoParameters.fieldWidth, videoParameters.fieldHeight);
+
         // This will run once for field view and twice for frame/split view
-        for (auto i = 0; i < fieldN; i++) {
+        for (auto i = 0; i < fieldN && !unnumbered; i++) {
             // Set current field based on loop iteration or field number
             auto isFirstField = getViewMode() == ViewMode::FIELD_VIEW ? loadedFieldNumber % 2 != 0 : i == 0;
             auto currentField = isFirstField ? &firstField : &secondField;
-            imagePainter.setPen(isFirstField ? Qt::red : Qt::blue);
 
             // Draw the drop out data for the current field
-            for (auto dropOutIndex = 0; dropOutIndex < currentField->dropOuts.size(); dropOutIndex++) {
-                const auto startx = currentField->dropOuts.startx(dropOutIndex);
-                const auto endx = currentField->dropOuts.endx(dropOutIndex);
-                const auto fieldLine = currentField->dropOuts.fieldLine(dropOutIndex);
-
-                switch (getViewMode()) {
-                    case ViewMode::FRAME_VIEW: {
-                        qint32 lineY;
-                        if (isFirstField) {
-                            lineY = (fieldLine - 1) * 2;
-                        } else {
-                            lineY = (fieldLine * 2) - 1;
-                        }
-
-                        imagePainter.drawLine(startx, lineY, endx, lineY);
-                        break;
-                    }
-
-                    case ViewMode::SPLIT_VIEW: {
-                        qint32 lineY;
-                        if (isFirstField) {
-                            lineY = fieldLine - 1;
-                        } else {
-                            lineY = fieldLine + (frameHeight / 2);
-                        }
-
-                        imagePainter.drawLine(startx, lineY, endx, lineY);
-                        break;
-                    }
-
-                    case ViewMode::FIELD_VIEW: {
-                        // Draw line off-center if 1:1, else double lines
-                        if (getStretchField()) {
-                            // (the bottom field is one line lower: see generateQImage)
-                            qint32 lineY = fieldLine - 1;
-                            const qint32 down = isFirstField ? 0 : 1;
-
-                            imagePainter.drawLine(startx, lineY * 2 + down, endx, lineY * 2 + down);
-                            imagePainter.drawLine(startx, lineY * 2 + 1 + down, endx, lineY * 2 + 1 + down);
-                        } else {
-                            qint32 lineY = fieldLine - 1 + (frameHeight / 4);
-
-                            imagePainter.drawLine(startx, lineY, endx, lineY);
-                        }
-                        break;
-                    }
-                }
-            }
+            DropoutDrawing::draw(outputImage, currentField->dropOuts, !isFirstField, isFirstField ? QColor(Qt::red) : QColor(Qt::blue), layout, frameHeight);
         }
-
-        // End the painter object
-        imagePainter.end();
     }
 
     cache = outputImage;
@@ -1062,18 +1017,30 @@ void TbcSource::configureChromaDecoder()
     // Configure the chroma decoder
     LdDecodeMetaData::VideoParameters videoParameters = ldDecodeMetaData.getVideoParameters(); 
 	
-    if (videoParameters.system == PAL || videoParameters.system == PAL_M) {
-		monoConfiguration.yNRLevel = palConfiguration.yNRLevel;
-        palColour.updateConfiguration(videoParameters, palConfiguration);
-    } else {
-		monoConfiguration.yNRLevel = ntscConfiguration.yNRLevel;
-        ntscColour.updateConfiguration(videoParameters, ntscConfiguration);
-    }
+    monoConfiguration.yNRLevel = usesPalColour(videoParameters.system) ? palConfiguration.yNRLevel : ntscConfiguration.yNRLevel;
+    updateColourConfiguration(videoParameters, palColour, palConfiguration, ntscColour, ntscConfiguration);
 	monoDecoder.updateConfiguration(videoParameters, monoConfiguration);
 
     // Configure the OutputWriter.
     // Because we have padding disabled, this won't change the VideoParameters.
     outputWriter.updateConfiguration(videoParameters, outputConfiguration);
+}
+
+// Add the chroma fields to the luma fields, removing the offset of the separate chroma
+// (see chroma_to_u16 in vhsdecode/chroma.py)
+static void addChromaToLuma(QVector<SourceField> &lumaFields, const QVector<SourceField> &chromaFields,
+                            qint32 startIndex, qint32 endIndex)
+{
+    static constexpr qint32 CHROMA_OFFSET = 32767;
+
+    for (qint32 fieldIndex = startIndex; fieldIndex < endIndex; fieldIndex++) {
+        auto &sourceData = lumaFields[fieldIndex].data;
+        const auto &chromaData = chromaFields[fieldIndex].data;
+        for (qint32 i = 0; i < sourceData.size(); i++) {
+            const qint32 sum = static_cast<qint32>(sourceData[i]) + static_cast<qint32>(chromaData[i]) - CHROMA_OFFSET;
+            sourceData[i] = static_cast<quint16>(qBound(0, sum, 65535));
+        }
+    }
 }
 
 // Ensure the SourceFields for the current frame are loaded
@@ -1098,17 +1065,7 @@ void TbcSource::loadInputFields()
         if (sourceMode == BOTH_SOURCES) {
             SourceField::loadFieldRun(chromaSourceVideo, ldDecodeMetaData, weaveStart, lookBehind, lookAhead, chromaInputFields,
                                       inputStartIndex, inputEndIndex);
-            if (combine) {
-                static constexpr qint32 CHROMA_OFFSET_WEAVE = 32767;
-                for (qint32 fieldIndex = inputStartIndex; fieldIndex < inputEndIndex; fieldIndex++) {
-                    auto &sourceData = inputFields[fieldIndex].data;
-                    const auto &chromaData = chromaInputFields[fieldIndex].data;
-                    for (qint32 i = 0; i < sourceData.size(); i++) {
-                        const qint32 sum = static_cast<qint32>(sourceData[i]) + static_cast<qint32>(chromaData[i]) - CHROMA_OFFSET_WEAVE;
-                        sourceData[i] = static_cast<quint16>(qBound(0, sum, 65535));
-                    }
-                }
-            }
+            if (combine) addChromaToLuma(inputFields, chromaInputFields, inputStartIndex, inputEndIndex);
         }
         inputFieldsValid = true;
         return;
@@ -1131,22 +1088,7 @@ void TbcSource::loadInputFields()
         SourceField::loadFields(chromaSourceVideo, ldDecodeMetaData,
                                 loadedFrameNumber, 1, lookBehind, lookAhead,
                                 chromaInputFields, inputStartIndex, inputEndIndex);
-		if(combine)
-		{
-			// Separate chroma is offset (see chroma_to_u16 in vhsdecode/chroma.py)
-			static constexpr qint32 CHROMA_OFFSET = 32767;
-
-			// Add chroma to luma, removing the offset
-			for (qint32 fieldIndex = inputStartIndex; fieldIndex < inputEndIndex; fieldIndex++) {
-				auto &sourceData = inputFields[fieldIndex].data;
-				const auto &chromaData = chromaInputFields[fieldIndex].data;
-
-				for (qint32 i = 0; i < sourceData.size(); i++) {
-					qint32 sum = static_cast<qint32>(sourceData[i]) + static_cast<qint32>(chromaData[i]) - CHROMA_OFFSET;
-					sourceData[i] = static_cast<quint16>(qBound(0, sum, 65535));
-				}
-			}
-		}
+        if (combine) addChromaToLuma(inputFields, chromaInputFields, inputStartIndex, inputEndIndex);
     }
 
     inputFieldsValid = true;
@@ -1373,112 +1315,33 @@ void TbcSource::generateData()
     for (qint32 frameNumber = 0; frameNumber < numFrames; frameNumber++) {
         double doLength = 0;
         double visibleDoLength = 0;
-        double blackSnrTotal = 0;
-        double whiteSnrTotal = 0;
-
-        // SNR data may be missing in some fields, so we count the points to prevent
-        // the frame average from being thrown-off by missing data
-        double blackSnrPoints = 0;
-        double whiteSnrPoints = 0;
-
         const LdDecodeMetaData::Field &firstField = ldDecodeMetaData.getField(ldDecodeMetaData.getFirstFieldNumber(frameNumber + 1));
         const LdDecodeMetaData::Field &secondField = ldDecodeMetaData.getField(ldDecodeMetaData.getSecondFieldNumber(frameNumber + 1));
 
-        // Get the first field DOs
-        if (firstField.dropOuts.size() > 0) {
-            // Calculate the total length of the dropouts
-            for (qint32 i = 0; i < firstField.dropOuts.size(); i++) {
-                doLength += static_cast<double>(firstField.dropOuts.endx(i) - firstField.dropOuts.startx(i));
-            }
-        }
-
-        // Get the second field DOs
-        if (secondField.dropOuts.size() > 0) {
-            // Calculate the total length of the dropouts
-            for (qint32 i = 0; i < secondField.dropOuts.size(); i++) {
-                doLength += static_cast<double>(secondField.dropOuts.endx(i) - secondField.dropOuts.startx(i));
-            }
-        }
-
-        // Get the first field visible DOs
+        // The length of the dropouts of the frame, and of those in the visible picture
         const LdDecodeMetaData::VideoParameters &videoParameters = ldDecodeMetaData.getVideoParameters();
+        doLength = static_cast<double>(firstField.dropOuts.totalLength() + secondField.dropOuts.totalLength());
+        visibleDoLength = static_cast<double>(
+            firstField.dropOuts.visibleLength(videoParameters.firstActiveFieldLine, videoParameters.lastActiveFieldLine, videoParameters.activeVideoStart, videoParameters.activeVideoEnd)
+            + secondField.dropOuts.visibleLength(videoParameters.firstActiveFieldLine, videoParameters.lastActiveFieldLine, videoParameters.activeVideoStart, videoParameters.activeVideoEnd));
 
-        if (firstField.dropOuts.size() > 0) {
-            // Calculate the total length of the visible dropouts
-            for (qint32 i = 0; i < firstField.dropOuts.size(); i++) {
-                // Does the drop out start in the visible area?
-                if ((firstField.dropOuts.fieldLine(i) >= videoParameters.firstActiveFieldLine) &&
-                    (firstField.dropOuts.fieldLine(i) <= videoParameters.lastActiveFieldLine)) {
-                    // Check if dropout overlaps with active video area
-                    qint32 dropStartx = firstField.dropOuts.startx(i);
-                    qint32 dropEndx = firstField.dropOuts.endx(i);
-                    
-                    if (dropStartx < videoParameters.activeVideoEnd && dropEndx > videoParameters.activeVideoStart) {
-                        // Clamp to active video boundaries
-                        qint32 startx = qMax(dropStartx, videoParameters.activeVideoStart);
-                        qint32 endx = qMin(dropEndx, videoParameters.activeVideoEnd);
-                        
-                        if (endx > startx) {
-                            visibleDoLength += static_cast<double>(endx - startx);
-                        }
-                    }
-                }
-            }
+        // A frame that ld-discmap could not number has a dropout over every line of its fields: it is not a dropout of the capture
+        if (firstField.dropOuts.coversWholeField(videoParameters.fieldWidth, videoParameters.fieldHeight)
+            || secondField.dropOuts.coversWholeField(videoParameters.fieldWidth, videoParameters.fieldHeight)) {
+            doLength = 0;
+            visibleDoLength = 0;
         }
 
-        // Get the second field visible DOs
-        if (secondField.dropOuts.size() > 0) {
-            // Calculate the total length of the visible dropouts
-            for (qint32 i = 0; i < secondField.dropOuts.size(); i++) {
-                // Does the drop out start in the visible area?
-                if ((secondField.dropOuts.fieldLine(i) >= videoParameters.firstActiveFieldLine) &&
-                    (secondField.dropOuts.fieldLine(i) <= videoParameters.lastActiveFieldLine)) {
-                    // Check if dropout overlaps with active video area
-                    qint32 dropStartx = secondField.dropOuts.startx(i);
-                    qint32 dropEndx = secondField.dropOuts.endx(i);
-                    
-                    if (dropStartx < videoParameters.activeVideoEnd && dropEndx > videoParameters.activeVideoStart) {
-                        // Clamp to active video boundaries
-                        qint32 startx = qMax(dropStartx, videoParameters.activeVideoStart);
-                        qint32 endx = qMin(dropEndx, videoParameters.activeVideoEnd);
-                        
-                        if (endx > startx) {
-                            visibleDoLength += static_cast<double>(endx - startx);
-                        }
-                    }
-                }
-            }
-        }
-
-        // Get the first field SNRs
-        if (firstField.vitsMetrics.inUse) {
-            if (firstField.vitsMetrics.bPSNR > 0) {
-                blackSnrTotal += firstField.vitsMetrics.bPSNR;
-                blackSnrPoints++;
-            }
-            if (firstField.vitsMetrics.wSNR > 0) {
-                whiteSnrTotal += firstField.vitsMetrics.wSNR;
-                whiteSnrPoints++;
-            }
-        }
-
-        // Get the second field SNRs
-        if (secondField.vitsMetrics.inUse) {
-            if (secondField.vitsMetrics.bPSNR > 0) {
-                blackSnrTotal += secondField.vitsMetrics.bPSNR;
-                blackSnrPoints++;
-            }
-            if (secondField.vitsMetrics.wSNR > 0) {
-                whiteSnrTotal += secondField.vitsMetrics.wSNR;
-                whiteSnrPoints++;
-            }
-        }
+        // The SNRs of the frame: the average of its fields (SNR data may be missing in some fields, which the average leaves out)
+        SnrAverage snr;
+        if (firstField.vitsMetrics.inUse) snr.add(firstField.vitsMetrics);
+        if (secondField.vitsMetrics.inUse) snr.add(secondField.vitsMetrics);
 
         // Add the result to the vectors
         dropoutGraphData[frameNumber] = doLength;
         visibleDropoutGraphData[frameNumber] = visibleDoLength;
-        blackSnrGraphData[frameNumber] = blackSnrTotal / blackSnrPoints; // Calc average for frame
-        whiteSnrGraphData[frameNumber] = whiteSnrTotal / whiteSnrPoints; // Calc average for frame
+        blackSnrGraphData[frameNumber] = snr.black();
+        whiteSnrGraphData[frameNumber] = snr.white();
 
         if (ignoreVbi) continue;
 
@@ -1606,15 +1469,11 @@ bool TbcSource::startBackgroundLoad(QString sourceFilename)
     currentMetadataFilename = metadataFileName;
 
     // Configure the chroma decoder
-    if (videoParameters.system == PAL || videoParameters.system == PAL_M) {
-        palColour.updateConfiguration(videoParameters, palConfiguration);
-    } else {
-        if (isChromaTbc || sourceMode != ONE_SOURCE) {
-            // Enable phase compensation by default, since this is probably a videotape source
-            ntscConfiguration.phaseCompensation = true;
-        }
-        ntscColour.updateConfiguration(videoParameters, ntscConfiguration);
+    if (!usesPalColour(videoParameters.system) && (isChromaTbc || sourceMode != ONE_SOURCE)) {
+        // Enable phase compensation by default, since this is probably a videotape source
+        ntscConfiguration.phaseCompensation = true;
     }
+    updateColourConfiguration(videoParameters, palColour, palConfiguration, ntscColour, ntscConfiguration);
 
     // Analyse the metadata
     emit busy("Generating graph data and chapter map...");
@@ -1772,11 +1631,7 @@ bool TbcSource::startBackgroundStream()
     }
 
     // The same decoder settings as for a file
-    if (videoParameters.system == PAL || videoParameters.system == PAL_M) {
-        palColour.updateConfiguration(videoParameters, palConfiguration);
-    } else {
-        ntscColour.updateConfiguration(videoParameters, ntscConfiguration);
-    }
+    updateColourConfiguration(videoParameters, palColour, palConfiguration, ntscColour, ntscConfiguration);
 
     // Wait for the first frame, and what the decoder looks ahead to
     emit busy("Waiting for video...");
@@ -1968,8 +1823,7 @@ void TbcSource::analyseLiveFrame(qint32 frameNumber)
     }
 
     const LdDecodeMetaData::VideoParameters videoParameters = ldDecodeMetaData.getVideoParameters();
-    double blackTotal = 0, whiteTotal = 0;
-    qint32 blackPoints = 0, whitePoints = 0;
+    SnrAverage snr;
 
     for (qint32 fieldNumber: fieldNumbers) {
         // Only the lines at the top of the field are needed
@@ -1988,19 +1842,12 @@ void TbcSource::analyseLiveFrame(qint32 frameNumber)
         ldDecodeMetaData.updateFieldVitsMetrics(field.vitsMetrics, fieldNumber);
 
         // The average for the frame, as for a file
-        if (std::isfinite(field.vitsMetrics.bPSNR) && field.vitsMetrics.bPSNR > 0) {
-            blackTotal += field.vitsMetrics.bPSNR;
-            blackPoints++;
-        }
-        if (std::isfinite(field.vitsMetrics.wSNR) && field.vitsMetrics.wSNR > 0) {
-            whiteTotal += field.vitsMetrics.wSNR;
-            whitePoints++;
-        }
+        snr.add(field.vitsMetrics);
     }
 
     if (!liveSnr) {
-        if (blackPoints > 0) liveBlackSnr.insert(frameNumber, blackTotal / blackPoints);
-        if (whitePoints > 0) liveWhiteSnr.insert(frameNumber, whiteTotal / whitePoints);
+        if (snr.hasBlack()) liveBlackSnr.insert(frameNumber, snr.black());
+        if (snr.hasWhite()) liveWhiteSnr.insert(frameNumber, snr.white());
     }
     liveAnalysedFrames.insert(frameNumber);
 }

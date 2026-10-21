@@ -41,8 +41,6 @@ void debugOutputHandler(QtMsgType type, const QMessageLogContext &context, const
 void setDebug(bool state);
 void setQuiet(bool state);
 void setBinaryMode(void);
-void openDebugFile(QString filename);
-void closeDebugFile(void);
 void addStandardDebugOptions(QCommandLineParser &parser);
 void processStandardDebugOptions(QCommandLineParser &parser);
 bool getDebugState();

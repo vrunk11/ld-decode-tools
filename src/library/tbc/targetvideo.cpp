@@ -232,7 +232,7 @@ bool TargetVideo::writeField(const QVector<quint16> &fieldData)
         // The samples of a cvbs track are 10-bit values in words
         QByteArray words(frameData.size() * 2, 0);
         quint16 *values = reinterpret_cast<quint16 *>(words.data());
-        for (qint32 i = 0; i < frameData.size(); i++) values[i] = static_cast<quint16>(converter->toTbc(frameData[i]) >> 6);
+        for (qint32 i = 0; i < frameData.size(); i++) values[i] = converter->toWord(frameData[i]);
         if (!ldx->writer.writeBlock(ldx->video, fieldTimeNs(ldx->fields - 2, ldxSystem), words)) {
             qCritical().noquote() << "Could not write to the output LDX file:" << ldx->writer.lastError();
             return false;

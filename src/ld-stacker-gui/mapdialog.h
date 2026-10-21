@@ -53,7 +53,6 @@ public:
     QStringList mappedIds() const { return done; }
     // The name of the track that replaced a capture of an LDX file that was overwritten (file.ldx#5), empty for any other
     QString replacedReference(const QString &id) const { return replaced.value(id); }
-    bool succeeded() const { return allDone; }
 
     // The files that go with a TBC file and that ld-discmap writes with it: its metadata (the one that is there, db or json) and its audio
     static QStringList companions(const QString &tbcFile);

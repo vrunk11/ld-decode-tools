@@ -88,7 +88,7 @@ int main(int argc, char *argv[])
     // Ensure we don't have more than 32 sources
     if (totalNumberOfInputFiles > 32) {
         qCritical() << "A maximum of 32 input F2 section files are supported";
-        return -1;
+        return 2;
     }
 
     // Get the input F2 section sources
@@ -107,7 +107,7 @@ int main(int argc, char *argv[])
     } else {
         // Quit with error
         qCritical("You must specify at least 2 input F2 section files and 1 output F2 section file");
-        return -1;
+        return 2;
     }
 
     // Get the output F2 section file (should be the last argument of the command line)
@@ -118,7 +118,7 @@ int main(int argc, char *argv[])
         if (inputFilenames[i] == outputFilename) {
             // Quit with error
             qCritical("Input and output files cannot have the same filenames");
-            return -1;
+            return 2;
         }
     }
 
@@ -129,7 +129,7 @@ int main(int argc, char *argv[])
                 if (inputFilenames[i] == inputFilenames[j]) {
                     // Quit with error
                     qCritical("Each input file should only be specified once - some F2 section files were repeated");
-                    return -1;
+                    return 2;
                 }
             }
         }
@@ -142,7 +142,7 @@ int main(int argc, char *argv[])
     if (!f2Stacker.process(inputFilenames, outputFilename)) {
         // Quit with error
         qCritical("F2 Section stacking failed");
-        return -1;
+        return 1;
     }
 
     // Quit with success

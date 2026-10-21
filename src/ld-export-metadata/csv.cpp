@@ -23,6 +23,7 @@
 ************************************************************************/
 
 #include "csv.h"
+#include "discnumbering.h"
 
 #include "vbidecoder.h"
 
@@ -142,19 +143,13 @@ bool writeVbiCsv(LdDecodeMetaData &metaData, const QString &fileName)
         if (vbi.picNo != -1) outStream << escapedString(QString::number(vbi.picNo)) << ",";
         else outStream << "none,";
 
+        // (hours and minutes are known together or not at all, and so are the second and the picture)
         QString clvTimecodeString;
         if (vbi.clvHr != -1 || vbi.clvMin != -1 || vbi.clvSec != -1 || vbi.clvPicNo != -1) {
-            if (vbi.clvHr != -1 && vbi.clvMin != -1) {
-                clvTimecodeString = QString("%1").arg(vbi.clvHr, 2, 10, QChar('0')) + ":" + QString("%1").arg(vbi.clvMin, 2, 10, QChar('0')) + ":";
-            } else clvTimecodeString = "xx:xx:";
-
-            if (vbi.clvSec != -1 && vbi.clvPicNo != -1) {
-                clvTimecodeString += QString("%1").arg(vbi.clvSec, 2, 10, QChar('0')) + "." + QString("%1").arg(vbi.clvPicNo, 2, 10, QChar('0'));
-            } else clvTimecodeString += "xx.xx";
-        } else if (vbi.clvHr != -1 || vbi.clvMin != -1) {
-            if (vbi.clvHr != -1 && vbi.clvMin != -1) {
-                clvTimecodeString = QString("%1").arg(vbi.clvHr, 2, 10, QChar('0')) + ":" + QString("%1").arg(vbi.clvMin, 2, 10, QChar('0'));
-            } else clvTimecodeString = "xx:xx";
+            const bool hoursAndMinutes = vbi.clvHr != -1 && vbi.clvMin != -1;
+            const bool secondAndPicture = vbi.clvSec != -1 && vbi.clvPicNo != -1;
+            clvTimecodeString = DiscNumbering::clvText(hoursAndMinutes ? vbi.clvHr : -1, hoursAndMinutes ? vbi.clvMin : -1,
+                                                       secondAndPicture ? vbi.clvSec : -1, secondAndPicture ? vbi.clvPicNo : -1);
         } else clvTimecodeString = "none";
         outStream << escapedString(clvTimecodeString) << ",";
 

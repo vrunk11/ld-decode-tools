@@ -9,6 +9,8 @@
  ******************************************************************************/
 
 #include "stackedvideo.h"
+#include "stackframe.h"
+#include "discnumbering.h"
 
 #include <QFileInfo>
 #include <QHash>
@@ -50,10 +52,21 @@ static const StackSource *referenceSource(const StackProject &project)
     return nullptr;
 }
 
+// The metadata of a source of the session, with the field order the session says
+static bool readSourceMetadata(const QString &name, bool reverseFields, LdDecodeMetaData &metadata, QString &error)
+{
+    const QString metadataFile = LdDecodeMetaData::findMetadataFile(name);
+    if (!metadataThere(metadataFile) || !metadata.read(metadataFile)) {
+        error = QObject::tr("Could not read the metadata of %1").arg(name);
+        return false;
+    }
+    metadata.setIsFirstFieldFirst(!reverseFields);
+    return true;
+}
+
 qint32 StackedVideo::discOrigin(LdDecodeMetaData &metadata)
 {
     VbiDecoder vbiDecoder;
-    const qint32 framesPerSecond = metadata.getVideoParameters().system == PAL ? 25 : 30;
     const qint32 frames = metadata.getNumberOfFrames();
     QHash<qint32, qint32> votes;
     qint32 cast = 0;
@@ -65,14 +78,12 @@ qint32 StackedVideo::discOrigin(LdDecodeMetaData &metadata)
         const LdDecodeMetaData::Field &b = metadata.getField(second);
         const VbiDecoder::Vbi vbi = vbiDecoder.decodeFrame(a.vbi.vbiData[0], a.vbi.vbiData[1], a.vbi.vbiData[2],
                                                            b.vbi.vbiData[0], b.vbi.vbiData[1], b.vbi.vbiData[2]);
-        qint32 number = -1;
-        if (vbi.picNo != -1) number = vbi.picNo;
-        else if (vbi.clvHr != -1 && vbi.clvPicNo != -1) number = (vbi.clvHr * 3600 + vbi.clvMin * 60 + vbi.clvSec) * framesPerSecond + vbi.clvPicNo;
-        if (number < 0) continue;
+        qint32 number;
+        if (!DiscNumbering::frameNumber(metadata, vbi, number)) continue;
         votes[number - (frame - 1)]++;
         cast++;
     }
-    qint32 best = 0, origin = -1;
+    qint32 best = 0, origin = DiscNumbering::NoNumber;
     for (auto it = votes.cbegin(); it != votes.cend(); ++it) {
         if (it.value() > best || (it.value() == best && it.key() < origin)) {
             best = it.value();
@@ -86,11 +97,11 @@ QVector<qint32> StackedVideo::alignedPositions(const QVector<qint32> &origins, c
 {
     const qint32 count = origins.size();
     bool numbered = false;
-    for (qint32 origin: origins) numbered = numbered || origin >= 0;
+    for (qint32 origin: origins) numbered = numbered || origin != DiscNumbering::NoNumber;
     QVector<qint32> positions(count, 0);
     qint32 lowest = std::numeric_limits<qint32>::max();
     for (qint32 i = 0; i < count; i++) {
-        positions[i] = qMax(0, origins[i]) + offsets[i];
+        positions[i] = (origins[i] == DiscNumbering::NoNumber ? 0 : origins[i]) + offsets[i];
         lowest = qMin(lowest, positions[i]);
     }
     if (count == 0) lowest = 0;
@@ -100,7 +111,7 @@ QVector<qint32> StackedVideo::alignedPositions(const QVector<qint32> &origins, c
         positions[i] -= lowest;
         total = qMax(total, positions[i] + frames[i]);
     }
-    if (discAtStart) *discAtStart = numbered ? startOfTimeline : -1;
+    if (discAtStart) *discAtStart = numbered ? startOfTimeline : DiscNumbering::NoNumber;
     return positions;
 }
 
@@ -115,13 +126,7 @@ bool StackedVideo::readMetadata(const QString &stackFile, LdDecodeMetaData &meta
         return false;
     }
 
-    const QString referenceName = reference->resolvedReference();
-    const QString metadataFile = LdDecodeMetaData::findMetadataFile(referenceName);
-    if (!metadataThere(metadataFile) || !metadata.read(metadataFile)) {
-        error = QObject::tr("Could not read the metadata of %1").arg(referenceName);
-        return false;
-    }
-    metadata.setIsFirstFieldFirst(!session.stacking.reverseFields);
+    if (!readSourceMetadata(reference->resolvedReference(), session.stacking.reverseFields, metadata, error)) return false;
 
     // The other sources that are on, to line them up with it
     std::vector<std::unique_ptr<LdDecodeMetaData>> others;
@@ -137,13 +142,7 @@ bool StackedVideo::readMetadata(const QString &stackFile, LdDecodeMetaData &meta
             continue;
         }
         auto other = std::make_unique<LdDecodeMetaData>();
-        const QString otherName = entry.resolvedReference();
-        const QString otherFile = LdDecodeMetaData::findMetadataFile(otherName);
-        if (!metadataThere(otherFile) || !other->read(otherFile)) {
-            error = QObject::tr("Could not read the metadata of %1").arg(otherName);
-            return false;
-        }
-        other->setIsFirstFieldFirst(!session.stacking.reverseFields);
+        if (!readSourceMetadata(entry.resolvedReference(), session.stacking.reverseFields, *other, error)) return false;
         origins.append(discOrigin(*other));
         offsets.append(entry.offset);
         frames.append(other->getNumberOfFrames());
@@ -202,25 +201,9 @@ bool StackedVideo::readMetadata(const QString &stackFile, LdDecodeMetaData &meta
     for (const LdDecodeMetaData::Field &field: timeline) metadata.appendField(field);
     const qint32 fields = metadata.getNumberOfFields();
 
-    // NTSC fields come in a sequence of 4 phases: the padded fields of the reference may have broken it, and
+    // The fields come in a sequence of phases: the padded fields of the reference may have broken it, and
     // ld-disc-stacker puts it right in what it writes
-    if (metadata.getVideoParameters().system == NTSC) {
-        constexpr qint32 PHASE_COUNT = 4;
-        qint32 pivot = 1;
-        while (pivot <= fields && metadata.getField(pivot).pad) pivot++;
-        if (pivot < fields) {
-            qint32 phase = metadata.getField(pivot).fieldPhaseID - 1;
-            phase -= (pivot - 1) % PHASE_COUNT;
-            phase += PHASE_COUNT;
-            phase %= PHASE_COUNT;
-            for (qint32 fieldNumber = 1; fieldNumber <= fields; fieldNumber++) {
-                LdDecodeMetaData::Field field = metadata.getField(fieldNumber);
-                field.fieldPhaseID = phase + 1;
-                metadata.updateField(field, fieldNumber);
-                phase = (phase + 1) % PHASE_COUNT;
-            }
-        }
-    }
+    StackFrame::repairFieldPhases(metadata);
     return true;
 }
 
@@ -246,12 +229,7 @@ bool StackedVideo::open(const QString &stackFile, QString &error)
         auto source = std::make_unique<Source>();
         source->offset = entry.offset;    // (the position on the timeline is worked out below)
 
-        const QString metadataFile = LdDecodeMetaData::findMetadataFile(name);
-        if (!metadataThere(metadataFile) || !source->metadata.read(metadataFile)) {
-            error = QObject::tr("Could not read the metadata of %1").arg(name);
-            return false;
-        }
-        source->metadata.setIsFirstFieldFirst(!project.stacking.reverseFields);
+        if (!readSourceMetadata(name, project.stacking.reverseFields, source->metadata, error)) return false;
 
         const LdDecodeMetaData::VideoParameters &parameters = source->metadata.getVideoParameters();
         if (sources.empty()) {
@@ -307,14 +285,6 @@ qint32 StackedVideo::getNumberOfFields()
     return timelineFrames * 2;
 }
 
-qint32 StackedVideo::sourceFrame(Source &source, qint32 frame, bool isReference) const
-{
-    (void)isReference;
-    const qint32 own = frame - source.offset;
-    if (own < 1 || own > source.metadata.getNumberOfFrames()) return -1;
-    return own;
-}
-
 SourceVideo::Data StackedVideo::getField(qint32 fieldNumber, qint32 startLine, qint32 endLine)
 {
     const bool whole = startLine == -1 && endLine == -1;
@@ -337,45 +307,23 @@ SourceVideo::Data StackedVideo::getField(qint32 fieldNumber, qint32 startLine, q
 // A field of the stack, of the first lines of the fields of the sources
 SourceVideo::Data StackedVideo::stackField(qint32 fieldNumber, qint32 lines)
 {
-    const auto read = [lines, this](Source &source, qint32 number) {
-        return lines < fieldHeight ? source.video.getVideoField(number, 1, lines) : source.video.getVideoField(number);
-    };
-
     // A field of no frame of the timeline, or that no source can give (a frame where none has one), is blank
     const FieldPosition position = (fieldNumber >= 1 && fieldNumber < positions.size()) ? positions[fieldNumber] : FieldPosition();
-    Source &reference = *sources.front();
 
-    QVector<SourceVideo::Data> inputs(static_cast<qint32>(sources.size()));
-    QVector<LdDecodeMetaData::Field> fieldMetadata(static_cast<qint32>(sources.size()));
-    QVector<qint32> usable;
-    if (position.frame >= 1) {
-        for (qint32 i = 0; i < static_cast<qint32>(sources.size()); i++) {
-            Source &source = *sources[i];
-            const qint32 frame = sourceFrame(source, position.frame, i == 0);
-            if (frame < 0) continue;
-
-            const qint32 first = source.metadata.getFirstFieldNumber(frame);
-            const qint32 second = source.metadata.getSecondFieldNumber(frame);
-            const qint32 available = source.video.getNumberOfAvailableFields();
-            if (first < 1 || second < 1 || first > available || second > available) continue;
-            if (source.metadata.getField(first).pad || source.metadata.getField(second).pad) continue;
-
-            const qint32 number = position.isFirst ? first : second;
-            SourceVideo::Data data = read(source, number);
-            if (data.size() != fieldWidth * lines) continue;
-            inputs[i] = data;
-            fieldMetadata[i] = source.metadata.getField(number);
-            usable.append(i);
-        }
+    QVector<StackFrame::Input> inputs(static_cast<qint32>(sources.size()));
+    for (qint32 i = 0; i < static_cast<qint32>(sources.size()); i++) {
+        Source &source = *sources[i];
+        inputs[i].metadata = &source.metadata;
+        inputs[i].video = &source.video;
+        if (position.frame >= 1) inputs[i].frame = StackFrame::ownFrame(position.frame, source.offset, source.metadata.getNumberOfFrames());
     }
 
-    if (usable.isEmpty()) return SourceVideo::Data(fieldWidth * lines, 0);
+    const qint32 which = position.isFirst ? StackFrame::FirstField : StackFrame::SecondField;
+    StackFrame::Fields fields;
+    if (!StackFrame::read(inputs, which, lines < fieldHeight ? lines : -1, fields)) return SourceVideo::Data(fieldWidth * lines, 0);
 
-    LdDecodeMetaData::VideoParameters parameters = reference.metadata.getVideoParameters();
-    parameters.fieldHeight = lines;
-    SourceVideo::Data output(fieldWidth * lines);
-    DropOuts dropOuts;
-    core.stackField(position.frame, inputs, parameters, fieldMetadata, usable, !project.stacking.diffDod,
-                    project.stacking.passthrough, output, dropOuts, mode, project.stacking.smartThreshold * 256, false);
-    return output;
+    StackFrame::Result result;
+    StackFrame::stack(core, fields, which, position.frame, mode, project.stacking.smartThreshold, project.stacking.diffDod,
+                      project.stacking.passthrough, result);
+    return position.isFirst ? result.first : result.second;
 }

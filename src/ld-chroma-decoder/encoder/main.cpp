@@ -128,7 +128,7 @@ int main(int argc, char *argv[])
 
     // Standard logging options
     processStandardDebugOptions(parser);
-    if (!metadataOptions.process(parser)) return -1;
+    if (!metadataOptions.process(parser)) return 2;
 
     VideoSystem system = PAL;
     QString systemName;
@@ -138,7 +138,7 @@ int main(int argc, char *argv[])
             || (system != NTSC && system != PAL)) {
             // Quit with error
             qCritical("Unsupported color system");
-            return -1;
+            return 2;
         }
     }
 
@@ -151,7 +151,7 @@ int main(int argc, char *argv[])
             || (system == NTSC && fieldOffset > 3)) {
             // Quit with error
             qCritical("Field offset must be 0 or 2 for NTSC, or 0, 2, 4 or 6 for PAL");
-            return -1;
+            return 2;
         }
     }
 
@@ -171,7 +171,7 @@ int main(int argc, char *argv[])
         isComponent = false;
     } else {
         qCritical() << "Unknown input format" << inputFormatName;
-        return -1;
+        return 2;
     }
 
     ChromaMode chromaMode = WIDEBAND_YUV;
@@ -187,7 +187,7 @@ int main(int argc, char *argv[])
         } else {
             // Quit with error
             qCritical("Unsupported chroma encoder mode");
-            return -1;
+            return 2;
         }
     }
 
@@ -207,13 +207,13 @@ int main(int argc, char *argv[])
     } else {
         // Quit with error
         qCritical("You must specify the input RGB/YCbCr and output TBC files");
-        return -1;
+        return 2;
     }
 
     if (inputFileName == outputFileName) {
         // Quit with error
         qCritical("Input and output files cannot be the same");
-        return -1;
+        return 2;
     }
 
     // Open the input file
@@ -221,12 +221,12 @@ int main(int argc, char *argv[])
     if (inputFileName == "-") {
         if (!inputFile.open(stdin, QFile::ReadOnly)) {
             qCritical("Cannot open stdin");
-            return -1;
+            return 1;
         }
     } else {
         if (!inputFile.open(QFile::ReadOnly)) {
             qCritical() << "Cannot open input file:" << inputFileName;
-            return -1;
+            return 1;
         }
     }
 
@@ -234,14 +234,14 @@ int main(int argc, char *argv[])
     QFile tbcFile(outputFileName);
     if (!tbcFile.open(QFile::WriteOnly)) {
         qCritical() << "Cannot open output file:" << outputFileName;
-        return -1;
+        return 1;
     }
 
     // Open the chroma output file, if specified
     QFile chromaFile(chromaFileName);
     if (chromaFileName != "" && !chromaFile.open(QFile::WriteOnly)) {
         qCritical() << "Cannot open chroma output file:" << chromaFileName;
-        return -1;
+        return 1;
     }
 
     // Encode the data
@@ -249,12 +249,12 @@ int main(int argc, char *argv[])
     if (system == NTSC) {
         NTSCEncoder encoder(inputFile, tbcFile, chromaFile, metaData, fieldOffset, isComponent, chromaMode, addSetup);
         if (!encoder.encode()) {
-            return -1;
+            return 1;
         }
     } else {
         PALEncoder encoder(inputFile, tbcFile, chromaFile, metaData, fieldOffset, isComponent, scLocked);
         if (!encoder.encode()) {
-            return -1;
+            return 1;
         }
     }
 
@@ -262,7 +262,7 @@ int main(int argc, char *argv[])
     const LdDecodeMetaData::MetadataFormat metadataFormat = metadataOptions.isFormatSet()
         ? metadataOptions.format() : LdDecodeMetaData::MetadataFormat::Sqlite;
     if (!metaData.write(LdDecodeMetaData::metadataFileName(outputFileName, metadataFormat))) {
-        return -1;
+        return 1;
     }
 
     // Quit with success

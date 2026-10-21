@@ -217,3 +217,40 @@ void DropOuts::write(SqliteWriter &writer, int captureId, int fieldId) const
 }
 
 
+qint64 DropOuts::totalLength() const
+{
+    qint64 length = 0;
+    for (qint32 i = 0; i < size(); i++) length += qMax(0, endx(i) - startx(i));
+    return length;
+}
+
+qint64 DropOuts::visibleLength(qint32 firstLine, qint32 lastLine, qint32 activeStart, qint32 activeEnd) const
+{
+    qint64 length = 0;
+    for (qint32 i = 0; i < size(); i++) {
+        // Does the drop out start in the visible area?
+        if (fieldLine(i) < firstLine || fieldLine(i) > lastLine) continue;
+        // Check if dropout overlaps with active video area
+        if (startx(i) < activeEnd && endx(i) > activeStart) {
+            // Clamp to active video boundaries
+            const qint32 from = qMax(startx(i), activeStart);
+            const qint32 to = qMin(endx(i), activeEnd);
+            if (to > from) length += to - from;
+        }
+    }
+    return length;
+}
+
+bool DropOuts::coversWholeField(qint32 fieldWidth, qint32 fieldHeight) const
+{
+    if (size() < fieldHeight) return false;
+    QVector<bool> covered(fieldHeight + 1, false);
+    qint32 lines = 0;
+    for (qint32 i = 0; i < size(); i++) {
+        const qint32 line = fieldLine(i);
+        if (line < 1 || line > fieldHeight || covered[line] || startx(i) > 0 || endx(i) < fieldWidth - 1) continue;
+        covered[line] = true;
+        lines++;
+    }
+    return lines >= fieldHeight;
+}

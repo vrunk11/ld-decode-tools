@@ -23,6 +23,7 @@
 ************************************************************************/
 
 #include "monodecoder.h"
+#include "lumacoring.h"
 
 #include "comb.h"
 #include "decoderpool.h"
@@ -108,44 +109,13 @@ void MonoDecoder::doYNR(ComponentFrame &componentFrame) {
              line < monoConfig.videoParameters.lastActiveFrameLine;
            ++line)
     {
-        double* Y = componentFrame.y(line);
-
-        // 4. High‑pass buffer & FIR filter
+        // 4. High-pass buffer & FIR filter (a fresh filter for each line)
         std::vector<double> hpY(monoConfig.videoParameters.activeVideoEnd + delay);
         auto yFilter(descriptor);  // uses the chosen taps internally
 
-        // Flush zeros before active start
-        for (int x = monoConfig.videoParameters.activeVideoStart - delay;
-                 x < monoConfig.videoParameters.activeVideoStart;
-               ++x)
-        {
-            yFilter.feed(0.0);
-        }
-        // Filter active region
-        for (int x = monoConfig.videoParameters.activeVideoStart;
-                 x < monoConfig.videoParameters.activeVideoEnd;
-               ++x)
-        {
-            hpY[x] = yFilter.feed(Y[x]);
-        }
-        // Flush zeros after active end
-        for (int x = monoConfig.videoParameters.activeVideoEnd;
-                 x < monoConfig.videoParameters.activeVideoEnd + delay;
-               ++x)
-        {
-            yFilter.feed(0.0);
-        }
-
         // 5. Clamp & subtract
-        for (int x = monoConfig.videoParameters.activeVideoStart;
-                 x < monoConfig.videoParameters.activeVideoEnd;
-               ++x)
-        {
-            double a = hpY[x + delay];
-            if (std::fabs(a) > nr_y)
-                a = (a > 0.0) ? nr_y : -nr_y;
-            Y[x] -= a;
-        }
+        coreLumaLine(componentFrame.y(line), monoConfig.videoParameters.activeVideoStart,
+                     monoConfig.videoParameters.activeVideoEnd, yFilter, delay, nr_y, hpY);
     }
 }
 

@@ -51,7 +51,6 @@ void testAllValues(VideoSystem system, qint32 lines) {
         assert(LineNumber::fromFrame0(num.frame0(), system).frame0() == i);
         assert(LineNumber::fromFrame1(num.frame1(), system).frame0() == i);
         assert(LineNumber::fromField0(num.field0(), num.isFirstField(), system).frame0() == i);
-        assert(LineNumber::fromField1(num.field1(), num.isFirstField(), system).frame0() == i);
     }
 }
 

@@ -1776,9 +1776,15 @@ void LdDecodeMetaData::LineParameters::applyTo(LdDecodeMetaData::VideoParameters
 // This method gets the metadata for the specified sequential field number (indexed from 1 (not 0!))
 const LdDecodeMetaData::Field &LdDecodeMetaData::getField(qint32 sequentialFieldNumber)
 {
-    qint32 fieldNumber = sequentialFieldNumber - 1;
+    return fieldAt(sequentialFieldNumber, __func__);
+}
+
+// The field of a sequential field number (from 1). One that is not there is said, and the field is looked for all the same, as the accessors always did
+LdDecodeMetaData::Field &LdDecodeMetaData::fieldAt(qint32 sequentialFieldNumber, const char *caller)
+{
+    const qint32 fieldNumber = sequentialFieldNumber - 1;
     if (fieldNumber < 0 || fieldNumber >= getNumberOfFields()) {
-        qCritical() << "LdDecodeMetaData::getField(): Requested field number" << sequentialFieldNumber << "out of bounds!";
+        qCritical() << "LdDecodeMetaData::" << caller << "(): Requested field number" << sequentialFieldNumber << "out of bounds!";
     }
 
     return fields[fieldNumber];
@@ -1787,155 +1793,85 @@ const LdDecodeMetaData::Field &LdDecodeMetaData::getField(qint32 sequentialField
 // This method gets the VITS metrics metadata for the specified sequential field number
 const LdDecodeMetaData::VitsMetrics &LdDecodeMetaData::getFieldVitsMetrics(qint32 sequentialFieldNumber)
 {
-    qint32 fieldNumber = sequentialFieldNumber - 1;
-    if (fieldNumber < 0 || fieldNumber >= getNumberOfFields()) {
-        qCritical() << "LdDecodeMetaData::getFieldVitsMetrics(): Requested field number" << sequentialFieldNumber << "out of bounds!";
-    }
-
-    return fields[fieldNumber].vitsMetrics;
+    return fieldAt(sequentialFieldNumber, __func__).vitsMetrics;
 }
 
 // This method gets the VBI metadata for the specified sequential field number
 const LdDecodeMetaData::Vbi &LdDecodeMetaData::getFieldVbi(qint32 sequentialFieldNumber)
 {
-    qint32 fieldNumber = sequentialFieldNumber - 1;
-    if (fieldNumber < 0 || fieldNumber >= getNumberOfFields()) {
-        qCritical() << "LdDecodeMetaData::getFieldVbi(): Requested field number" << sequentialFieldNumber << "out of bounds!";
-    }
-
-    return fields[fieldNumber].vbi;
+    return fieldAt(sequentialFieldNumber, __func__).vbi;
 }
 
 // This method gets the NTSC metadata for the specified sequential field number
 const LdDecodeMetaData::Ntsc &LdDecodeMetaData::getFieldNtsc(qint32 sequentialFieldNumber)
 {
-    qint32 fieldNumber = sequentialFieldNumber - 1;
-    if (fieldNumber < 0 || fieldNumber >= getNumberOfFields()) {
-        qCritical() << "LdDecodeMetaData::getFieldNtsc(): Requested field number" << sequentialFieldNumber << "out of bounds!";
-    }
-
-    return fields[fieldNumber].ntsc;
+    return fieldAt(sequentialFieldNumber, __func__).ntsc;
 }
 
 // This method gets the VITC metadata for the specified sequential field number
 const LdDecodeMetaData::Vitc &LdDecodeMetaData::getFieldVitc(qint32 sequentialFieldNumber)
 {
-    qint32 fieldNumber = sequentialFieldNumber - 1;
-    if (fieldNumber < 0 || fieldNumber >= getNumberOfFields()) {
-        qCritical() << "LdDecodeMetaData::getFieldVitc(): Requested field number" << sequentialFieldNumber << "out of bounds!";
-    }
-
-    return fields[fieldNumber].vitc;
+    return fieldAt(sequentialFieldNumber, __func__).vitc;
 }
 
 // This method gets the Closed Caption metadata for the specified sequential field number
 const LdDecodeMetaData::ClosedCaption &LdDecodeMetaData::getFieldClosedCaption(qint32 sequentialFieldNumber)
 {
-    qint32 fieldNumber = sequentialFieldNumber - 1;
-    if (fieldNumber < 0 || fieldNumber >= getNumberOfFields()) {
-        qCritical() << "LdDecodeMetaData::getFieldClosedCaption(): Requested field number" << sequentialFieldNumber << "out of bounds!";
-    }
-
-    return fields[fieldNumber].closedCaption;
+    return fieldAt(sequentialFieldNumber, __func__).closedCaption;
 }
 
 // This method gets the drop-out metadata for the specified sequential field number
 const DropOuts &LdDecodeMetaData::getFieldDropOuts(qint32 sequentialFieldNumber)
 {
-    qint32 fieldNumber = sequentialFieldNumber - 1;
-    if (fieldNumber < 0 || fieldNumber >= getNumberOfFields()) {
-        qCritical() << "LdDecodeMetaData::getFieldDropOuts(): Requested field number" << sequentialFieldNumber << "out of bounds!";
-    }
-
-    return fields[fieldNumber].dropOuts;
+    return fieldAt(sequentialFieldNumber, __func__).dropOuts;
 }
 
 // This method sets the field metadata for a field
 void LdDecodeMetaData::updateField(const LdDecodeMetaData::Field &field, qint32 sequentialFieldNumber)
 {
-    qint32 fieldNumber = sequentialFieldNumber - 1;
-    if (fieldNumber < 0 || fieldNumber >= getNumberOfFields()) {
-        qCritical() << "LdDecodeMetaData::updateFieldVitsMetrics(): Requested field number" << sequentialFieldNumber << "out of bounds!";
-    }
-
-    fields[fieldNumber] = field;
+    fieldAt(sequentialFieldNumber, __func__) = field;
 }
 
 // This method sets the field VBI metadata for a field
 void LdDecodeMetaData::updateFieldVitsMetrics(const LdDecodeMetaData::VitsMetrics &vitsMetrics, qint32 sequentialFieldNumber)
 {
-    qint32 fieldNumber = sequentialFieldNumber - 1;
-    if (fieldNumber < 0 || fieldNumber >= getNumberOfFields()) {
-        qCritical() << "LdDecodeMetaData::updateFieldVitsMetrics(): Requested field number" << sequentialFieldNumber << "out of bounds!";
-    }
-
-    fields[fieldNumber].vitsMetrics = vitsMetrics;
+    fieldAt(sequentialFieldNumber, __func__).vitsMetrics = vitsMetrics;
 }
 
 // This method sets the field VBI metadata for a field
 void LdDecodeMetaData::updateFieldVbi(const LdDecodeMetaData::Vbi &vbi, qint32 sequentialFieldNumber)
 {
-    qint32 fieldNumber = sequentialFieldNumber - 1;
-    if (fieldNumber < 0 || fieldNumber >= getNumberOfFields()) {
-        qCritical() << "LdDecodeMetaData::updateFieldVbi(): Requested field number" << sequentialFieldNumber << "out of bounds!";
-    }
-
-    fields[fieldNumber].vbi = vbi;
+    fieldAt(sequentialFieldNumber, __func__).vbi = vbi;
 }
 
 // This method sets the field NTSC metadata for a field
 void LdDecodeMetaData::updateFieldNtsc(const LdDecodeMetaData::Ntsc &ntsc, qint32 sequentialFieldNumber)
 {
-    qint32 fieldNumber = sequentialFieldNumber - 1;
-    if (fieldNumber < 0 || fieldNumber >= getNumberOfFields()) {
-        qCritical() << "LdDecodeMetaData::updateFieldNtsc(): Requested field number" << sequentialFieldNumber << "out of bounds!";
-    }
-
-    fields[fieldNumber].ntsc = ntsc;
+    fieldAt(sequentialFieldNumber, __func__).ntsc = ntsc;
 }
 
 // This method sets the VITC metadata for a field
 void LdDecodeMetaData::updateFieldVitc(const LdDecodeMetaData::Vitc &vitc, qint32 sequentialFieldNumber)
 {
-    qint32 fieldNumber = sequentialFieldNumber - 1;
-    if (fieldNumber < 0 || fieldNumber >= getNumberOfFields()) {
-        qCritical() << "LdDecodeMetaData::updateFieldVitc(): Requested field number" << sequentialFieldNumber << "out of bounds!";
-    }
-
-    fields[fieldNumber].vitc = vitc;
+    fieldAt(sequentialFieldNumber, __func__).vitc = vitc;
 }
 
 // This method sets the Closed Caption metadata for a field
 void LdDecodeMetaData::updateFieldClosedCaption(const LdDecodeMetaData::ClosedCaption &closedCaption, qint32 sequentialFieldNumber)
 {
-    qint32 fieldNumber = sequentialFieldNumber - 1;
-    if (fieldNumber < 0 || fieldNumber >= getNumberOfFields()) {
-        qCritical() << "LdDecodeMetaData::updateFieldClosedCaption(): Requested field number" << sequentialFieldNumber << "out of bounds!";
-    }
-
-    fields[fieldNumber].closedCaption = closedCaption;
+    fieldAt(sequentialFieldNumber, __func__).closedCaption = closedCaption;
 }
 
 // This method sets the field dropout metadata for a field
 void LdDecodeMetaData::updateFieldDropOuts(const DropOuts &dropOuts, qint32 sequentialFieldNumber)
 {
-    qint32 fieldNumber = sequentialFieldNumber - 1;
-    if (fieldNumber < 0 || fieldNumber >= getNumberOfFields()) {
-        qCritical() << "LdDecodeMetaData::updateFieldDropOuts(): Requested field number" << sequentialFieldNumber << "out of bounds!";
-    }
-
-    fields[fieldNumber].dropOuts = dropOuts;
+    fieldAt(sequentialFieldNumber, __func__).dropOuts = dropOuts;
 }
 
 // This method clears the field dropout metadata for a field
 void LdDecodeMetaData::clearFieldDropOuts(qint32 sequentialFieldNumber)
 {
-    qint32 fieldNumber = sequentialFieldNumber - 1;
-    if (fieldNumber < 0 || fieldNumber >= getNumberOfFields()) {
-        qCritical() << "LdDecodeMetaData::clearFieldDropOuts(): Requested field number" << sequentialFieldNumber << "out of bounds!";
-    }
-
-    fields[fieldNumber].dropOuts.clear();
+    fieldAt(sequentialFieldNumber, __func__).dropOuts.clear();
 }
 
 // This method appends a new field to the existing metadata
@@ -2145,24 +2081,11 @@ qint32 LdDecodeMetaData::convertClvTimecodeToFrameNumber(LdDecodeMetaData::ClvTi
         return -1;
     }
 
-    if (clvTimeCode.hours != -1) {
-        if (videoParameters.system == PAL) frameNumber += clvTimeCode.hours * 3600 * 25;
-        else frameNumber += clvTimeCode.hours * 3600 * 30;
-    }
-
-    if (clvTimeCode.minutes != -1) {
-        if (videoParameters.system == PAL) frameNumber += clvTimeCode.minutes * 60 * 25;
-        else frameNumber += clvTimeCode.minutes * 60 * 30;
-    }
-
-    if (clvTimeCode.seconds != -1) {
-        if (videoParameters.system == PAL) frameNumber += clvTimeCode.seconds * 25;
-        else frameNumber += clvTimeCode.seconds * 30;
-    }
-
-    if (clvTimeCode.pictureNumber != -1) {
-        frameNumber += clvTimeCode.pictureNumber;
-    }
+    const qint32 framesPerSecond = timecodeFramesPerSecond(videoParameters.system);
+    frameNumber += clvTimeCode.hours * 3600 * framesPerSecond;
+    frameNumber += clvTimeCode.minutes * 60 * framesPerSecond;
+    frameNumber += clvTimeCode.seconds * framesPerSecond;
+    frameNumber += clvTimeCode.pictureNumber;
 
     return frameNumber;
 }
@@ -2177,29 +2100,17 @@ LdDecodeMetaData::ClvTimecode LdDecodeMetaData::convertFrameNumberToClvTimecode(
     clvTimecode.seconds = 0;
     clvTimecode.pictureNumber = 0;
 
-    if (getVideoParameters().system == PAL) {
-        clvTimecode.hours = frameNumber / (3600 * 25);
-        frameNumber -= clvTimecode.hours * (3600 * 25);
+    const qint32 framesPerSecond = timecodeFramesPerSecond(getVideoParameters().system);
+    clvTimecode.hours = frameNumber / (3600 * framesPerSecond);
+    frameNumber -= clvTimecode.hours * (3600 * framesPerSecond);
 
-        clvTimecode.minutes = frameNumber / (60 * 25);
-        frameNumber -= clvTimecode.minutes * (60 * 25);
+    clvTimecode.minutes = frameNumber / (60 * framesPerSecond);
+    frameNumber -= clvTimecode.minutes * (60 * framesPerSecond);
 
-        clvTimecode.seconds = frameNumber / 25;
-        frameNumber -= clvTimecode.seconds * 25;
+    clvTimecode.seconds = frameNumber / framesPerSecond;
+    frameNumber -= clvTimecode.seconds * framesPerSecond;
 
-        clvTimecode.pictureNumber = frameNumber;
-    } else {
-        clvTimecode.hours = frameNumber / (3600 * 30);
-        frameNumber -= clvTimecode.hours * (3600 * 30);
-
-        clvTimecode.minutes = frameNumber / (60 * 30);
-        frameNumber -= clvTimecode.minutes * (60 * 30);
-
-        clvTimecode.seconds = frameNumber / 30;
-        frameNumber -= clvTimecode.seconds * 30;
-
-        clvTimecode.pictureNumber = frameNumber;
-    }
+    clvTimecode.pictureNumber = frameNumber;
 
     return clvTimecode;
 }

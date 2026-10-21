@@ -19,6 +19,7 @@ efm-decoder-audio [options] <input.d24> <output.wav>
 - `-v, --version` - Display version information
 - `-d, --debug` - Show debug output
 - `-q, --quiet` - Suppress info and warning messages
+- `--no-timecodes` - For an LDX file as the input: decode its EFM without timecodes (EFM that is not ECMA-130 compliant, the usual one of a LaserDisc)
 
 #### Audio Processing
 - `--audacity-labels` - Output WAV metadata as Audacity labels
@@ -83,7 +84,7 @@ When `--audacity-labels` is specified, generates a .txt file containing:
 - **Timestamp precision**: Millisecond accuracy for individual samples
 - **Error locations**: Concealed and silenced sample positions
 - **Track information**: CD track boundaries (when available)
-- **Time codes**: Both Audacity time and CDDA format timestamps
+- **Timecodes**: Both Audacity time and CDDA format timestamps
 
 ### Example Metadata
 ```

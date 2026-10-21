@@ -109,14 +109,14 @@ int main(int argc, char *argv[])
     if (isUnpacking && isPacking) {
         // Quit with error
         qCritical("Specify only --unpack (-u) or --pack (-p) - not both!");
-        return -1;
+        return 2;
     }
 
     // Check that RIFF option is not set with pack (only unpack)
     if (isRIFF && ! isUnpacking) {
         // Quit with error
         qCritical("You can only write RIFF headers with --unpack (-u)");
-        return -1;
+        return 2;
     }
 
     // Initialise the data conversion object

@@ -34,7 +34,7 @@ An LDX file is a Matroska file: `ffprobe` lists its tracks, and `ffmpeg -i file.
 ## Limits of this version
 
 - FLAC (the TBC and the audio) and FFV1 (CVBS) are written and read; the Y/C pairs (TBC and CVBS) and the audio of CVBS captures are tracks.
-- The time stamps have a resolution of one microsecond.
+- The timestamps have a resolution of one microsecond.
 - `add`, `remove` and `stack` write the file again, to another file.
 - ld-analyse, ld-chroma-decoder, ld-disc-stacker, ld-dropout-correct, ld-discmap, ld-export-metadata, ld-tbc-to-cvbs and ld-stacker-gui open an LDX file, or a track of it (`file.ldx#3`), and the session it keeps; ld-process-vbi and ld-process-vits save their metadata into it, as a block added at the end. The audio is not read by the graphical programs yet, a `cvbs` track, the pipe is still to come, and the EFM tools read the track through `extract`.
 
@@ -68,3 +68,5 @@ A Y/C capture packs with its chroma: `ld-container pack capture.tbc` (or `captur
 `ld-container wav capture.ldx [-o capture.wav] [--source analogue|efm] [--id n]` writes the audio of a file as a WAV: the analogue audio (16-bit, or 24-bit for a CVBS capture) or, with `--source efm`, the digital audio decoded from EFM. The script `scripts/pcm2wav capture.ldx` does the same.
 
 `ld-container addtrack capture.ldx --kind pcm|efm|ac3|annotations --input file [--about id] [--name n] [--rate hz] [--source efm]` puts a file in the LDX file as a track of its own, in its place: the audio decoded from EFM (`--kind pcm --source efm`, 16-bit stereo), AC3 data, EFM t-values or annotations. The audio of EFM can also be put there by the tools that decode it (see `ld-process-efm`).
+
+Every command also takes `-v`/`--version` (the version of the tools), `-d`/`--debug` (show debug messages) and `-q`/`--quiet` (suppress info and warning messages), as the other tools do.

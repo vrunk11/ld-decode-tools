@@ -90,7 +90,7 @@ int main(int argc, char *argv[])
     parser.addOption(audioIsDtsOption);
 
     QCommandLineOption noTimeStampOption(QStringList() << "t" << "time",
-                                       QCoreApplication::translate("main", "Non-standard audio decode (no time-stamp information)"));
+                                       QCoreApplication::translate("main", "Non-standard audio decode (no timestamp information)"));
     parser.addOption(noTimeStampOption);
 
     // Detailed debugging options
@@ -150,7 +150,7 @@ int main(int argc, char *argv[])
     }
     if (numTreatments > 1) {
         qCritical() << "You may only specify one error treatment option (-c, -s or -g)";
-        return 1;
+        return 2;
     }
 
     // Get the decoding options from the parser
@@ -176,7 +176,7 @@ int main(int argc, char *argv[])
         outputFilename = positionalArguments.at(1);
     } else {
         qWarning() << "You must specify the input EFM filename and the output filename";
-        return 1;
+        return 2;
     }
 
     // An LDX file as the output: the audio is decoded to a file of its own, and then put in the LDX file as a track
@@ -186,11 +186,11 @@ int main(int argc, char *argv[])
     if (ldxOutput) {
         if (decodeAsData) {
             qCritical() << "Only audio is put in an LDX file: name a file for the data";
-            return 1;
+            return 2;
         }
         if (!QFileInfo::exists(ldxFile)) {
             qCritical().noquote() << ldxFile << "must be an LDX file that exists: the audio is added to it as a track";
-            return 1;
+            return 2;
         }
         outputFilename = ldxFile + ".audio.part";
     }

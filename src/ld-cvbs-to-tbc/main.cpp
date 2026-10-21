@@ -77,30 +77,30 @@ int main(int argc, char *argv[])
 
     // Standard logging options
     processStandardDebugOptions(parser);
-    if (!metadataOptions.process(parser)) return -1;
+    if (!metadataOptions.process(parser)) return 2;
 
     const QStringList positionalArguments = parser.positionalArguments();
     if (positionalArguments.count() < 1 || positionalArguments.count() > 2) {
         qCritical("You must specify an input CVBS file, and optionally the output TBC file");
-        return -1;
+        return 2;
     }
 
     QString inputFileName = positionalArguments.at(0);
     if (!Cvbs::isDataFileName(inputFileName)) {
         qCritical().noquote() << inputFileName << "is not a CVBS file (.cvbs, .cvbsy or .cvbsc)";
-        return -1;
+        return 2;
     }
     // Either file of a Y/C pair names the pair: start from the luma
     if (Cvbs::channel(inputFileName) == Cvbs::Channel::Chroma) inputFileName = Cvbs::pairedDataFileName(inputFileName);
     if (!QFileInfo::exists(inputFileName)) {
         qCritical().noquote() << "Input file" << inputFileName << "does not exist";
-        return -1;
+        return 1;
     }
     const bool isYc = Cvbs::channel(inputFileName) == Cvbs::Channel::Luma;
     const QString chromaFileName = isYc ? Cvbs::pairedDataFileName(inputFileName) : QString();
     if (isYc && !QFileInfo::exists(chromaFileName)) {
         qCritical().noquote() << "The chroma file" << chromaFileName << "of the Y/C pair does not exist";
-        return -1;
+        return 1;
     }
 
     quint32 sampleRate = 0;
@@ -109,7 +109,7 @@ int main(int argc, char *argv[])
         sampleRate = parser.value(sampleRateOption).toUInt(&ok);
         if (!ok || sampleRate < 1000 || sampleRate > 384000) {
             qCritical().noquote() << "Invalid sample rate" << parser.value(sampleRateOption);
-            return -1;
+            return 2;
         }
     }
 
@@ -118,7 +118,7 @@ int main(int argc, char *argv[])
     if (positionalArguments.count() == 2) outputFileName = positionalArguments.at(1);
     if (Cvbs::isDataFileName(outputFileName)) {
         qCritical().noquote() << "Output file" << outputFileName << "is a CVBS file name - give a .tbc file name";
-        return -1;
+        return 1;
     }
     // A Y/C capture is named <name>.tbc and <name>_chroma.tbc, as ld-decode and vhs-decode
     // do; or <name>.tbcy and <name>.tbcc, as decode-orc does, if the output is named so

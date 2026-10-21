@@ -79,7 +79,7 @@ int main(int argc, char *argv[])
         QCommandLineOption("show-f1-debug",
                            QCoreApplication::translate("main", "Show F1 to Data24 decoding debug")),
         QCommandLineOption(("show-all-debug"),
-                           QCoreApplication::translate("main", "Show all debug options"))
+                           QCoreApplication::translate("main", "Show all decoding debug"))
     };
     parser.addOptions(advancedDebugOptions);
 
@@ -151,7 +151,7 @@ int main(int argc, char *argv[])
         outputFilename = positionalArguments.at(1);
     } else {
         qWarning() << "Too many arguments. Expected: [input] [output] (use '-' for stdin/stdout)";
-        return 1;
+        return 2;
     }
 
     // An LDX file as the input: the stages of the EFM decoder before this one are run on its EFM, with the tools beside this

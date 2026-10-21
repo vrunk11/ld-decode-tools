@@ -9,6 +9,7 @@
  ******************************************************************************/
 
 #include "vbidialog.h"
+#include "discnumbering.h"
 #include "ui_vbidialog.h"
 #include "tbc/logging.h"
 
@@ -82,7 +83,7 @@ void VbiDialog::updateVbi(VbiDecoder::Vbi vbi, bool isVbiValid)
         else ui->userCodeLabel->setText(vbi.userCode);
     }
 
-    if (vbi.picNo != -1) ui->pictureNumberLabel->setText(QString::number(vbi.picNo));
+    if (vbi.picNo != -1) ui->pictureNumberLabel->setText(DiscNumbering::cavText(vbi.picNo));
     else ui->pictureNumberLabel->setText("Unknown");
 
     if (vbi.picStop) ui->pictureStopCodeLabel->setText("Yes");
@@ -91,23 +92,7 @@ void VbiDialog::updateVbi(VbiDecoder::Vbi vbi, bool isVbiValid)
     if (vbi.chNo != -1) ui->chapterNumberLabel->setText(QString::number(vbi.chNo));
     else ui->chapterNumberLabel->setText("Unknown");
 
-    QString clvTimecodeString;
-    // Hours
-    if (vbi.clvHr != -1) clvTimecodeString = QString("%1").arg(vbi.clvHr, 2, 10, QChar('0')) + ":";
-    else clvTimecodeString = "xx:";
-
-    // Minutes
-    if (vbi.clvMin != -1) clvTimecodeString += QString("%1").arg(vbi.clvMin, 2, 10, QChar('0')) + ":";
-    else clvTimecodeString += "xx:";
-
-    // Seconds
-    if (vbi.clvSec != -1) clvTimecodeString += QString("%1").arg(vbi.clvSec, 2, 10, QChar('0')) + ".";
-    else clvTimecodeString += "xx.";
-
-    // Picture (frame) number
-    if (vbi.clvPicNo != -1) clvTimecodeString += QString("%1").arg(vbi.clvPicNo, 2, 10, QChar('0'));
-    else clvTimecodeString += "xx";
-
+    QString clvTimecodeString = DiscNumbering::clvText(vbi.clvHr, vbi.clvMin, vbi.clvSec, vbi.clvPicNo);
     if (clvTimecodeString == "xx:xx:xx.xx") clvTimecodeString = tr("Unknown");
     ui->clvTimeCodeLabel->setText(clvTimecodeString);
 

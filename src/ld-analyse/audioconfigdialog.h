@@ -49,7 +49,6 @@ public:
     void setOffsetMs(qint32 milliseconds);
     // The length of the video (the imported audio is cut to it) and the LDX file the audio can be saved in (empty if none)
     void setVideo(double videoSeconds, const QString &ldxFile);
-    void setImportedName(const QString &name);
     // The EFM that can be decoded (a file name for a person; empty if the capture has none), and what each decoder (0: the suite of
     // efm-decoder programs, 1: ld-process-efm) is doing
     void setEfmSource(const QString &description);

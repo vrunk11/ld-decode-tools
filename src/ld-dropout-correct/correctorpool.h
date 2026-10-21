@@ -35,6 +35,7 @@
 
 #include "sourcevideo.h"
 #include "targetvideo.h"
+#include "discnumbering.h"
 #include "lddecodemetadata.h"
 #include "dropoutcorrect.h"
 
@@ -115,9 +116,7 @@ private:
     qint32 streamFieldCount = 0;
 
     // Local source information
-    QVector<bool> sourceDiscTypeCav;
-    QVector<qint32> sourceMinimumVbiFrame;
-    QVector<qint32> sourceMaximumVbiFrame;
+    DiscNumbering::SourceRanges ranges;
 
     // Reporting information
     qint32 sameSourceConcealmentTotal;

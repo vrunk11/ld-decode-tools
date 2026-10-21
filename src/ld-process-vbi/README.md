@@ -4,7 +4,7 @@
 
 ## Overview
 
-ld-process-vbi extracts and decodes Vertical Blanking Interval (VBI) data from TBC files. It reads embedded metadata such as frame numbers, time codes, chapter marks, user codes, and closed captions, updating the TBC metadata for use by other tools.
+ld-process-vbi extracts and decodes Vertical Blanking Interval (VBI) data from TBC files. It reads embedded metadata such as frame numbers, timecodes, chapter marks, user codes, and closed captions, updating the TBC metadata for use by other tools.
 
 ## Features
 
@@ -20,8 +20,8 @@ ld-process-vbi extracts and decodes Vertical Blanking Interval (VBI) data from T
 - **Chapter Numbers**: Sequential chapter identification
 - **Program Markers**: Program/title boundaries
 
-#### Time Codes
-- **IEC Time Code**: Standard time code format (HH:MM:SS:FF)
+#### Timecodes
+- **IEC timecode**: Standard timecode format (HH:MM:SS:FF)
 - **Vertical Interval Time Code (VITC)**: Where available
 
 #### User Data
@@ -91,13 +91,13 @@ ld-process-vbi -d input.tbc
 
 ### PAL
 - **Line 16**: Frame number (most common)
-- **Line 17**: IEC time code, chapter marks
+- **Line 17**: IEC timecode, chapter marks
 - **Line 18**: User code, program status
 - **Line 19**: Additional metadata (some discs)
 
 ### NTSC
 - **Line 10-11**: Frame number (field 1)
-- **Line 12-13**: IEC time code (field 1)
+- **Line 12-13**: IEC timecode (field 1)
 - **Line 14**: Chapter, user codes (field 1)
 - **Line 21**: Closed captions (both fields)
 - **Line 273-274**: Frame number (field 2)

@@ -26,6 +26,7 @@
 ************************************************************************/
 
 #include "comb.h"
+#include "lumacoring.h"
 
 #include "framecanvas.h"
 
@@ -771,30 +772,8 @@ void Comb::FrameBuffer::doYNR()
     std::vector<double> hpY(videoParameters.activeVideoEnd + delay);
 
     for (qint32 lineNumber = videoParameters.firstActiveFrameLine; lineNumber < videoParameters.lastActiveFrameLine; lineNumber++) {
-        double *Y = componentFrame->y(lineNumber);
-
-        // Feed zeros into the filter outside the active area
-        for (qint32 h = videoParameters.activeVideoStart - delay; h < videoParameters.activeVideoStart; h++) {
-            yFilter.feed(0.0);
-        }
-        for (qint32 h = videoParameters.activeVideoStart; h < videoParameters.activeVideoEnd; h++) {
-            hpY[h] = yFilter.feed(Y[h]);
-        }
-        for (qint32 h = videoParameters.activeVideoEnd; h < videoParameters.activeVideoEnd + delay; h++) {
-            hpY[h] = yFilter.feed(0.0);
-        }
-
-        for (qint32 h = videoParameters.activeVideoStart; h < videoParameters.activeVideoEnd; h++) {
-            // Offset to cover the filter delay
-            double a = hpY[h + delay];
-
-            // Clip the filter strength
-            if (fabs(a) > nr_y) {
-                a = (a > 0) ? nr_y : -nr_y;
-            }
-
-            Y[h] -= a;
-        }
+        coreLumaLine(componentFrame->y(lineNumber), videoParameters.activeVideoStart, videoParameters.activeVideoEnd,
+                     yFilter, delay, nr_y, hpY);
     }
 }
 

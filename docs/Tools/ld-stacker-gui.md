@@ -49,3 +49,7 @@ The application icon is a grey disc with the colours of its reflection, an arrow
 ## LDX files
 
 An LDX file (see [the container format](../Specifications/container-format.md)) can be added as a source: each TBC capture it holds becomes a source of its own (named after its track, shown as `file.ldx #3`), and an LDX file that keeps a stacking session is added as one source, the stack of that session. **File > Open session** also reads the session an LDX file keeps; saving it goes to a `.stack` file of its own and never over the LDX file. A source that is a track of an LDX file is saved in the session as the file and the id of the track.
+
+## Command line
+
+`ld-stacker-gui [options] [files...]`: the files are a `.stack` session or the sources to stack. Options: `-h`/`--help`, `-v`/`--version`, `-d`/`--debug` (show debug messages), `-q`/`--quiet` (suppress info and warning messages) and `--force-dark-theme` (use the dark theme for this session, whatever View > Theme says).

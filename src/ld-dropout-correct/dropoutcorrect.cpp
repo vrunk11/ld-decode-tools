@@ -86,7 +86,7 @@ void DropOutCorrect::run()
             tbcDebugStream().nospace() << "DropOutCorrect::process(): Correcting fields [" <<
                         firstFieldSeqNo[0] << "/" << secondFieldSeqNo[0] << "] containing " <<
                         firstFieldMetadata[0].dropOuts.size() + secondFieldMetadata[0].dropOuts.size() <<
-                        " drop-outs";
+                        " dropouts";
 
             // Analyse the drop out locations in the first field
             QVector<QVector<DropOutLocation>> firstFieldDropouts(totalAvailableSources);

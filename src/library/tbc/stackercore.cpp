@@ -160,11 +160,70 @@ void StackerCore::stackField(const qint32 frameNumber,const QVector<SourceVideo:
     }
 }
 
+// The mean of the samples that are within the threshold distance of a centre (not the distance itself), or the centre if there are none.
+// The centre is signed in the smart mean mode and unsigned in the smart neighbour mode, and the arithmetic with the threshold is that of its type.
+template<typename Centre>
+static quint32 smartMean(const QVector<quint16>& elements, Centre centre, qint32 smartThreshold)
+{
+    qint32 nbSelected = 0;
+    quint32 sum = 0;
+    for(int i=0; i < elements.size();i++)
+    {
+        if(elements[i] < (centre + smartThreshold) &&  elements[i] > (centre - smartThreshold))
+        {
+            nbSelected++;
+            sum += elements[i];
+        }
+    }
+    //select the centre if all the samples are out of the threshold range
+    if(nbSelected == 0) return centre;
+    //mean averaging of selected sample
+    return sum / nbSelected;
+}
+
+// What a neighbour gives: the median of its values if there are several and they all are dropouts, else the first one, or -1 if it has none
+qint32 StackerCore::neighbourValue(const QVector<quint16>& elements, bool allDropout)
+{
+    if (elements.size() > 1 && allDropout) return StackerCore::median(elements);
+    return elements.size() > 0 ? elements[0] : -1;
+}
+
+// What the four neighbours give, and how many of them are there (a neighbour that is not looked at, east and west when useEastWest is false, counts, with 0)
+qint32 StackerCore::neighbourResults(const QVector<quint16>& elementsN, const QVector<quint16>& elementsS, const QVector<quint16>& elementsE, const QVector<quint16>& elementsW,
+                                     const QVector<bool>& isAllDropout, bool useEastWest, qint32& resultN, qint32& resultS, qint32& resultE, qint32& resultW)
+{
+    resultN = neighbourValue(elementsN, isAllDropout[1]);
+    resultS = neighbourValue(elementsS, isAllDropout[2]);
+    if(useEastWest)
+    {
+        resultE = neighbourValue(elementsE, isAllDropout[3]);
+        resultW = neighbourValue(elementsW, isAllDropout[4]);
+    }
+
+    //check number of neighbor available and prepare for mean
+    qint32 nbNeighbor = 0;
+    (resultN != -1) ? nbNeighbor++ : resultN = 0;
+    (resultS != -1) ? nbNeighbor++ : resultS = 0;
+    (resultE != -1) ? nbNeighbor++ : resultE = 0;
+    (resultW != -1) ? nbNeighbor++ : resultW = 0;
+    return nbNeighbor;
+}
+
+// The sample of the sources that is closest to each of the neighbours that has a value
+QVector<quint16> StackerCore::closestToNeighbours(const QVector<quint16>& elements, qint32 resultN, qint32 resultS, qint32 resultE, qint32 resultW)
+{
+    QVector<quint16> closestList;
+    if(resultN > 0){closestList.append(StackerCore::closest(elements, resultN));}
+    if(resultS > 0){closestList.append(StackerCore::closest(elements, resultS));}
+    if(resultE > 0){closestList.append(StackerCore::closest(elements, resultE));}
+    if(resultW > 0){closestList.append(StackerCore::closest(elements, resultW));}
+    return closestList;
+}
+
 // Method to stack a vector of quint16 using a selected mode
 quint16 StackerCore::stackMode(const QVector<quint16>& elements, const QVector<quint16>& elementsN, const QVector<quint16>& elementsS, const QVector<quint16>& elementsE, const QVector<quint16>& elementsW, const QVector<bool>& isAllDropout, const qint32& mode, const qint32& smartThreshold)
 {
     const qint32 nbOfElements = elements.size();
-    qint32 nbSelected = 0;
     quint32 result = 0;
     QVector<quint16> closestList;
 
@@ -191,52 +250,21 @@ quint16 StackerCore::stackMode(const QVector<quint16>& elements, const QVector<q
         case 2://smart mean mode
         {
             const qint32 median = StackerCore::median(elements);
-            //count number of sample within threshold distance to the median and sum
-            for(int i=0; i < nbOfElements;i++)
-            {
-                if(elements[i] < (median + smartThreshold) &&  elements[i] > (median - smartThreshold))
-                {
-                    nbSelected++;
-                    result += elements[i];
-                }
-            }
-            //select median if all other source are out of the threshold range
-            if(nbSelected == 0)
-            {
-                result = median;
-            }
-            else//mean averaging of selected sample
-            {
-                result = (result / nbSelected);
-            }
+            // the mean of the samples within the threshold distance to the median, or the median if there is none
+            result = smartMean(elements, median, smartThreshold);
             break;
         }
         case 3://smart neighbor mode
         {
             const qint32 median = StackerCore::median(elements);
 
-            ((elementsN.size() > 1) && isAllDropout[1]) ? resultN = StackerCore::median(elementsN) : (elementsN.size() > 0 ? resultN = elementsN[0] : resultN = -1);
-            ((elementsS.size() > 1) && isAllDropout[2]) ? resultS = StackerCore::median(elementsS) : (elementsS.size() > 0 ? resultS = elementsS[0] : resultS = -1);
-
-            if(!isAllDropout[0])
-            {
-                ((elementsE.size() > 1) && isAllDropout[3]) ? resultE = StackerCore::median(elementsE) : (elementsE.size() > 0 ? resultE = elementsE[0] : resultE = -1);
-                ((elementsW.size() > 1) && isAllDropout[4]) ? resultW = StackerCore::median(elementsW) : (elementsW.size() > 0 ? resultW = elementsW[0] : resultW = -1);
-            }
-
-            //check number of neighbor available and prepare for mean
-            (resultN != -1) ? nbNeighbor++ : resultN = 0;
-            (resultS != -1) ? nbNeighbor++ : resultS = 0;
-            (resultE != -1) ? nbNeighbor++ : resultE = 0;
-            (resultW != -1) ? nbNeighbor++ : resultW = 0;
+            // (east and west count unless the sample is a dropout in every source)
+            nbNeighbor = neighbourResults(elementsN, elementsS, elementsE, elementsW, isAllDropout, !isAllDropout[0], resultN, resultS, resultE, resultW);
 
             if(nbNeighbor > 0)
             {
                 //closest value to a neighbor
-                if(resultN > 0){closestList.append(StackerCore::closest(elements, resultN));}
-                if(resultS > 0){closestList.append(StackerCore::closest(elements, resultS));}
-                if(resultE > 0){closestList.append(StackerCore::closest(elements, resultE));}
-                if(resultW > 0){closestList.append(StackerCore::closest(elements, resultW));}
+                closestList = closestToNeighbours(elements, resultN, resultS, resultE, resultW);
 
                 resultNeighbor = StackerCore::closest(closestList, median);//get the closest value to the median/mean based on closest value to a neighbor
             }
@@ -247,27 +275,8 @@ quint16 StackerCore::stackMode(const QVector<quint16>& elements, const QVector<q
 
             if(nbOfElements > 2)//using median + mean
             {
-                result = 0;
-                //count number of sample within threshold distance to the median and sum
-                for(int i=0; i < nbOfElements;i++)
-                {
-                    if((elements[i] < (resultNeighbor + smartThreshold)) && (elements[i] > (resultNeighbor - smartThreshold)))
-                    {
-                        nbSelected++;
-                        result += elements[i];
-                    }
-                }
-
-                //select median if all other source are out of the threshold range
-                if(nbSelected == 0)
-                {
-                    result = resultNeighbor;
-                }
-                //mean averaging of selected sample
-                else
-                {
-                    result = (result / nbSelected);
-                }
+                // the mean of the samples within the threshold distance to the closest value to a neighbor, or that value if there is none
+                result = smartMean(elements, resultNeighbor, smartThreshold);
             }
             else//using surrounding sample
             {
@@ -279,28 +288,12 @@ quint16 StackerCore::stackMode(const QVector<quint16>& elements, const QVector<q
         {
             const qint32 median = StackerCore::median(elements);
 
-            ((elementsN.size() > 1) && isAllDropout[1]) ? resultN = StackerCore::median(elementsN) : (elementsN.size() > 0 ? resultN = elementsN[0] : resultN = -1);
-            ((elementsS.size() > 1) && isAllDropout[2]) ? resultS = StackerCore::median(elementsS) : (elementsS.size() > 0 ? resultS = elementsS[0] : resultS = -1);
-
-            if(!isAllDropout[0] || (isAllDropout[1] && isAllDropout[2]))
-            {
-                ((elementsE.size() > 1) && isAllDropout[3]) ? resultE = StackerCore::median(elementsE) : (elementsE.size() > 0 ? resultE = elementsE[0] : resultE = -1);
-                ((elementsW.size() > 1) && isAllDropout[4]) ? resultW = StackerCore::median(elementsW) : (elementsW.size() > 0 ? resultW = elementsW[0] : resultW = -1);
-            }
-
-
-            //check number of neighbor available and prepare for mean
-            (resultN != -1) ? nbNeighbor++ : resultN = 0;
-            (resultS != -1) ? nbNeighbor++ : resultS = 0;
-            (resultE != -1) ? nbNeighbor++ : resultE = 0;
-            (resultW != -1) ? nbNeighbor++ : resultW = 0;
+            nbNeighbor = neighbourResults(elementsN, elementsS, elementsE, elementsW, isAllDropout,
+                                          !isAllDropout[0] || (isAllDropout[1] && isAllDropout[2]), resultN, resultS, resultE, resultW);
 
             if(nbNeighbor > 0)
             {
-                if(resultN > 0){closestList.append(StackerCore::closest(elements, resultN));}
-                if(resultS > 0){closestList.append(StackerCore::closest(elements, resultS));}
-                if(resultE > 0){closestList.append(StackerCore::closest(elements, resultE));}
-                if(resultW > 0){closestList.append(StackerCore::closest(elements, resultW));}
+                closestList = closestToNeighbours(elements, resultN, resultS, resultE, resultW);
 
                 result = StackerCore::closest(closestList, median);//get the closest value to the median/mean based on closest value to a neighbor
 

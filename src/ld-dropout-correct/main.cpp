@@ -32,6 +32,8 @@
 
 #include "tbc/logging.h"
 #include "tbc/metadataoptions.h"
+#include "tbc/commonoptions.h"
+#include "tbc/sourcefilechecks.h"
 #include "correctorpool.h"
 #include "ldxstream.h"
 #include "ldxcapture.h"
@@ -73,9 +75,8 @@ int main(int argc, char *argv[])
     metadataOptions.addTo(parser);
 
     // Option to reverse the field order (-r)
-    QCommandLineOption setReverseOption(QStringList() << "r" << "reverse",
-                                       QCoreApplication::translate("main", "Reverse the field order to second/first (default first/second)"));
-    parser.addOption(setReverseOption);
+    ReverseOption setReverseOption;
+    setReverseOption.addTo(parser);
 
     // Option to select over correct mode (-o)
     QCommandLineOption setOverCorrectOption(QStringList() << "o" << "overcorrect",
@@ -88,11 +89,8 @@ int main(int argc, char *argv[])
     parser.addOption(setIntrafieldOption);
 
     // Option to select the number of threads (-t)
-    QCommandLineOption threadsOption(QStringList() << "t" << "threads",
-                                        QCoreApplication::translate(
-                                         "main", "Specify the number of concurrent threads (default is the number of logical CPUs)"),
-                                        QCoreApplication::translate("main", "number"));
-    parser.addOption(threadsOption);
+    ThreadsOption threadsOption;
+    threadsOption.addTo(parser);
 
     // Positional argument to specify input video file
     parser.addPositionalArgument("inputs", QCoreApplication::translate(
@@ -107,24 +105,16 @@ int main(int argc, char *argv[])
 
     // Standard logging options
     processStandardDebugOptions(parser);
-    if (!metadataOptions.process(parser)) return -1;
+    if (!metadataOptions.process(parser)) return 2;
 
     // Get the options from the parser
-    bool reverse = parser.isSet(setReverseOption);
+    bool reverse = setReverseOption.isSet(parser);
     bool intraField = parser.isSet(setIntrafieldOption);
     bool overCorrect = parser.isSet(setOverCorrectOption);
 
     // Get the arguments from the parser
-    qint32 maxThreads = QThread::idealThreadCount();
-    if (parser.isSet(threadsOption)) {
-        maxThreads = parser.value(threadsOption).toInt();
-
-        if (maxThreads < 1) {
-            // Quit with error
-            qCritical("Specified number of threads must be greater than zero");
-            return -1;
-        }
-    }
+    qint32 maxThreads;
+    if (!threadsOption.process(parser, maxThreads)) return 2;
 
     // Require source and target filenames
     QVector<QString> inputFilenames;
@@ -135,7 +125,7 @@ int main(int argc, char *argv[])
     // Ensure we don't have more than 32 sources
     if (totalNumberOfInputFiles > 32) {
         qCritical() << "A maximum of 32 input TBC files are supported";
-        return -1;
+        return 2;
     }
 
     // Get the input TBC sources
@@ -149,7 +139,7 @@ int main(int argc, char *argv[])
     } else {
         // Quit with error
         qCritical("You must specify at least 1 input and 1 output TBC file");
-        return -1;
+        return 2;
     }
 
     // Get the output TBC (should be the last argument of the command line
@@ -163,7 +153,7 @@ int main(int argc, char *argv[])
         if (!LdxStream::openStdin(streamError)) {
             qCritical().noquote() << streamError;
             qCritical("With piped video that is not an LDX stream, you must also specify the input metadata file with --input-metadata");
-            return -1;
+            return 2;
         }
         ldxInput = true;
         qInfo().noquote() << "The first source is an LDX stream that holds" << (LdxStream::instance()->isCvbs() ? "CVBS" : "TBC") << "video";
@@ -173,40 +163,14 @@ int main(int argc, char *argv[])
     // given for a raw TBC
     const bool ldxOutput = outputFilename == "-" && !metadataOptions.isOutputFileSet();
 
-    // Check that none of the input filenames are used as the output file
-    for (qint32 i = 0; i < totalNumberOfInputFiles; i++) {
-        if (inputFilenames[i] == outputFilename && outputFilename != "-") {
-            // Quit with error
-            qCritical("Input and output files cannot have the same filenames");
-            return -1;
-        }
-    }
-
-    // The output stays in the container of the first input (TBC or CVBS)
-    if (!checkSameVideoContainer(inputFilenames[0], outputFilename)) return -1;
+    // No input is the output, and the output stays in the container of the first input (TBC or CVBS)
+    if (const int code = SourceFileChecks::outputIsNotAnInput(inputFilenames, outputFilename)) return code;
 
     // Check that none of the input filenames are repeated
-    for (qint32 i = 0; i < totalNumberOfInputFiles; i++) {
-        for (qint32 j = 0; j < totalNumberOfInputFiles; j++) {
-            if (i != j) {
-                if (inputFilenames[i] == inputFilenames[j]) {
-                    // Quit with error
-                    qCritical("Each input file should only be specified once - some filenames were repeated");
-                    return -1;
-                }
-            }
-        }
-    }
+    if (const int code = SourceFileChecks::inputsAreDistinct(inputFilenames)) return code;
 
     // Check that the output file does not already exist
-    if (outputFilename != "-") {
-        QFileInfo outputFileInfo(outputFilename);
-        if (outputFileInfo.exists()) {
-            // Quit with error
-            qCritical("Specified output file already exists - will not overwrite");
-            return -1;
-        }
-    }
+    if (const int code = SourceFileChecks::outputIsNew(outputFilename)) return code;
 
     // Prepare for DOC process ----------------------------------------------------------------------------------------
 
@@ -224,7 +188,7 @@ int main(int argc, char *argv[])
         // Work out the metadata filename
         QString metadataFilename;
         if (i == 0 && ldxInput) metadataFilename = "the LDX stream";
-        else if (!metadataOptions.selectInput(inputFilenames[i], i == 0, metadataFilename)) return -1;
+        else if (!metadataOptions.selectInput(inputFilenames[i], i == 0, metadataFilename)) return 1;
         qInfo().nospace().noquote() << "Reading input #" << i << " metadata from " << metadataFilename;
 
         // Open it (the metadata of an LDX stream are those it began with: correcting needs them, with the VBI, for the whole of
@@ -234,11 +198,11 @@ int main(int argc, char *argv[])
             if (!LdxStream::instance()->readMetadata(*ldDecodeMetaData[0], streamError) || ldDecodeMetaData[0]->getNumberOfFields() == 0) {
                 qCritical("The LDX stream does not send the metadata of all its fields before its video. Correcting needs them, with the VBI "
                           "and the mapping: pack the capture with its whole metadata (ld-container pack) or use a file");
-                return -1;
+                return 1;
             }
         } else if (!ldDecodeMetaData[i]->read(metadataFilename)) {
             qCritical() << "Unable to open TBC metadata file - cannot continue";
-            return -1;
+            return 1;
         }
     }
 
@@ -247,7 +211,7 @@ int main(int argc, char *argv[])
     QString outputMetadataFilename;
     if (!ldxOutput && !metadataOptions.selectOutput(LdDecodeMetaData::metadataFileName(outputFilename, ldDecodeMetaData[0]->getFormat()),
                                       ldDecodeMetaData[0]->getFormat(), outputMetadataFilename)) {
-        return -1;
+        return 2;
     }
 
     // Reverse field order if required

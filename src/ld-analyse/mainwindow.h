@@ -39,9 +39,7 @@
 #include "aboutdialog.h"
 #include "vbidialog.h"
 #include "dropoutanalysisdialog.h"
-#include "visibledropoutanalysisdialog.h"
-#include "blacksnranalysisdialog.h"
-#include "whitesnranalysisdialog.h"
+#include "snranalysisdialog.h"
 #include "busydialog.h"
 #include "closedcaptionsdialog.h"
 #include "videoparametersdialog.h"
@@ -68,8 +66,8 @@
 #endif
 #include "videofilter.h"
 #include "videofilterdialog.h"
+#include "appearancemenus.h"
 #include "theme.h"
-#include "themeeditordialog.h"
 
 namespace Ui {
 class MainWindow;
@@ -166,9 +164,9 @@ private:
     AboutDialog* aboutDialog;
     VbiDialog* vbiDialog;
     DropoutAnalysisDialog* dropoutAnalysisDialog;
-    VisibleDropOutAnalysisDialog* visibleDropoutAnalysisDialog;
-    BlackSnrAnalysisDialog* blackSnrAnalysisDialog;
-    WhiteSnrAnalysisDialog* whiteSnrAnalysisDialog;
+    DropoutAnalysisDialog* visibleDropoutAnalysisDialog;
+    SnrAnalysisDialog* blackSnrAnalysisDialog;
+    SnrAnalysisDialog* whiteSnrAnalysisDialog;
     BusyDialog* busyDialog;
     ClosedCaptionsDialog *closedCaptionDialog;
     VideoParametersDialog *videoParametersDialog;
@@ -192,11 +190,7 @@ private:
     QPalette buttonPalette;
 
     // Colour theme and widget style (View > Theme, View > Style)
-    ThemeMode themeMode = ThemeMode::Auto;
-    QString customPalette;       // custom theme colours (serialised)
-    QString styleName;           // empty: Auto
-    bool isDarkTheme = false;
-    QAction *customThemeAction = nullptr;
+    AppearanceMenus *appearance = nullptr;
     QString lastFilename;
     
     // Slider debouncing
@@ -335,7 +329,6 @@ private:
     void setFullScreen(bool on);
     void showOverlays();
     void hideOverlays();
-    bool overlaysVisible() const;
     void pollCursor();
     void keyPressEvent(QKeyEvent *event) override;
     void dragEnterEvent(QDragEnterEvent *event) override;
@@ -443,9 +436,7 @@ private:
 
     // Analysis graphs and colour theme
     void updateGraphs();
-    void setupAppearanceMenus();
-    void updateAppearance();
-    void refreshAfterAppearanceChange(bool updateGraphData);
+     void refreshAfterAppearanceChange(bool updateGraphData);
     void customizeTheme();
 
 	// Image display methods

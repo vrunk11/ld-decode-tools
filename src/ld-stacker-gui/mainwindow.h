@@ -28,6 +28,7 @@
 #include <QToolButton>
 
 #include "framebackend.h"
+#include "discnumbering.h"
 #include "optionsdialogs.h"
 #include "snrplot.h"
 #include "sourceinfopanel.h"
@@ -37,8 +38,8 @@
 #include <QProgressBar>
 #include "toolwindows.h"
 #include "stackproject.h"
+#include "appearancemenus.h"
 #include "theme.h"
-#include "themeeditordialog.h"
 
 class MainWindow : public QMainWindow
 {
@@ -106,9 +107,9 @@ private:
     qint32 viewFrames() const;
     void syncFrameControls();
     // Where each source is on the timeline: by the numbers of the disc that its VBI gives (the first frame of the earliest source is the first of the timeline), plus
-    // its own offset. discAtStart is the number of the disc of the first frame of the timeline (-1: not known).
+    // its own offset. discAtStart is the number of the disc of the first frame of the timeline (DiscNumbering::NoNumber: not known).
     QVector<qint32> alignedOffsets;
-    qint32 discAtStart = -1;
+    qint32 discAtStart = DiscNumbering::NoNumber;
     void updateDiscLabel();
     QString discFormat(qint32 disc) const;
     StackProject projectForProcessing() const;
@@ -118,8 +119,6 @@ private:
     void updateAspectButton();
     QImage shownImage(const QImage &image) const;
     void setupAppearanceMenus(QMenu *menu);
-    void updateAppearance();
-    void customizeTheme();
     void resizeToImage(qint32 passesLeft = 3);
     void startStackSnr();
     // The SNR of a source measured from its fields, one source at a time in the background, when its box is ticked
@@ -282,11 +281,7 @@ private:
     QCheckBox *hideCaptureDropouts = nullptr;     // the dropouts of the captures are not drawn, whatever the boxes of the sources say
     QCheckBox *showResidualDropouts = nullptr;    // the dropouts that the stacking left are drawn on the stack
 
-    ThemeMode themeMode = ThemeMode::Auto;
-    QString styleName;
-    QString customPalette;
-    QAction *customThemeAction = nullptr;
-    bool isDarkTheme = false;
+    AppearanceMenus *appearance = nullptr;
 
     bool panning = false;
     QPoint panStart;

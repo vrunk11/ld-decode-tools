@@ -27,8 +27,6 @@ namespace TbcFiles {
 bool isOrcYcFile(const QString &fileName);
 // A chroma file in either naming: <name>.tbcc or <name>_chroma.tbc
 bool isChromaFile(const QString &fileName);
-// A luma file of decode-orc naming: <name>.tbcy
-bool isLumaFile(const QString &fileName);
 
 // <name> for <name>.tbc, <name>.tbcy, <name>.tbcc and <name>_chroma.tbc; the file name
 // as it is for any other

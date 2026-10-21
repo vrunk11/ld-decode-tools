@@ -77,7 +77,7 @@ int main(int argc, char *argv[])
         } else {
             // Quit with error
             qCritical("You must specify an input JSON file using --input-json or as a positional argument");
-            return -1;
+            return 2;
         }
     }
 

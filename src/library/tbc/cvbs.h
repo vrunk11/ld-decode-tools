@@ -154,6 +154,10 @@ public:
     quint16 toTbc(qint16 stored) const;
     qint16 fromTbc(quint16 tbc) const;
 
+    // The 10-bit word that an LDX track of CVBS keeps for a sample: the 16-bit TBC value divided by 64 (truncated), and back. Samples of 15 bits (s16) are brought to 10.
+    quint16 toWord(qint16 stored) const { return static_cast<quint16>(toTbc(stored) >> 6); }
+    qint16 fromWord(quint16 word) const { return fromTbc(static_cast<quint16>(word << 6)); }
+
     // A linear level correction applied to TBC values before they are
     // stored (tbc * scale + offset, in the 16-bit domain), so that values
     // falling below zero keep the headroom the encoding has

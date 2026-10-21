@@ -424,7 +424,7 @@ bool readCapture(const CaptureOptions &options, const QString &input, Capture &c
             QByteArray values(static_cast<int>(samples * 2), 0);
             const qint16 *source = reinterpret_cast<const qint16 *>(stored.constData());
             quint16 *target = reinterpret_cast<quint16 *>(values.data());
-            for (qint64 i = 0; i < samples; i++) target[i] = static_cast<quint16>(converter->toTbc(source[i]) >> 6);
+            for (qint64 i = 0; i < samples; i++) target[i] = converter->toWord(source[i]);
             return values;
         };
     } else {
@@ -744,6 +744,8 @@ int pack(const QStringList &arguments)
     QCommandLineParser parser;
     parser.setApplicationDescription("Pack a TBC capture, its metadata and its audio into an LDX file");
     parser.addHelpOption();
+    parser.addVersionOption();
+    addStandardDebugOptions(parser);
     parser.addPositionalArgument("input", "The .tbc file");
     parser.addOption(QCommandLineOption({ "o", "output" }, "The LDX file to write", "file"));
     parser.addOption(QCommandLineOption("efm", "The EFM t-values of the capture (.efm) to add", "file"));
@@ -751,6 +753,7 @@ int pack(const QStringList &arguments)
     parser.addOption(QCommandLineOption("live-metadata", "Send the metadata field by field, each just before its video, as a producer does that does not have them all at the start"));
     addCaptureOptions(parser);
     parser.process(arguments);
+    processStandardDebugOptions(parser);
     if (parser.positionalArguments().size() != 1 || !parser.isSet("output")) {
         err << parser.helpText();
         return 1;
@@ -838,12 +841,15 @@ int addStream(const QStringList &arguments)
     parser.setApplicationDescription("Add a capture to an LDX file, as a track of its own (for the sources of a stack, or\n"
                                      "several captures of the same VHS tape). The file is written again, to the output.");
     parser.addHelpOption();
+    parser.addVersionOption();
+    addStandardDebugOptions(parser);
     parser.addPositionalArgument("file", "The LDX file");
     parser.addPositionalArgument("input", "The .tbc file to add");
     parser.addOption(QCommandLineOption({ "o", "output" }, "The LDX file to write", "file"));
     parser.addOption(QCommandLineOption("mapped-from", "The capture is the mapping (ld-discmap) of the video track with this id, which is in the file", "id"));
     addCaptureOptions(parser);
     parser.process(arguments);
+    processStandardDebugOptions(parser);
     if (parser.positionalArguments().size() != 2 || !parser.isSet("output")) {
         err << parser.helpText();
         return 1;
@@ -918,10 +924,13 @@ int removeStream(const QStringList &arguments)
     parser.setApplicationDescription("Remove the track with an id from an LDX file, with the metadata about it. The file is\n"
                                      "written again, to the output. The id is not given to another track.");
     parser.addHelpOption();
+    parser.addVersionOption();
+    addStandardDebugOptions(parser);
     parser.addPositionalArgument("file", "The LDX file");
     parser.addOption(QCommandLineOption("id", "The id of the track to remove", "id"));
     parser.addOption(QCommandLineOption({ "o", "output" }, "The LDX file to write", "file"));
     parser.process(arguments);
+    processStandardDebugOptions(parser);
     if (parser.positionalArguments().size() != 1 || !parser.isSet("id") || !parser.isSet("output")) {
         err << parser.helpText();
         return 1;
@@ -997,12 +1006,15 @@ int setStack(const QStringList &arguments)
                                      "\"track\": ...), or, with --embed, a .tbc file brought into this file as a track.\n"
                                      "The file is written again, to the output.");
     parser.addHelpOption();
+    parser.addVersionOption();
+    addStandardDebugOptions(parser);
     parser.addPositionalArgument("file", "The LDX file");
     parser.addPositionalArgument("session", "The .stack file");
     parser.addOption(QCommandLineOption({ "o", "output" }, "The LDX file to write", "file"));
     parser.addOption(QCommandLineOption("embed", "Bring the sources that are .tbc files into the LDX file, as tracks (the others stay links)"));
     parser.addOption(QCommandLineOption("codec", "With --embed, how the video and the audio brought in are kept: raw (default), flac, ffv1 or auto", "codec", "raw"));
     parser.process(arguments);
+    processStandardDebugOptions(parser);
     if (parser.positionalArguments().size() != 2 || !parser.isSet("output")) {
         err << parser.helpText();
         return 1;
@@ -1151,8 +1163,11 @@ int info(const QStringList &arguments)
     QCommandLineParser parser;
     parser.setApplicationDescription("Show what an LDX file holds");
     parser.addHelpOption();
+    parser.addVersionOption();
+    addStandardDebugOptions(parser);
     parser.addPositionalArgument("file", "The LDX file");
     parser.process(arguments);
+    processStandardDebugOptions(parser);
     if (parser.positionalArguments().size() != 1) {
         err << parser.helpText();
         return 1;
@@ -1215,6 +1230,8 @@ int addTrack(const QStringList &arguments)
     parser.setApplicationDescription("Put a file in an LDX file as a track of its own: the audio decoded from EFM (pcm, 16-bit stereo, with --source efm),\n"
                                      "AC3 data, EFM t-values or a text of annotations. The file is written again, in its place (or to the output).");
     parser.addHelpOption();
+    parser.addVersionOption();
+    addStandardDebugOptions(parser);
     parser.addPositionalArgument("file", "The LDX file");
     parser.addOption(QCommandLineOption("kind", "pcm, efm, ac3 or annotations", "kind"));
     parser.addOption(QCommandLineOption("input", "The file to put in", "file"));
@@ -1224,6 +1241,7 @@ int addTrack(const QStringList &arguments)
     parser.addOption(QCommandLineOption("source", "For pcm: where the audio comes from, efm for the digital audio decoded from EFM (default: the analogue audio)", "source"));
     parser.addOption(QCommandLineOption({ "o", "output" }, "Write to another file instead of in place", "file"));
     parser.process(arguments);
+    processStandardDebugOptions(parser);
     if (parser.positionalArguments().size() != 1 || !parser.isSet("kind") || !parser.isSet("input")) {
         err << parser.helpText();
         return 1;
@@ -1261,11 +1279,14 @@ int wav(const QStringList &arguments)
     parser.setApplicationDescription("Write the audio of an LDX file as a WAV file: the analogue audio of the capture (16-bit, or 24-bit for a CVBS capture),\n"
                                      "or with --source efm the digital audio decoded from EFM.");
     parser.addHelpOption();
+    parser.addVersionOption();
+    addStandardDebugOptions(parser);
     parser.addPositionalArgument("file", "The LDX file");
     parser.addOption(QCommandLineOption({ "o", "output" }, "The WAV file (default: the name of the LDX file, .wav)", "file"));
     parser.addOption(QCommandLineOption("id", "The id of the pcm track (default: the first that fits)", "id", "0"));
     parser.addOption(QCommandLineOption("source", "analogue (default) or efm", "source", "analogue"));
     parser.process(arguments);
+    processStandardDebugOptions(parser);
     if (parser.positionalArguments().size() != 1) {
         err << parser.helpText();
         return 1;
@@ -1331,9 +1352,12 @@ int history(const QStringList &arguments)
     QCommandLineParser parser;
     parser.setApplicationDescription("Show the history of an LDX file: what was done to it, by which tool, when, and with what arguments");
     parser.addHelpOption();
+    parser.addVersionOption();
+    addStandardDebugOptions(parser);
     parser.addPositionalArgument("file", "The LDX file (- for a stream)");
     parser.addOption(QCommandLineOption("json", "Write the history as a JSON array, for another program"));
     parser.process(arguments);
+    processStandardDebugOptions(parser);
     if (parser.positionalArguments().size() != 1) {
         err << parser.helpText();
         return 1;
@@ -1376,10 +1400,13 @@ int extractTrack(const QStringList &arguments)
     parser.setApplicationDescription("Write the data of one track of an LDX file as it is: to the output file, or to the standard output, to\n"
                                      "be piped to a tool (for instance the EFM of a capture to ld-process-efm).");
     parser.addHelpOption();
+    parser.addVersionOption();
+    addStandardDebugOptions(parser);
     parser.addPositionalArgument("file", "The LDX file");
     parser.addOption(QCommandLineOption("id", "The id of the track", "id"));
     parser.addOption(QCommandLineOption({ "o", "output" }, "The file to write (the standard output if omitted)", "file"));
     parser.process(arguments);
+    processStandardDebugOptions(parser);
     if (parser.positionalArguments().size() != 1 || !parser.isSet("id")) {
         err << parser.helpText();
         return 1;
@@ -1442,11 +1469,14 @@ int recompress(const QStringList &arguments)
     parser.setApplicationDescription("Keep the tracks of samples of an LDX file as flac (the TBC and the audio), ffv1 (CVBS), or as raw again, or\n"
                                      "as the best for each (auto), without changing what they hold. One track with --id, else all of them. The file is written again, to the output.");
     parser.addHelpOption();
+    parser.addVersionOption();
+    addStandardDebugOptions(parser);
     parser.addPositionalArgument("file", "The LDX file");
     parser.addOption(QCommandLineOption("codec", "raw, flac, ffv1 or auto", "codec"));
     parser.addOption(QCommandLineOption("id", "Only the track with this id", "id"));
     parser.addOption(QCommandLineOption({ "o", "output" }, "The LDX file to write", "file"));
     parser.process(arguments);
+    processStandardDebugOptions(parser);
     if (parser.positionalArguments().size() != 1 || !parser.isSet("codec") || !parser.isSet("output")) {
         err << parser.helpText();
         return 1;
@@ -1510,8 +1540,11 @@ int verify(const QStringList &arguments)
     parser.setApplicationDescription("Check an LDX file: every block is read in the order of the file and by its place in its\n"
                                      "track (as the tools that jump about in a capture read it), and the two must agree.");
     parser.addHelpOption();
+    parser.addVersionOption();
+    addStandardDebugOptions(parser);
     parser.addPositionalArgument("file", "The LDX file");
     parser.process(arguments);
+    processStandardDebugOptions(parser);
     if (parser.positionalArguments().size() != 1) {
         err << parser.helpText();
         return 1;
@@ -1594,9 +1627,12 @@ int unpack(const QStringList &arguments)
     QCommandLineParser parser;
     parser.setApplicationDescription("Write the tracks and the attachments of an LDX file out as separate files");
     parser.addHelpOption();
+    parser.addVersionOption();
+    addStandardDebugOptions(parser);
     parser.addPositionalArgument("file", "The LDX file");
     parser.addOption(QCommandLineOption({ "o", "output" }, "The directory to write to", "directory"));
     parser.process(arguments);
+    processStandardDebugOptions(parser);
     if (parser.positionalArguments().size() != 1 || !parser.isSet("output")) {
         err << parser.helpText();
         return 1;
@@ -1717,7 +1753,7 @@ int unpack(const QStringList &arguments)
             QByteArray words(block.data.size(), 0);
             const quint16 *values = reinterpret_cast<const quint16 *>(block.data.constData());
             qint16 *stored = reinterpret_cast<qint16 *>(words.data());
-            for (qint32 i = 0; i < block.data.size() / 2; i++) stored[i] = converter->fromTbc(static_cast<quint16>(values[i] << 6));
+            for (qint32 i = 0; i < block.data.size() / 2; i++) stored[i] = converter->fromWord(values[i]);
             found->second->write(words);
             cvbsTracks[block.track].frames++;
         } else {
@@ -1764,6 +1800,10 @@ int main(int argc, char *argv[])
     QCoreApplication::setApplicationVersion(QString("ld-decode-tools - Branch: %1 / Commit: %2").arg(APP_BRANCH, APP_COMMIT));
 
     QStringList arguments = application.arguments();
+    if (arguments.size() == 2 && (arguments[1] == "-v" || arguments[1] == "--version")) {
+        out << "ld-container " << QCoreApplication::applicationVersion() << "\n";
+        return 0;
+    }
     if (arguments.size() < 2 || arguments[1] == "-h" || arguments[1] == "--help") {
         out << "ld-container - pack, unpack and inspect LDX files\n\n"
                "Usage: ld-container <command> [options]\n\n"
@@ -1780,7 +1820,8 @@ int main(int argc, char *argv[])
                "  recompress  keep the tracks of samples as flac, ffv1 or raw\n"
                "  verify   check that every block of an .ldx file reads back the same, in order and by place\n"
                "  extract  write the data of one track as it is, to a file or to the standard output (to be piped)\n\n"
-               "Use ld-container <command> --help for the options of a command.\n";
+               "Use ld-container <command> --help for the options of a command.\n"
+               "Every command also takes -v (version), -d (debug messages) and -q (quiet).\n";
         return arguments.size() < 2 ? 1 : 0;
     }
 

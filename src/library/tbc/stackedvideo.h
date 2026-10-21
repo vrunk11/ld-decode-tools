@@ -48,11 +48,11 @@ public:
     // A field of the stack. startLine and endLine (numbered from 1) give the lines wanted, -1 for all of them.
     SourceVideo::Data getField(qint32 fieldNumber, qint32 startLine = -1, qint32 endLine = -1);
 
-    // Where the first frame of a capture is on the disc, by the numbers of its VBI (the picture of a CAV disc, the time of a CLV one in frames), or -1 if the VBI
-    // gives none: the one most of the first frames agree on, so that a frame with a corrupt number does not decide it
+    // Where the first frame of a capture is on the disc, by the numbers of its VBI (the picture of a CAV disc, the time of a CLV one in frames), or DiscNumbering::NoNumber if the VBI
+    // gives none (the number can be 0 or negative: a capture that begins with frames of a lead-in that have no number is before the first number): the one most of the first frames agree on, so that a frame with a corrupt number does not decide it
     static qint32 discOrigin(LdDecodeMetaData &metadata);
 
-    // Where each source begins on the timeline (in frames from the start of the timeline, the earliest being 0): by the origin on the disc (-1: the number 0), plus its offset.
+    // Where each source begins on the timeline (in frames from the start of the timeline, the earliest being 0): by the origin on the disc (DiscNumbering::NoNumber: the number 0), plus its offset.
     // The frames of the timeline are returned in total, with the number of frames of each source.
     static QVector<qint32> alignedPositions(const QVector<qint32> &origins, const QVector<qint32> &offsets, const QVector<qint32> &frames, qint32 &total, qint32 *discAtStart = nullptr);
 
@@ -73,8 +73,6 @@ private:
         bool isFirst = true;
     };
 
-    // The frame of a source that falls on a frame of the timeline, or -1
-    qint32 sourceFrame(Source &source, qint32 frame, bool isReference) const;
     SourceVideo::Data stackField(qint32 fieldNumber, qint32 lines);
 
     StackProject project;

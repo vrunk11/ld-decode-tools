@@ -52,6 +52,9 @@ public:
 
 private:
     void getProcessedSample(const qint32 x, const qint32 y, const QVector<qint32>& availableSourcesForFrame, const QVector<SourceVideo::Data>& inputFields, QVector<QVector<quint16>>& tmpField, const LdDecodeMetaData::VideoParameters& videoParameters, const QVector<LdDecodeMetaData::Field>& fieldMetadata, QVector<quint16>& sample, QVector<quint16>& sampleN, QVector<quint16>& sampleS, QVector<quint16>& sampleE, QVector<quint16>& sampleW, QVector<bool>& isAllDropout, const bool& noDiffDod, const bool& verbose);
+    qint32 neighbourValue(const QVector<quint16>& elements, bool allDropout);
+    qint32 neighbourResults(const QVector<quint16>& elementsN, const QVector<quint16>& elementsS, const QVector<quint16>& elementsE, const QVector<quint16>& elementsW, const QVector<bool>& isAllDropout, bool useEastWest, qint32& resultN, qint32& resultS, qint32& resultE, qint32& resultW);
+    QVector<quint16> closestToNeighbours(const QVector<quint16>& elements, qint32 resultN, qint32 resultS, qint32 resultE, qint32 resultW);
     inline quint16 median(QVector<quint16> v);
     inline qint32 mean(const QVector<quint16>& v);
     inline quint16 closest(const QVector<quint16>& v,const qint32 target);

@@ -46,7 +46,7 @@ namespace SqliteValue
     }
 }
 
-// SQL schema as per documentation
+// SQL schema as per documentation: the one that ld-decode makes (the .tbc.db files of test-data have it), table for table; testsqliteschema checks it
 static const QString SCHEMA_SQL = R"(
 PRAGMA user_version = 1;
 
@@ -126,8 +126,8 @@ CREATE TABLE IF NOT EXISTS field_record (
 CREATE TABLE IF NOT EXISTS vits_metrics (
     capture_id INTEGER NOT NULL,
     field_id INTEGER NOT NULL,
-    w_snr REAL,
     b_psnr REAL,
+    w_snr REAL,
     FOREIGN KEY (capture_id, field_id)
         REFERENCES field_record(capture_id, field_id) ON DELETE CASCADE,
     PRIMARY KEY (capture_id, field_id)
@@ -136,9 +136,9 @@ CREATE TABLE IF NOT EXISTS vits_metrics (
 CREATE TABLE IF NOT EXISTS vbi (
     capture_id INTEGER NOT NULL,
     field_id INTEGER NOT NULL,
-    vbi0 INTEGER,
-    vbi1 INTEGER,
-    vbi2 INTEGER,
+    vbi0 INTEGER NOT NULL,
+    vbi1 INTEGER NOT NULL,
+    vbi2 INTEGER NOT NULL,
     FOREIGN KEY (capture_id, field_id)
         REFERENCES field_record(capture_id, field_id) ON DELETE CASCADE,
     PRIMARY KEY (capture_id, field_id)
@@ -147,24 +147,25 @@ CREATE TABLE IF NOT EXISTS vbi (
 CREATE TABLE IF NOT EXISTS drop_outs (
     capture_id INTEGER NOT NULL,
     field_id INTEGER NOT NULL,
+    field_line INTEGER NOT NULL,
     startx INTEGER NOT NULL,
     endx INTEGER NOT NULL,
-    field_line INTEGER NOT NULL,
     FOREIGN KEY (capture_id, field_id)
-        REFERENCES field_record(capture_id, field_id) ON DELETE CASCADE
+        REFERENCES field_record(capture_id, field_id) ON DELETE CASCADE,
+    PRIMARY KEY (capture_id, field_id, field_line, startx, endx)
 );
 
 CREATE TABLE IF NOT EXISTS vitc (
     capture_id INTEGER NOT NULL,
     field_id INTEGER NOT NULL,
-    vitc0 INTEGER,
-    vitc1 INTEGER,
-    vitc2 INTEGER,
-    vitc3 INTEGER,
-    vitc4 INTEGER,
-    vitc5 INTEGER,
-    vitc6 INTEGER,
-    vitc7 INTEGER,
+    vitc0 INTEGER NOT NULL,
+    vitc1 INTEGER NOT NULL,
+    vitc2 INTEGER NOT NULL,
+    vitc3 INTEGER NOT NULL,
+    vitc4 INTEGER NOT NULL,
+    vitc5 INTEGER NOT NULL,
+    vitc6 INTEGER NOT NULL,
+    vitc7 INTEGER NOT NULL,
     FOREIGN KEY (capture_id, field_id)
         REFERENCES field_record(capture_id, field_id) ON DELETE CASCADE,
     PRIMARY KEY (capture_id, field_id)

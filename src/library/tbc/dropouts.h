@@ -58,6 +58,16 @@ public:
         return m_fieldLine[index];
     }
 
+    // The sum of the lengths of the dropouts, in samples (endx - startx, as the metadata count them; a dropout that ends before it starts counts 0)
+    qint64 totalLength() const;
+
+    // The part of that length that is in the visible picture: the dropouts that start on a field line from firstLine to lastLine, cut to the samples from
+    // activeStart to activeEnd (the part of a dropout that is outside is not counted)
+    qint64 visibleLength(qint32 firstLine, qint32 lastLine, qint32 activeStart, qint32 activeEnd) const;
+
+    // True if the dropouts cover every sample of every line of a field of that size: ld-discmap writes that for a frame it could not number
+    bool coversWholeField(qint32 fieldWidth, qint32 fieldHeight) const;
+
     // JSON (.tbc.json) metadata
     void read(JsonReader &reader);
     void write(JsonWriter &writer) const;

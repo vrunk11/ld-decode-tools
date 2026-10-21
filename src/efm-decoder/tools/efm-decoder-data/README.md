@@ -18,6 +18,7 @@ efm-decoder-data [options] <input.d24> <output.bin>
 - `-v, --version` - Display version information
 - `-d, --debug` - Show debug output
 - `-q, --quiet` - Suppress info and warning messages
+- `--no-timecodes` - For an LDX file as the input: decode its EFM without timecodes (EFM that is not ECMA-130 compliant, the usual one of a LaserDisc)
 - `--output-metadata` - Output bad sector map metadata file
 - `--show-rawsector` - Show raw sector frame data
 - `--show-rawsector-debug` - Show Data24 to raw sector decoding debug

@@ -90,7 +90,7 @@ int main(int argc, char *argv[])
                 QCoreApplication::translate("main", "Show F2 section correction debug")),
         QCommandLineOption(
                 "show-all-debug",
-                QCoreApplication::translate("main", "Show all debug")),
+                QCoreApplication::translate("main", "Show all decoding debug")),
     };
     parser.addOptions(advancedDebugOptions);
 
@@ -166,7 +166,7 @@ int main(int argc, char *argv[])
         outputFilename = positionalArguments.at(1);
     } else {
         qWarning() << "Too many arguments. Expected: [input] [output] (use '-' for stdin/stdout)";
-        return 1;
+        return 2;
     }
 
     // Perform the processing

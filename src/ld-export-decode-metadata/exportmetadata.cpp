@@ -36,6 +36,9 @@
 // Default values used when configuring VideoParameters for a particular video system.
 // See the comments in VideoParameters for the meanings of these values.
 // For descriptions of the systems, see ITU BT.1700.
+// (in a namespace of the file: the library has a struct of the same name that is not the same, and two of them in a program are one definition that differs)
+namespace {
+
 struct VideoSystemDefaults {
     ExportMetaData::VideoSystem system;
     const char *name;
@@ -90,6 +93,8 @@ static const VideoSystemDefaults &getSystemDefaults(const ExportMetaData::VideoP
 {
     return VIDEO_SYSTEM_DEFAULTS[videoParameters.system];
 }
+
+} // namespace
 
 // Look up a video system by name.
 // Return true and set system if found; if not found, return false.
@@ -1138,78 +1143,6 @@ void ExportMetaData::setIsFirstFieldFirst(bool flag)
 bool ExportMetaData::getIsFirstFieldFirst()
 {
     return isFirstFieldFirst;
-}
-
-// Method to convert a CLV time code into an equivalent frame number (to make
-// processing the timecodes easier)
-qint32 ExportMetaData::convertClvTimecodeToFrameNumber(ExportMetaData::ClvTimecode clvTimeCode)
-{
-    // Calculate the frame number
-    qint32 frameNumber = 0;
-    VideoParameters videoParameters = getVideoParameters();
-
-    // Check for invalid CLV timecode
-    if (clvTimeCode.hours == -1 || clvTimeCode.minutes == -1 || clvTimeCode.seconds == -1 || clvTimeCode.pictureNumber == -1) {
-        return -1;
-    }
-
-    if (clvTimeCode.hours != -1) {
-        if (videoParameters.system == PAL) frameNumber += clvTimeCode.hours * 3600 * 25;
-        else frameNumber += clvTimeCode.hours * 3600 * 30;
-    }
-
-    if (clvTimeCode.minutes != -1) {
-        if (videoParameters.system == PAL) frameNumber += clvTimeCode.minutes * 60 * 25;
-        else frameNumber += clvTimeCode.minutes * 60 * 30;
-    }
-
-    if (clvTimeCode.seconds != -1) {
-        if (videoParameters.system == PAL) frameNumber += clvTimeCode.seconds * 25;
-        else frameNumber += clvTimeCode.seconds * 30;
-    }
-
-    if (clvTimeCode.pictureNumber != -1) {
-        frameNumber += clvTimeCode.pictureNumber;
-    }
-
-    return frameNumber;
-}
-
-// Method to convert a frame number into an equivalent CLV timecode
-ExportMetaData::ClvTimecode ExportMetaData::convertFrameNumberToClvTimecode(qint32 frameNumber)
-{
-    ClvTimecode clvTimecode;
-
-    clvTimecode.hours = 0;
-    clvTimecode.minutes = 0;
-    clvTimecode.seconds = 0;
-    clvTimecode.pictureNumber = 0;
-
-    if (getVideoParameters().system == PAL) {
-        clvTimecode.hours = frameNumber / (3600 * 25);
-        frameNumber -= clvTimecode.hours * (3600 * 25);
-
-        clvTimecode.minutes = frameNumber / (60 * 25);
-        frameNumber -= clvTimecode.minutes * (60 * 25);
-
-        clvTimecode.seconds = frameNumber / 25;
-        frameNumber -= clvTimecode.seconds * 25;
-
-        clvTimecode.pictureNumber = frameNumber;
-    } else {
-        clvTimecode.hours = frameNumber / (3600 * 30);
-        frameNumber -= clvTimecode.hours * (3600 * 30);
-
-        clvTimecode.minutes = frameNumber / (60 * 30);
-        frameNumber -= clvTimecode.minutes * (60 * 30);
-
-        clvTimecode.seconds = frameNumber / 30;
-        frameNumber -= clvTimecode.seconds * 30;
-
-        clvTimecode.pictureNumber = frameNumber;
-    }
-
-    return clvTimecode;
 }
 
 // Method to return a description string for the current video format

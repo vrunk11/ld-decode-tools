@@ -7,7 +7,7 @@ add_executable(testweave
     ../playbackcontroller.cpp
 )
 
-target_link_libraries(testweave PRIVATE Qt::Core Qt::Gui Qt::Widgets lddecode-library lddecode-chroma)
+target_link_libraries(testweave PRIVATE Qt::Core Qt::Gui Qt::Widgets lddecode-library lddecode-chroma lddecode-gui)
 target_include_directories(testweave PRIVATE ..)
 if(WIN32)
     target_compile_definitions(testweave PRIVATE)

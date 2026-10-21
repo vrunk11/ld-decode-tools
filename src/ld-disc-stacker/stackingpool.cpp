@@ -24,6 +24,8 @@
 
 #include "stackingpool.h"
 #include "vbidecoder.h"
+#include "discnumbering.h"
+#include "stackframe.h"
 #include "tbc/logging.h"
 #include "ldxcapture.h"
 
@@ -193,7 +195,7 @@ bool StackingPool::getInputFrame(qint32& frameNumber,
             } else if (verbose) {
                 tbcDebugStream().nospace() << "Source #" << sourceNo << " has no frame at offset " << offsets.value(sourceNo, 0);
             }
-        } else if (currentVbiFrame >= sourceMinimumVbiFrame[sourceNo] && currentVbiFrame <= sourceMaximumVbiFrame[sourceNo]) {
+        } else if (ranges.contains(currentVbiFrame, sourceNo)) {
             // Use VBI frame number mapping to get the same frame from the
             // current additional source
             qint32 currentSourceFrameNumber = convertVbiFrameNumberToSequential(currentVbiFrame, sourceNo);
@@ -264,23 +266,8 @@ bool StackingPool::getInputFrame(qint32& frameNumber,
         }
     }
 
-	//set mode used for this frame
-	if(mode != -1)
-	{
-		_mode = mode;
-	}
-	else if(numberOfSources <= 2)//mean
-	{
-		_mode = 0;
-	}
-	else if (numberOfSources <=4)//smart mean
-	{
-		_mode = 2;
-	}
-	else//smart neighbor
-	{
-		_mode = 3;
-	}
+    // Set the mode used for this frame (auto goes by how many sources there are)
+    _mode = mode != -1 ? mode : StackerCore::autoMode(numberOfSources);
 
     // Set the other miscellaneous parameters
     _smartThreshold = smartThreshold;
@@ -376,101 +363,20 @@ bool StackingPool::setOutputFrame(qint32 frameNumber,
 // from timecodes is performed automatically.
 bool StackingPool::setMinAndMaxVbiFrames()
 {
-    // Determine the number of sources available
-    qint32 numberOfSources = sourceVideos.size();
-
-    // Resize vectors
-    sourceDiscTypeCav.resize(numberOfSources);
-    sourceMaximumVbiFrame.resize(numberOfSources);
-    sourceMinimumVbiFrame.resize(numberOfSources);
-
-    for (qint32 sourceNumber = 0; sourceNumber < numberOfSources; sourceNumber++) {
-        // Determine the disc type and max/min VBI frame numbers
-        VbiDecoder vbiDecoder;
-        qint32 cavCount = 0;
-        qint32 clvCount = 0;
-        qint32 cavMin = 1000000;
-        qint32 cavMax = 0;
-        qint32 clvMin = 1000000;
-        qint32 clvMax = 0;
-
-        sourceMinimumVbiFrame[sourceNumber] = 0;
-        sourceMaximumVbiFrame[sourceNumber] = 0;
-        sourceDiscTypeCav[sourceNumber] = false;
-
-        // Using sequential frame numbering starting from 1
-        for (qint32 seqFrame = 1; seqFrame <= ldDecodeMetaData[sourceNumber]->getNumberOfFrames(); seqFrame++) {
-            // Get the VBI data and then decode
-            auto vbi1 = ldDecodeMetaData[sourceNumber]->getFieldVbi(ldDecodeMetaData[sourceNumber]->getFirstFieldNumber(seqFrame)).vbiData;
-            auto vbi2 = ldDecodeMetaData[sourceNumber]->getFieldVbi(ldDecodeMetaData[sourceNumber]->getSecondFieldNumber(seqFrame)).vbiData;
-            VbiDecoder::Vbi vbi = vbiDecoder.decodeFrame(vbi1[0], vbi1[1], vbi1[2], vbi2[0], vbi2[1], vbi2[2]);
-
-            // Look for a complete, valid CAV picture number or CLV time-code
-            if (vbi.picNo > 0) {
-                cavCount++;
-
-                if (vbi.picNo < cavMin) cavMin = vbi.picNo;
-                if (vbi.picNo > cavMax) cavMax = vbi.picNo;
-            }
-
-            if (vbi.clvHr != -1 && vbi.clvMin != -1 &&
-                    vbi.clvSec != -1 && vbi.clvPicNo != -1) {
-                clvCount++;
-
-                LdDecodeMetaData::ClvTimecode timecode;
-                timecode.hours = vbi.clvHr;
-                timecode.minutes = vbi.clvMin;
-                timecode.seconds = vbi.clvSec;
-                timecode.pictureNumber = vbi.clvPicNo;
-                qint32 cvFrameNumber = ldDecodeMetaData[sourceNumber]->convertClvTimecodeToFrameNumber(timecode);
-
-                if (cvFrameNumber < clvMin) clvMin = cvFrameNumber;
-                if (cvFrameNumber > clvMax) clvMax = cvFrameNumber;
-            }
-        }
-        tbcDebugStream() << "StackingPool::setMinAndMaxVbiFrames(): Got" << cavCount << "CAV picture codes and" << clvCount << "CLV timecodes";
-
-        // If the metadata has no picture numbers or time-codes, we cannot use the source
-        if (cavCount == 0 && clvCount == 0) {
-            tbcDebugStream() << "StackingPool::setMinAndMaxVbiFrames(): Source does not seem to contain valid CAV picture numbers or CLV time-codes - cannot process";
-            return false;
-        }
-
-        // Determine disc type
-        if (cavCount > clvCount) {
-            sourceDiscTypeCav[sourceNumber] = true;
-            tbcDebugStream() << "StackingPool::setMinAndMaxVbiFrames(): Got" << cavCount << "valid CAV picture numbers - source disc type is CAV";
-            qInfo().nospace() << "Source #" << sourceNumber << " has a disc type of CAV (uses VBI frame numbers)";
-
-            sourceMaximumVbiFrame[sourceNumber] = cavMax;
-            sourceMinimumVbiFrame[sourceNumber] = cavMin;
-        } else {
-            sourceDiscTypeCav[sourceNumber] = false;
-            tbcDebugStream() << "StackingPool::setMinAndMaxVbiFrames(): Got" << clvCount << "valid CLV picture numbers - source disc type is CLV";
-            qInfo().nospace() << "Source #" << sourceNumber << " has a disc type of CLV (uses VBI time codes)";
-
-            sourceMaximumVbiFrame[sourceNumber] = clvMax;
-            sourceMinimumVbiFrame[sourceNumber] = clvMin;
-        }
-
-        qInfo().nospace() << "Source #" << sourceNumber << " has a VBI frame number range of " << sourceMinimumVbiFrame[sourceNumber] << " to " <<
-            sourceMaximumVbiFrame[sourceNumber];
-    }
-
-    return true;
+    return ranges.scan(ldDecodeMetaData);
 }
 
 // Method to convert the first source sequential frame number to a VBI frame number
 qint32 StackingPool::convertSequentialFrameNumberToVbi(qint32 sequentialFrameNumber, qint32 sourceNumber)
 {
-    return (sourceMinimumVbiFrame[sourceNumber] - 1) + sequentialFrameNumber;
+    return ranges.toDisc(sequentialFrameNumber, sourceNumber);
 }
 
 // Method to convert a VBI frame number to a sequential frame number
 qint32 StackingPool::convertVbiFrameNumberToSequential(qint32 vbiFrameNumber, qint32 sourceNumber)
 {
     // Offset the VBI frame number to get the sequential source frame number
-    return vbiFrameNumber - sourceMinimumVbiFrame[sourceNumber] + 1;
+    return ranges.toSequential(vbiFrameNumber, sourceNumber);
 }
 
 bool StackingPool::isIntegrityOk(const SourceVideo::Data& inputFields,const LdDecodeMetaData::VideoParameters& videoParameters)
@@ -498,9 +404,7 @@ bool StackingPool::isIntegrityOk(const SourceVideo::Data& inputFields,const LdDe
 // offsets, or -1 if the source has none there
 qint32 StackingPool::sourceFrameFor(qint32 frameNumber, qint32 sourceNo, qint32 /*currentVbiFrame*/)
 {
-    const qint32 ownFrame = sourceNo == 0 ? frameNumber : frameNumber - offsets.value(sourceNo, 0);
-    if (ownFrame < 1 || ownFrame > ldDecodeMetaData[sourceNo]->getNumberOfFrames()) return -1;
-    return ownFrame;
+    return StackFrame::ownFrame(frameNumber, sourceNo == 0 ? 0 : offsets.value(sourceNo, 0), ldDecodeMetaData[sourceNo]->getNumberOfFrames());
 }
 
 // The sources that have a frame (not a padded one) at a frame of the reference, lined up by offsets
@@ -525,7 +429,7 @@ QVector<qint32> StackingPool::getAvailableSourcesForFrame(qint32 vbiFrameNumber)
 {
     QVector<qint32> availableSourcesForFrame;
     for (qint32 sourceNo = 0; sourceNo < sourceVideos.size(); sourceNo++) {
-        if (vbiFrameNumber >= sourceMinimumVbiFrame[sourceNo] && vbiFrameNumber <= sourceMaximumVbiFrame[sourceNo]) {
+        if (ranges.contains(vbiFrameNumber, sourceNo)) {
             // Get the field numbers for the frame - THIS CRASHES
             qint32 sequentialFrameNumber = convertVbiFrameNumberToSequential(vbiFrameNumber, sourceNo);
 
@@ -586,35 +490,7 @@ QJsonArray StackingPool::historyWith(const QJsonObject &entry) const
 
 void StackingPool::correctPhaseIDs()
 {
-    constexpr qint32 PHASE_COUNT = 4;
-
-    const qint32 fieldCount = ldDecodeMetaData[0]->getNumberOfFields();
-
-    // Find the first non-padded field
-    qint32 pivotField = 1;
-    while (pivotField <= fieldCount && ldDecodeMetaData[0]->getField(pivotField).pad) {
-        ++pivotField;
-    }
-    if (pivotField >= fieldCount)
-    {
-        return;
-    }
-
-    // Get the starting phase ID - 1
-    qint32 currentPhaseID = ldDecodeMetaData[0]->getField(pivotField).fieldPhaseID - 1;
-    currentPhaseID -= (pivotField - 1) % PHASE_COUNT;
-    currentPhaseID += PHASE_COUNT;
-    currentPhaseID %= PHASE_COUNT;
-
-    // Overwrite phase IDs
-    for (qint32 fieldNumber = 1; fieldNumber <= fieldCount; ++fieldNumber)
-    {
-        LdDecodeMetaData::Field field = ldDecodeMetaData[0]->getField(fieldNumber);
-        field.fieldPhaseID = currentPhaseID + 1;
-        ldDecodeMetaData[0]->updateField(field, fieldNumber);
-        ++currentPhaseID;
-        currentPhaseID %= PHASE_COUNT;
-    }
+    StackFrame::repairFieldPhases(*ldDecodeMetaData[0]);
 }
 
 template<int field>
@@ -638,7 +514,7 @@ void StackingPool::replaceFieldMetaData(qint32 frameNumber)
                 otherFrame = sourceFrameFor(frameNumber, sourceNo, -1);
                 if (otherFrame < 1) continue;
             } else {
-                if (currentVbiFrame < sourceMinimumVbiFrame[sourceNo] || currentVbiFrame > sourceMaximumVbiFrame[sourceNo]) {
+                if (!ranges.contains(currentVbiFrame, sourceNo)) {
                     continue;
                 }
                 const qint32 currentSourceFrameNumber = convertVbiFrameNumberToSequential(currentVbiFrame, sourceNo);

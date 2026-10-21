@@ -11,6 +11,8 @@
 
 #include <QDateTime>
 #include "mainwindow.h"
+#include "aspectratio.h"
+#include "discnumbering.h"
 #include <QJsonObject>
 #include <QSet>
 #include <functional>
@@ -45,9 +47,9 @@ MainWindow::MainWindow(QString inputFilenameParam, const TbcSource::StreamInput 
     aboutDialog = new AboutDialog(this);
     vbiDialog = new VbiDialog(this);
     dropoutAnalysisDialog = new DropoutAnalysisDialog(this);
-    visibleDropoutAnalysisDialog = new VisibleDropOutAnalysisDialog(this);
-    blackSnrAnalysisDialog = new BlackSnrAnalysisDialog(this);
-    whiteSnrAnalysisDialog = new WhiteSnrAnalysisDialog(this);
+    visibleDropoutAnalysisDialog = new DropoutAnalysisDialog(this, true);
+    blackSnrAnalysisDialog = new SnrAnalysisDialog(SnrAnalysisDialog::Black, this);
+    whiteSnrAnalysisDialog = new SnrAnalysisDialog(SnrAnalysisDialog::White, this);
     busyDialog = new BusyDialog(this);
     closedCaptionDialog = new ClosedCaptionsDialog(this);
     videoParametersDialog = new VideoParametersDialog(this);
@@ -110,19 +112,18 @@ MainWindow::MainWindow(QString inputFilenameParam, const TbcSource::StreamInput 
     // Colour theme and widget style: View > Theme and View > Style, saved in the
     // configuration. --force-dark-theme overrides the theme for this session
     // without changing the setting.
-    customPalette = configuration.getCustomPalette();
-    const qint32 savedTheme = configuration.getThemeMode();
-    themeMode = (savedTheme >= static_cast<qint32>(ThemeMode::Auto) && savedTheme <= static_cast<qint32>(ThemeMode::DarkGrey))
-        ? static_cast<ThemeMode>(savedTheme) : ThemeMode::Auto;
-    if (themeMode == ThemeMode::Custom && customPalette.isEmpty()) themeMode = ThemeMode::Auto;
-    if (qApp->property("forceDarkTheme").toBool()) themeMode = ThemeMode::Dark;
-
-    // A saved style that is not installed here falls back to Auto
-    styleName = configuration.getStyleName();
-    if (!styleName.isEmpty() && !availableStyles().contains(styleName, Qt::CaseInsensitive)) styleName.clear();
-
-    isDarkTheme = applyAppearance(styleName, themeMode, customPalette);
-    setupAppearanceMenus();
+    appearance = new AppearanceMenus(configuration.getThemeMode(), configuration.getCustomPalette(), configuration.getStyleName(), this);
+    connect(appearance, &AppearanceMenus::themeModeStored, this, [this](qint32 mode) { configuration.setThemeMode(mode); });
+    connect(appearance, &AppearanceMenus::customPaletteStored, this, [this](const QString &palette) { configuration.setCustomPalette(palette); });
+    connect(appearance, &AppearanceMenus::styleNameStored, this, [this](const QString &name) { configuration.setStyleName(name); });
+    connect(appearance, &AppearanceMenus::changed, this, [this]() {
+        configuration.writeConfiguration();
+        refreshAfterAppearanceChange(true);
+    });
+    connect(appearance, &AppearanceMenus::previewed, this, &MainWindow::refreshAfterAppearanceChange);
+    connect(appearance, &AppearanceMenus::customizeRequested, this, &MainWindow::customizeTheme);
+    ui->menuView->addSeparator();
+    appearance->install(ui->menuView);
 
     // Store the current button palette for the show dropouts button
     // Use application palette to ensure it respects theme settings
@@ -501,9 +502,8 @@ bool MainWindow::filterImage(QImage &image, qint32 displayWidth, qint32 displayH
     format.height = image.height();
     format.displayWidth = displayWidth;
     format.displayHeight = displayHeight;
-    const bool isPal = tbcSource.getSystem() == PAL;
-    format.frameRateNumerator = (isPal ? 25 : 30000) * (isFieldView ? 2 : 1);
-    format.frameRateDenominator = isPal ? 1 : 1001;
+    format.frameRateNumerator = frameRateNumerator(tbcSource.getSystem()) * (isFieldView ? 2 : 1);
+    format.frameRateDenominator = frameRateDenominator(tbcSource.getSystem());
     format.topFieldFirst = !tbcSource.getFieldOrder();
     format.interlaced = tbcSource.getFrameViewEnabled();
 
@@ -591,7 +591,7 @@ void MainWindow::updateLive()
 
     // How far behind the newest frame the picture is (playing from a frame of the buffer)
     const qint32 frames = tbcSource.getNumberOfFrames();
-    const double frameRate = tbcSource.getSystem() == PAL ? 25.0 : 30000.0 / 1001.0;
+    const double frameRate = videoFrameRate(tbcSource.getSystem());
     const qint32 behind = qMax(0, frames - currentFrameNumber);
     QString status = ended ? tr("Live input ended after %1 frames").arg(frames)
                            : tr("Live input - %1 frames received").arg(tbcSource.getFramesReceived());
@@ -873,7 +873,7 @@ void MainWindow::togglePlayback()
     weaveActive = actionWeave->isChecked() && tbcSource.getViewMode() == TbcSource::ViewMode::FRAME_VIEW && !deinterlacedView
                   && tbcSource.getNumberOfFields() > 2;
     tbcSource.setWeavePlayback(weaveActive);
-    const double frameRate = tbcSource.getSystem() == PAL ? 25.0 : 30000.0 / 1001.0;
+    const double frameRate = videoFrameRate(tbcSource.getSystem());
     playback->setRate(isFieldView || weaveActive ? 2.0 * frameRate : frameRate);
     const bool isLive = tbcSource.getIsLive();
     if (isLive) tbcSource.unfreezeLive();
@@ -1066,9 +1066,6 @@ void MainWindow::setGuiEnabled(bool enabled)
     ui->actionLine_scope->setEnabled(enabled);
     ui->actionVectorscope->setEnabled(enabled);
     ui->actionVBI->setEnabled(enabled);
-    ui->actionNTSC->setEnabled(enabled);
-    ui->actionVideo_metadata->setEnabled(enabled);
-    ui->actionVITS_Metrics->setEnabled(enabled);
     ui->actionZoom_In->setEnabled(enabled);
     ui->actionZoom_Out->setEnabled(enabled);
     ui->actionZoom_1x->setEnabled(enabled);
@@ -1376,14 +1373,10 @@ void MainWindow::showImage()
     if (tbcSource.getIsFrameVbiValid()) {
         VbiDecoder::Vbi vbi = tbcSource.getFrameVbi();
         if (vbi.clvHr != -1) {
-            vbiStatus.setText(QString(" -  CLV time code: %1:%2:%3")
-                                  .arg(vbi.clvHr, 2, 10, QChar('0'))
-                                  .arg(vbi.clvMin, 2, 10, QChar('0'))
-                                  .arg(vbi.clvSec, 2, 10, QChar('0')));
+            vbiStatus.setText(QString(" -  CLV time code: %1").arg(DiscNumbering::clvText(vbi.clvHr, vbi.clvMin, vbi.clvSec, vbi.clvPicNo)));
             vbiStatus.show();
         } else if (vbi.picNo != -1) {
-            vbiStatus.setText(QString(" -  CAV picture number: %1")
-                                  .arg(vbi.picNo, 5, 10, QChar('0')));
+            vbiStatus.setText(QString(" -  CAV picture number: %1").arg(DiscNumbering::cavText(vbi.picNo)));
             vbiStatus.show();
         } else {
             vbiStatus.hide();
@@ -1413,7 +1406,7 @@ void MainWindow::showImage()
         // one a lighter shade of the button, so it stands out without
         // becoming a light patch with unreadable light text
         QPalette tempPalette = buttonPalette;
-        const QColor highlightColour = isDarkTheme ? buttonPalette.color(QPalette::Button).lighter(170)
+        const QColor highlightColour = appearance->isDark() ? buttonPalette.color(QPalette::Button).lighter(170)
                                                    : QColor(Qt::lightGray);
         tempPalette.setColor(QPalette::Button, highlightColour);
         ui->dropoutsPushButton->setAutoFillBackground(true);
@@ -1496,15 +1489,7 @@ qint32 MainWindow::getAspectAdjustment() {
     // Using source aspect ratio? No adjustment
     if (!displayAspectRatio) return 0;
 
-    if (tbcSource.getSystem() == PAL) {
-        // 625 lines
-        if (tbcSource.getIsWidescreen()) return 103; // 16:9
-        else return -196; // 4:3
-    } else {
-        // 525 lines
-        if (tbcSource.getIsWidescreen()) return 122; // 16:9
-        else return -150; // 4:3
-    }
+    return AspectRatio::widthAdjustment(tbcSource.getSystem(), tbcSource.getIsWidescreen());
 }
 
 // Redraw the viewer (for example, when scaleFactor has been changed)
@@ -2761,97 +2746,6 @@ void MainWindow::updateGraphs()
     whiteSnrAnalysisDialog->finishUpdate(currentFrameNumber);
 }
 
-// Add View > Theme (Auto/Light/Dark) and View > Style (Auto/Windows 11/Classic/
-// Fusion), with the current choices checked
-void MainWindow::setupAppearanceMenus()
-{
-    QMenu *themeMenu = new QMenu(tr("Theme"), this);
-    QActionGroup *themeGroup = new QActionGroup(this);
-    themeGroup->setExclusive(true);
-
-    const struct {
-        ThemeMode mode;
-        QString text;
-    } themeEntries[] = {
-        // The system's own appearance
-        { ThemeMode::Auto, tr("Auto (follow system)") },
-        { ThemeMode::Light, tr("Light") },
-        { ThemeMode::Dark, tr("Dark") },
-        // Fixed palettes
-        { ThemeMode::SoftLight, tr("Soft light") },
-        { ThemeMode::Dim, tr("Dim") },
-        { ThemeMode::DarkGrey, tr("Dark grey") },
-        { ThemeMode::Custom, tr("Custom") },
-    };
-
-    for (const auto &entry : themeEntries) {
-        if (entry.mode == ThemeMode::SoftLight) themeMenu->addSeparator();
-        QAction *action = themeMenu->addAction(entry.text);
-        action->setCheckable(true);
-        action->setChecked(entry.mode == themeMode);
-        themeGroup->addAction(action);
-        const ThemeMode mode = entry.mode;
-        if (mode == ThemeMode::Custom) {
-            // Only selectable once a custom theme has been saved
-            customThemeAction = action;
-            action->setEnabled(!customPalette.isEmpty());
-        }
-        connect(action, &QAction::triggered, this, [this, mode]() {
-            themeMode = mode;
-            configuration.setThemeMode(static_cast<qint32>(mode));
-            updateAppearance();
-        });
-    }
-
-    themeMenu->addSeparator();
-    QAction *customizeAction = themeMenu->addAction(tr("Customize..."));
-    connect(customizeAction, &QAction::triggered, this, &MainWindow::customizeTheme);
-
-    QMenu *styleMenu = new QMenu(tr("Style"), this);
-    QActionGroup *styleGroup = new QActionGroup(this);
-    styleGroup->setExclusive(true);
-
-    // Auto first, then every style Qt finds on this machine
-    QStringList names = { QString() };
-    names += availableStyles();
-
-    for (const QString &name : names) {
-        QString text;
-        if (name.isEmpty()) {
-#ifdef Q_OS_WIN
-            text = tr("Auto (Classic look)");
-#else
-            text = tr("Auto (system)");
-#endif
-        } else {
-            text = styleDisplayName(name);
-        }
-
-        QAction *action = styleMenu->addAction(text);
-        action->setCheckable(true);
-        action->setChecked(name.compare(styleName, Qt::CaseInsensitive) == 0);
-        action->setData(name);
-        styleGroup->addAction(action);
-        connect(action, &QAction::triggered, this, [this, name]() {
-            styleName = name;
-            configuration.setStyleName(name);
-            updateAppearance();
-        });
-    }
-    ui->menuView->addSeparator();
-    ui->menuView->addMenu(themeMenu);
-    ui->menuView->addMenu(styleMenu);
-}
-
-// Apply the theme and style now and remember the choice
-void MainWindow::updateAppearance()
-{
-    configuration.writeConfiguration();
-
-    isDarkTheme = applyAppearance(styleName, themeMode, customPalette);
-    refreshAfterAppearanceChange(true);
-}
-
 // Update what keeps its own copy of the colours. The graphs only depend on
 // whether the theme is dark, and are costly to rebuild on a long capture, so
 // the live preview of the theme editor only rebuilds them when that changes.
@@ -2869,36 +2763,12 @@ void MainWindow::refreshAfterAppearanceChange(bool updateGraphData)
 // View > Theme > Customize...: edit the custom theme with a live preview
 void MainWindow::customizeTheme()
 {
-    const ThemeMode previousMode = themeMode;
-    const QString previousPalette = customPalette;
-
     // The play button colour is kept apart from the system palette, which has none
     QPalette startPalette = QApplication::palette();
     startPalette.setColor(QPalette::All, QPalette::BrightText, playButtonColour());
     startPalette.setColor(QPalette::All, QPalette::LinkVisited, waveformColour(false));
     startPalette.setColor(QPalette::Disabled, QPalette::LinkVisited, waveformColour(true));
-    ThemeEditorDialog editor(startPalette, this);
-    connect(&editor, &ThemeEditorDialog::previewChanged, this, [this](const QString &palette) {
-        const bool wasDark = isDarkTheme;
-        isDarkTheme = applyAppearance(styleName, ThemeMode::Custom, palette);
-        refreshAfterAppearanceChange(isDarkTheme != wasDark);
-    });
-
-    if (editor.exec() == QDialog::Accepted) {
-        customPalette = editor.palette();
-        themeMode = ThemeMode::Custom;
-        configuration.setCustomPalette(customPalette);
-        configuration.setThemeMode(static_cast<qint32>(themeMode));
-        if (customThemeAction) {
-            customThemeAction->setEnabled(true);
-            customThemeAction->setChecked(true);
-        }
-    } else {
-        themeMode = previousMode;
-        customPalette = previousPalette;
-    }
-
-    updateAppearance();
+    appearance->customize(this, startPalette);
 }
 
 void MainWindow::on_finishedLoading(bool success)
@@ -3193,7 +3063,7 @@ void MainWindow::updateAudioStatistics()
     const qint32 current = audio->currentTrack();
     if (current >= 0 && current < audio->tracks().size()) out << "  " << tr("Track played: %1").arg(audio->tracks()[current].label) << "\n";
     if (audio->isPlaying()) {
-        const double unitsPerSecond = (tbcSource.getSystem() == PAL ? 25.0 : 30000.0 / 1001.0) * (tbcSource.getFieldViewEnabled() || weaveActive ? 2.0 : 1.0);
+        const double unitsPerSecond = (videoFrameRate(tbcSource.getSystem())) * (tbcSource.getFieldViewEnabled() || weaveActive ? 2.0 : 1.0);
         const double picture = positionSeconds(tbcSource.getFieldViewEnabled() || weaveActive ? currentFieldNumber : currentFrameNumber);
         const double lagMs = (picture - audio->videoSecondsNow()) * 1000.0;
         Q_UNUSED(unitsPerSecond);
@@ -3344,7 +3214,7 @@ void MainWindow::showAudioConfig()
     qint32 track = 0;
     if (isLdx) LdxCapture::split(tbcSource.getCurrentSourceFilename(), path, track);
     const qint32 last = tbcSource.getIsSourceLoaded() ? (tbcSource.getFieldViewEnabled() ? tbcSource.getNumberOfFields() : tbcSource.getNumberOfFrames()) : 0;
-    const double frameRate = tbcSource.getSystem() == PAL ? 25.0 : 30000.0 / 1001.0;
+    const double frameRate = videoFrameRate(tbcSource.getSystem());
     audioConfig->setVideo(last > 0 ? last / (tbcSource.getFieldViewEnabled() ? 2.0 * frameRate : frameRate) : 0.0, path);
     {
         const QString source = efmSourceName();
@@ -3580,7 +3450,7 @@ void MainWindow::loadAudio()
     }
     // The analogue audio is cut to the fields: the metadata say where each field begins in it
     {
-        const double frameRate = tbcSource.getSystem() == PAL ? 25.0 : 30000.0 / 1001.0;
+        const double frameRate = videoFrameRate(tbcSource.getSystem());
         audio->setFieldSamples(tbcSource.getAudioSamplesBeforeFields(), 2.0 * frameRate);
     }
     if (!tracks.isEmpty()) audio->selectTrack(first);
@@ -3793,7 +3663,7 @@ void MainWindow::unloadAudio()
 
 double MainWindow::positionSeconds(qint32 position)
 {
-    const double frameRate = tbcSource.getSystem() == PAL ? 25.0 : 30000.0 / 1001.0;
+    const double frameRate = videoFrameRate(tbcSource.getSystem());
     const double rate = tbcSource.getFieldViewEnabled() || weaveActive ? 2.0 * frameRate : frameRate;
     return (position - 1) / rate;
 }
@@ -3841,7 +3711,7 @@ void MainWindow::waveformSeek(double seconds)
 {
     if (!tbcSource.getIsSourceLoaded() || tbcSource.getIsLive()) return;
     pausePlayback();
-    const double frameRate = tbcSource.getSystem() == PAL ? 25.0 : 30000.0 / 1001.0;
+    const double frameRate = videoFrameRate(tbcSource.getSystem());
     const double rate = tbcSource.getFieldViewEnabled() ? 2.0 * frameRate : frameRate;
     const qint32 last = tbcSource.getFieldViewEnabled() ? tbcSource.getNumberOfFields() : tbcSource.getNumberOfFrames();
     ui->posHorizontalSlider->setValue(qBound(1, static_cast<qint32>(seconds * rate) + 1, qMax(1, last)));
@@ -3873,7 +3743,7 @@ qint32 MainWindow::seekFirst()
 // A second, in those units (the frame rate is 25 or 30, rounded)
 qint32 MainWindow::seekUnitsPerSecond()
 {
-    return (tbcSource.getSystem() == PAL ? 25 : 30) * (tbcSource.getFieldViewEnabled() ? 2 : 1);
+    return timecodeFramesPerSecond(tbcSource.getSystem()) * (tbcSource.getFieldViewEnabled() ? 2 : 1);
 }
 
 // Go to a position (kept to what there is): the playback stops, as when the buttons are used
@@ -4488,7 +4358,7 @@ void MainWindow::refreshChapterList()
     if (!chapterListDialog) return;
     QVector<ChapterListDialog::Row> rows;
     if (tbcSource.getIsSourceLoaded() && !tbcSource.getIsLive()) {
-        const double frameRate = tbcSource.getSystem() == PAL ? 25.0 : 30000.0 / 1001.0;
+        const double frameRate = videoFrameRate(tbcSource.getSystem());
         for (const TbcSource::ChapterEntry &entry: tbcSource.chapterList()) {
             ChapterListDialog::Row row;
             row.chapter = entry.chapter;
@@ -4795,11 +4665,6 @@ void MainWindow::setFullScreen(bool on)
         updateImageViewer();
         resizeTimer->start();
     }
-}
-
-bool MainWindow::overlaysVisible() const
-{
-    return fullScreenOn && !overlaysHiddenNow;
 }
 
 // The remote and the numbers come back (and the pointer), and go after a few seconds of the mouse being still

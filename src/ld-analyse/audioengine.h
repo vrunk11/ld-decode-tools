@@ -81,7 +81,6 @@ public:
     // the audio of a moment of the video is exact, not the time times the sample rate. cumulative[i] is the number of samples
     // before field i (from 0), and has one more entry than there are fields. Empty: no map.
     void setFieldSamples(const QVector<qint64> &cumulative, double fieldsPerSecond);
-    bool hasFieldSamples() const { return !fieldSamples.isEmpty(); }
     // The place in the audio of a moment of the video, in pairs of samples, and the other way
     qint64 sampleAt(double videoSeconds) const;
     double videoSecondsOf(qint64 sample) const;

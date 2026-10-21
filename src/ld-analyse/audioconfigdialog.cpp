@@ -285,11 +285,6 @@ void AudioConfigDialog::setVideo(double videoSeconds, const QString &ldxFile)
     saveButton->setEnabled(!samples.isEmpty() && !ldx.isEmpty());
 }
 
-void AudioConfigDialog::setImportedName(const QString &importedName)
-{
-    if (!importedName.isEmpty()) status->setText(tr("In use: %1").arg(importedName));
-}
-
 void AudioConfigDialog::browse()
 {
     const QString file = QFileDialog::getOpenFileName(this, tr("Import audio"), QString(), tr("All files (*)"));

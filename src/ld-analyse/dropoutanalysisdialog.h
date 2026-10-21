@@ -26,7 +26,8 @@ class DropoutAnalysisDialog : public QDialog
     Q_OBJECT
 
 public:
-    explicit DropoutAnalysisDialog(QWidget *parent = nullptr);
+    // The length of the dropouts of the frames, or only of those in the visible picture
+    explicit DropoutAnalysisDialog(QWidget *parent = nullptr, bool visibleOnly = false);
     ~DropoutAnalysisDialog();
 
     void startUpdate(qint32 _numberOfFrames);

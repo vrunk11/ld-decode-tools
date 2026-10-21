@@ -30,6 +30,7 @@
 
 #include "tbc/logging.h"
 #include "tbc/metadataoptions.h"
+#include "tbc/commonoptions.h"
 #include "cvbsaudio.h"
 #include "ldxcapture.h"
 #include "discmapper.h"
@@ -64,9 +65,8 @@ int main(int argc, char *argv[])
     addStandardDebugOptions(parser);
 
     // Option to reverse the field order (-r / --reverse)
-    QCommandLineOption setReverseOption(QStringList() << "r" << "reverse",
-                                       QCoreApplication::translate("main", "Reverse the field order to second/first (default first/second)"));
-    parser.addOption(setReverseOption);
+    ReverseOption setReverseOption;
+    setReverseOption.addTo(parser);
 
     // Option to only perform mapping (without saving) (-m / --maponly)
     QCommandLineOption setMapOnlyOption(QStringList() << "m" << "maponly",
@@ -103,10 +103,10 @@ int main(int argc, char *argv[])
 
     // Standard logging options
     processStandardDebugOptions(parser);
-    if (!metadataOptions.process(parser)) return -1;
+    if (!metadataOptions.process(parser)) return 2;
 
     // Get the options from the parser
-    bool reverse = parser.isSet(setReverseOption);
+    bool reverse = setReverseOption.isSet(parser);
     bool mapOnly = parser.isSet(setMapOnlyOption);
     bool noStrict = parser.isSet(setNoStrictOption);
     bool deleteUnmappable = parser.isSet(setDeleteUnmappableOption);
@@ -124,13 +124,13 @@ int main(int argc, char *argv[])
         } else {
             // Quit with error
             qCritical("You must specify input and output TBC files");
-            return -1;
+            return 2;
         }
 
         if (inputFilename == outputFilename) {
             // Quit with error
             qCritical("Input and output TBC files cannot have the same file names");
-            return -1;
+            return 2;
         }
     } else {
         // Require only source filename
@@ -140,7 +140,7 @@ int main(int argc, char *argv[])
         } else {
             // Quit with error
             qCritical("You must specify the input TBC file");
-            return -1;
+            return 2;
         }
     }
 
@@ -169,26 +169,26 @@ int main(int argc, char *argv[])
     // Check that required input TBC file exist
     if (!inputFileInfo.exists()) {
         qCritical("The specified input file does not exist");
-        return -1;
+        return 1;
     }
 
     // Check that the required input TBC metadata file exists
     QString inputMetadataFilename;
-    if (!metadataOptions.selectInput(inputFileInfo.filePath(), false, inputMetadataFilename)) return -1;
+    if (!metadataOptions.selectInput(inputFileInfo.filePath(), false, inputMetadataFilename)) return 1;
     QFileInfo inputMetadataFileInfo(inputMetadataFilename);
     if (!inputMetadataFileInfo.exists()) {
         qCritical("The specified input file metadata does not exist");
-        return -1;
+        return 1;
     }
 
     // Check that the required output TBC file isn't overwriting something
     if (!mapOnly) {
         if (outputFileInfo.exists()) {
             qCritical("The specified output file already exists - please delete the existing file or use another output file name");
-            return -1;
+            return 1;
         }
         // The output stays in the input's container (TBC or CVBS)
-        if (!checkSameVideoContainer(inputFileInfo.filePath(), outputFileInfo.filePath())) return -1;
+        if (!checkSameVideoContainer(inputFileInfo.filePath(), outputFileInfo.filePath())) return 2;
     }
 
     // Perform disc mapping

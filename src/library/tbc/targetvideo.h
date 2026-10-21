@@ -45,7 +45,6 @@ public:
     void setLdxCvbs(bool isCvbs) { ldxCvbs = isCvbs; }
     // Whether the video a tool reads (a file, a track of an LDX file or the LDX stream "-") is CVBS
     static bool sourceIsCvbs(const QString &inputName);
-    bool isLdxStream() const { return ldxStreamOutput; }
     bool writeField(const QVector<quint16> &fieldData, const QByteArray &metadataJson);
     // bits: 16 for the analogue audio of a TBC capture, 24 for that of a CVBS capture
     void setLdxAudio(double sampleRate, qint32 bits = 16);

@@ -23,12 +23,12 @@
 ************************************************************************/
 
 #include "vbilinedecoder.h"
-#include "decoderpool.h"
+#include "tbc/fieldpool.h"
 #include "fieldvbi.h"
 #include "tbc/logging.h"
 
-VbiLineDecoder::VbiLineDecoder(QAtomicInt& _abort, DecoderPool& _decoderPool, QObject *parent)
-    : QThread(parent), abort(_abort), decoderPool(_decoderPool)
+VbiLineDecoder::VbiLineDecoder(QAtomicInt& _abort, FieldPool& _fieldPool, QObject *parent)
+    : QThread(parent), abort(_abort), fieldPool(_fieldPool)
 {
 
 }
@@ -45,7 +45,7 @@ void VbiLineDecoder::run()
 
     while (!abort) {
         // Get the next field to process from the input file
-        if (!decoderPool.getInputField(fieldNumber, sourceFieldData, fieldMetadata, videoParameters)) {
+        if (!fieldPool.getInputField(fieldNumber, sourceFieldData, fieldMetadata, videoParameters)) {
             // No more input fields -- exit
             break;
         }
@@ -62,7 +62,7 @@ void VbiLineDecoder::run()
         decodeFieldVbi(sourceFieldData, startFieldLine, videoParameters, fieldMetadata);
 
         // Write the result to the output metadata
-        if (!decoderPool.setOutputField(fieldNumber, fieldMetadata)) {
+        if (!fieldPool.setOutputField(fieldNumber, fieldMetadata)) {
             abort = true;
             break;
         }

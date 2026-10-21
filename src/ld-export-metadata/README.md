@@ -19,7 +19,7 @@ ld-export-metadata exports and converts metadata from TBC files into various hum
 
 ### Data Categories
 - **Field Information**: Sequence numbers, field order, timestamps
-- **VBI Metadata**: Frame numbers, time codes, chapter marks
+- **VBI Metadata**: Frame numbers, timecodes, chapter marks
 - **Video Parameters**: System type, dimensions, sample rate
 - **Dropout Data**: Location, length, and statistics
 - **Quality Metrics**: SNR, VITS measurements
@@ -63,6 +63,8 @@ ld-export-metadata [options] <input.tbc>
 ```bash
 ld-export-metadata --vbi-csv vbi.csv input.tbc.sqlite
 ```
+
+The CSV has one line for each frame: the frame number, the disc type, the CAV picture number (no zeros before it; `none` if there is none), the CLV timecode written hours:minutes:seconds.picture with the hours as they are and the other parts on two digits (`1:23:45.06`; `xx` for a part that is not known, `none` if there is none), the chapter, the lead-in and lead-out flags, the user code and the picture stop flag.
 
 #### Export VITS Data as CSV
 ```bash

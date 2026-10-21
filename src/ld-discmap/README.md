@@ -33,6 +33,7 @@ ld-discmap [options] <input.tbc> <output.tbc>
 - `-s, --nostrict`: No strict checking on pulldown frames
 - `-u, --delete-unmappable-frames`: Delete unmappable frames (by default they are kept, given a number and marked as dropouts: see below)
 - `-n, --no-audio`: Do not process analogue audio (for a CVBS capture this is the `capture_audio_0.wav` file, which is mapped like the `.pcm` of a TBC capture, and skipped if it does not exist)
+- `--meta <db|json>`: Metadata format to use when both input.db and input.json exist (default db, with a warning)
 
 #### Verbosity
 - `-q, --quiet`: Suppress info and warning messages

@@ -22,7 +22,9 @@
 #include <memory>
 
 #include "lddecodemetadata.h"
+#include "discnumbering.h"
 #include "dropouts.h"
+#include "colourconfiguration.h"
 #include "comb.h"
 #include "outputwriter.h"
 #include "palcolour.h"
@@ -60,7 +62,7 @@ struct SourceInfo {
     qint32 paddedFrames = 0;      // frames that have a field that is not there (padded)
     qint32 vbiFrames = 0;         // frames that have a picture number or a time code
     qint32 discType = 0;          // 0 not known, 1 CLV, 2 CAV
-    qint32 originDisc = -1;       // the number of the disc (picture, or time in frames) of the first frame of the capture: -1 if the VBI gives none
+    qint32 originDisc = DiscNumbering::NoNumber;       // the number of the disc (picture, or time in frames) of the first frame of the capture, which can be 0 or negative: NoNumber if the VBI gives none
     qint32 firstPicture = -1, lastPicture = -1;
     qint32 firstSeconds = -1, lastSeconds = -1;
     qint32 chapters = 0;
@@ -203,6 +205,8 @@ private:
     StackSnrPoint measureStackFrame(const FrameRequest &request, qint32 frame, qint32 inStack, const QMap<QString, SourceVideo *> *videos);
     static qint32 snrThreadCount();
     void yieldToInteraction(const std::atomic<quint64> &generationNow, quint64 generation) const;
+    template <typename Job>
+    void runSnrJobs(qint32 threads, qint32 count, const std::atomic<quint64> &generationNow, quint64 generation, Job job) const;
     StackSnrPoint measureSourceFrame(Loaded &source, SourceVideo &video, qint32 frame);
     void openSnrReaders(const FrameRequest &request, qint32 threads, quint64 generation);
     QImage chromaPicture(Loaded &source, qint32 ownFrame, const QVector<StackedFrame> *around, qint32 lookBehind);

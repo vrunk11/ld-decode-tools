@@ -40,7 +40,6 @@ public:
     void setLive(bool live, bool streamEnded = false);
 
     double getSpeed() const { return speed; }
-    bool getLoop() const { return loop; }
     bool isPlaying() const { return timer.isActive(); }
     qint32 getSkippedPositions() const { return skipped; }
     void clearSkipped() { skipped = 0; }

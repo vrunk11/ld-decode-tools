@@ -42,6 +42,14 @@ enum VideoSystem {
 
 bool parseVideoSystemName(QString name, VideoSystem &system);
 
+// The frame rate of the video: 25 frames a second for PAL, 30000 / 1001 for NTSC and PAL-M (the rate of the time of the video, as a fraction and as a number)
+inline qint32 frameRateNumerator(VideoSystem system) { return system == PAL ? 25 : 30000; }
+inline qint32 frameRateDenominator(VideoSystem system) { return system == PAL ? 1 : 1001; }
+inline double videoFrameRate(VideoSystem system) { return static_cast<double>(frameRateNumerator(system)) / frameRateDenominator(system); }
+
+// The frames that the time codes of a disc (CLV) count in a second: 25, or 30 for NTSC and PAL-M, the round figure, not the frame rate
+inline qint32 timecodeFramesPerSecond(VideoSystem system) { return system == PAL ? 25 : 30; }
+
 class LdDecodeMetaData
 {
 
@@ -382,6 +390,8 @@ private:
     VideoParameters videoParameters;
     PcmAudioParameters pcmAudioParameters;
     QVector<Field> fields;
+
+    Field &fieldAt(qint32 sequentialFieldNumber, const char *caller);
     QVector<qint32> pcmAudioFieldStartSampleMap;
     QVector<qint32> pcmAudioFieldLengthMap;
 

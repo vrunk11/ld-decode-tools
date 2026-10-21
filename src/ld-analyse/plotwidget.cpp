@@ -116,19 +116,6 @@ void PlotWidget::setAxisRange(Qt::Orientation orientation, double min, double ma
     replot();
 }
 
-void PlotWidget::setAxisAutoScale(Qt::Orientation orientation, bool enable)
-{
-    if (orientation == Qt::Horizontal) {
-        m_xAutoScale = enable;
-    } else {
-        m_yAutoScale = enable;
-    }
-    if (enable) {
-        calculateDataRange();
-    }
-    replot();
-}
-
 void PlotWidget::setYAxisIntegerLabels(bool integerOnly)
 {
     m_yIntegerLabels = integerOnly;
@@ -143,13 +130,6 @@ void PlotWidget::setGridEnabled(bool enabled)
     }
 }
 
-void PlotWidget::setGridPen(const QPen &pen)
-{
-    if (m_grid) {
-        m_grid->setPen(pen);
-    }
-}
-
 PlotSeries* PlotWidget::addSeries(const QString &title)
 {
     PlotSeries *series = new PlotSeries(this);
@@ -157,15 +137,6 @@ PlotSeries* PlotWidget::addSeries(const QString &title)
     m_series.append(series);
     m_scene->addItem(series);
     return series;
-}
-
-void PlotWidget::removeSeries(PlotSeries *series)
-{
-    if (series && m_series.contains(series)) {
-        m_series.removeAll(series);
-        m_scene->removeItem(series);
-        delete series;
-    }
 }
 
 void PlotWidget::clearSeries()
@@ -185,15 +156,6 @@ PlotMarker* PlotWidget::addMarker()
     return marker;
 }
 
-void PlotWidget::removeMarker(PlotMarker *marker)
-{
-    if (marker && m_markers.contains(marker)) {
-        m_markers.removeAll(marker);
-        m_scene->removeItem(marker);
-        delete marker;
-    }
-}
-
 void PlotWidget::clearMarkers()
 {
     for (PlotMarker *marker : m_markers) {
@@ -201,14 +163,6 @@ void PlotWidget::clearMarkers()
         delete marker;
     }
     m_markers.clear();
-}
-
-void PlotWidget::setLegendEnabled(bool enabled)
-{
-    m_legendEnabled = enabled;
-    if (m_legend) {
-        m_legend->setEnabled(enabled);
-    }
 }
 
 void PlotWidget::setZoomEnabled(bool enabled)
@@ -222,11 +176,6 @@ void PlotWidget::setZoomEnabled(bool enabled)
 void PlotWidget::setPanEnabled(bool enabled)
 {
     m_panEnabled = enabled;
-}
-
-void PlotWidget::resetZoom()
-{
-    m_view->fitInView(m_plotRect, Qt::KeepAspectRatio);
 }
 
 void PlotWidget::setCanvasBackground(const QColor &color)

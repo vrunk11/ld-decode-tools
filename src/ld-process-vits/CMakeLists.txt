@@ -1,6 +1,5 @@
 add_executable(ld-process-vits
     main.cpp
-    processingpool.cpp
     vitsanalyser.cpp
 )
 

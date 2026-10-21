@@ -24,7 +24,7 @@ efm-decoder-d24 [options] <input.f2> <output.d24>
 - `--show-data24` - Show Data24 frame data
 - `--show-f2-debug` - Show F2 to F1 decoding debug
 - `--show-f1-debug` - Show F1 to Data24 decoding debug
-- `--show-all-debug` - Show all debug options
+- `--show-all-debug` - Show all decoding debug
 
 ### Arguments
 

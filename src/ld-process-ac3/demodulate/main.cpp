@@ -35,6 +35,7 @@
 #endif
 
 #include "../logger.hpp"
+#include "../standardoptions.hpp"
 #include "OneBitADC.hpp"
 #include "Reclocker.hpp"
 
@@ -51,6 +52,11 @@ void doHelp(const std::string &app) {
               << "\n  Options:"
               << "\n    -v (int)    Set the logging level. Must be 0-3, representing DEBUG, INFO, WARN and ERR."
               << "\n    -s (int)    Set the sliding average window's size."
+              << "\n    --log-level (int)  The same as -v."
+              << "\n    --sliding-average-window (int)  The same as -s."
+              << "\n    -d, --debug   Show debug messages (the logging level DEBUG; an explicit -v wins)."
+              << "\n    -q, --quiet   Suppress info and warning messages (the logging level ERR)."
+              << "\n    --version   Print the version."
               << "\n    -h          Print this help."
               << std::endl;
 }
@@ -71,14 +77,8 @@ int main(int argc, char *argv[]) {
     // known issues;
     // small amounts of data left in the buffers at the end
 
-    // -h and --help show the help and succeed; getopt only knows short options,
-    // so --help would otherwise be an unknown option and an error
-    for (int i = 1; i < argc; i++) {
-        if (std::strcmp(argv[i], "--help") == 0 || std::strcmp(argv[i], "-h") == 0) {
-            doHelp(argv[0]);
-            return 0;
-        }
-    }
+    // The options of the other tools (--help, --version, -d, -q) and the long names are taken first: getopt only knows short options
+    if (const int done = takeStandardOptions(argc, argv, "ld-ac3-demodulate", doHelp); done >= 0) return done;
 
     while (true) {
         switch (getopt(argc, argv, "v:s:h?")) {

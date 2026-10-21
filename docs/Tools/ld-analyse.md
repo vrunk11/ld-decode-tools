@@ -83,7 +83,7 @@ The analyser also allows the source to be viewed in one of three aspect ratios.
 
 The displayed frame (as source or chroma) is made up of two fields that form alternate 'lines' of the image.  These fields are referred to as 'first' and 'second' fields denoting the order in which they should be interlaced in order to form the desired image.
 
-The main window shows information about the first and second field including the field numbers in the main window's status bar. The status bar will also show the time code from LaserDisc VBI and VITC if available.
+The main window shows information about the first and second field including the field numbers in the main window's status bar. The status bar will also show the timecode from LaserDisc VBI and VITC if available.
 
 The order of the field lines can be reversed if required.  Please see the section 'Normal/Reverse field order' below.
 
@@ -93,7 +93,7 @@ The decoded frame is made up of several distinct areas.  The following diagram s
 
 ![](assets/ld-analyse_Annotated_video_areas.png)
 
-* VBI - The Vertical Blanking Interval or VBI is the an area that is used to store general information about the frame/field including time-codes and picture numbers.
+* VBI - The Vertical Blanking Interval or VBI is the an area that is used to store general information about the frame/field including timecodes and picture numbers.
 * VITS - Vertical Interval Test Signals are a set of signals designed to assist with testing
 * VSYNC - The Vertical picture synchronization pulse
 * HSYNC - THe Horizontal picture synchronization pulse
@@ -132,11 +132,13 @@ Note that clicking on the 'interactive oscilloscope' button opens the line oscil
 
 ## Highlight dropouts
 
-Dropouts are temporary losses of signal caused by dirt, damage, scratches or other defects on the originally sampled LaserDisc or other source media.  ld-decode detects areas of dropouts during the decoding process.  These detected areas are shown in the currently selected frame.  Red lines represent drop-outs in the first field of the frame and blue lines represent drop-outs in the second field.
+Dropouts are temporary losses of signal caused by dirt, damage, scratches or other defects on the originally sampled LaserDisc or other source media.  ld-decode detects areas of dropouts during the decoding process.  These detected areas are shown in the currently selected frame.  Red lines represent dropouts in the first field of the frame and blue lines represent dropouts in the second field.
 
 Dropouts are highlighted by clicking on the 'Dropouts Off' button which will then change to 'Dropouts On' (clicking again reverses this action):
 
 ![](assets/ld-analyse_Highlight_dropouts.png)
+
+A frame that ld-discmap could not number is written with a dropout over every line of its two fields. It is not a dropout of the capture: it is not highlighted, and the dropout analysis windows count it as having none.
 
 ## Source selection
 
@@ -256,7 +258,7 @@ The slider of the main window, and the bar of the full screen, have a small mark
 
 # Full screen
 
-**View > Full screen** (F11; Escape goes back) shows the picture over all the screen: the menus, the bars and the waveform go, and the picture is cropped to the **active area** (the lines and the width the video parameters give, without the blanking) and fitted to the screen, at 4:3 or 16:9 as the display aspect ratio is set. The remote and the numbers of the disc (the time code, the chapter, the picture, the frame, the sound) are windows that float over it, where you put them (their places are kept). A **bar of the position** is at the bottom of the picture, with the time and the length: the skip buttons (chapters) and a play/pause button are at its left, a click goes to that place, and a drag goes through the capture; a button at its right leaves the full screen; it goes away with the others, and stays while the mouse is on it. They are shown when the full screen begins, and the View menu turns them off or on; when it ends they are as they were before. The colour is decoded and the picture is the deinterlaced view (where the video filters are available) while the full screen lasts; the Source/Chroma and view settings you had come back when it ends. The numbers are in the Window menu too. When the mouse has not moved for a few seconds the remote and the bar go away, with the pointer, as the controls of a video player do; they come back when it moves. The numbers of the disc are the screen of the player: they stay. The remote and the numbers are windows with their own title bar: a drawing pin (pressed in: the window stays when the other controls go away; the numbers are pinned by default, the remote is not) and a button that closes it. The bar moves the window; the settings are kept. They stay while the pointer is on one of them, and while a number is being typed. The digits, Enter (search), Backspace (clear) and + of the keyboard are the keys of the remote in the full screen, and all the shortcuts keep working. Clicking the picture does not pick a scan line in the full screen.
+**View > Full screen** (F11; Escape goes back) shows the picture over all the screen: the menus, the bars and the waveform go, and the picture is cropped to the **active area** (the lines and the width the video parameters give, without the blanking) and fitted to the screen, at 4:3 or 16:9 as the display aspect ratio is set. The remote and the numbers of the disc (the timecode, the chapter, the picture, the frame, the sound) are windows that float over it, where you put them (their places are kept). A **bar of the position** is at the bottom of the picture, with the time and the length: the skip buttons (chapters) and a play/pause button are at its left, a click goes to that place, and a drag goes through the capture; a button at its right leaves the full screen; it goes away with the others, and stays while the mouse is on it. They are shown when the full screen begins, and the View menu turns them off or on; when it ends they are as they were before. The colour is decoded and the picture is the deinterlaced view (where the video filters are available) while the full screen lasts; the Source/Chroma and view settings you had come back when it ends. The numbers are in the Window menu too. When the mouse has not moved for a few seconds the remote and the bar go away, with the pointer, as the controls of a video player do; they come back when it moves. The numbers of the disc are the screen of the player: they stay. The remote and the numbers are windows with their own title bar: a drawing pin (pressed in: the window stays when the other controls go away; the numbers are pinned by default, the remote is not) and a button that closes it. The bar moves the window; the settings are kept. They stay while the pointer is on one of them, and while a number is being typed. The digits, Enter (search), Backspace (clear) and + of the keyboard are the keys of the remote in the full screen, and all the shortcuts keep working. Clicking the picture does not pick a scan line in the full screen.
 
 # Video filters
 
@@ -289,7 +291,7 @@ Pause it (the play button or the space bar) to freeze the last few seconds and g
 
 A video that arrives faster than it plays, such as a file, would be overwritten before it was seen: use `--throttle` for those, which holds the producer back to the pace of the viewer instead (pausing then holds the input up too). When the stream ends, playback stops at its last frame.
 
-A pipe has no ld-decode metadata, so ld-analyse works out what it can from the video itself, for the frames that are shown: the VBI (CLV time code or CAV picture number, chapter, VITC, the NTSC video ID and closed captions) and the black and white SNR, with the same code as ld-process-vbi and ld-process-vits. The VBI is of the frames shown. The SNR is measured for every frame received, on a thread of its own, whether or not it was shown, so the SNR graphs of the Window menu are the history of what has been received, and grow as the video comes in. Above each graph a line says where its values come from (the metadata of the capture, or measured live), and for a live input there are two check boxes: Measure live switches the measuring on and off (what arrives while it is off is not measured), Follow keeps the whole history in view (zooming or panning the graph unticks it, so the part looked at stays put), and Clear forgets the history so far, which starts again from then. The history is kept for up to two hours of video (216000 frames); beyond that the oldest tenth is let go. With `--throttle` only the frames shown are measured. Dropouts are not detected, so the dropout windows stay empty. The SNR is measured against the black and white levels the capture has when it is opened: those of its metadata, or for a pipe the standard ones unless `--black-level` and `--white-level` say otherwise. Adjusting the levels in Config > Video parameters, which is for the picture (and can be done while the video plays), does not move the SNR.
+A pipe has no ld-decode metadata, so ld-analyse works out what it can from the video itself, for the frames that are shown: the VBI (CLV timecode or CAV picture number, chapter, VITC, the NTSC video ID and closed captions) and the black and white SNR, with the same code as ld-process-vbi and ld-process-vits. The VBI is of the frames shown. The SNR is measured for every frame received, on a thread of its own, whether or not it was shown, so the SNR graphs of the Window menu are the history of what has been received, and grow as the video comes in. Above each graph a line says where its values come from (the metadata of the capture, or measured live), and for a live input there are two check boxes: Measure live switches the measuring on and off (what arrives while it is off is not measured), Follow keeps the whole history in view (zooming or panning the graph unticks it, so the part looked at stays put), and Clear forgets the history so far, which starts again from then. The history is kept for up to two hours of video (216000 frames); beyond that the oldest tenth is let go. With `--throttle` only the frames shown are measured. Dropouts are not detected, so the dropout windows stay empty. The SNR is measured against the black and white levels the capture has when it is opened: those of its metadata, or for a pipe the standard ones unless `--black-level` and `--white-level` say otherwise. Adjusting the levels in Config > Video parameters, which is for the picture (and can be done while the video plays), does not move the SNR.
 
 # The File menu
 
@@ -309,7 +311,7 @@ This action saves any changes you've made to the metadata of the current TBC fil
 
 ## Save frame as PNG
 
-This option saves the currently selected frame as a PNG image.  The image saved contains both the visible and non-visible frame image.  The option saves the currently displayed image (however, drop-out highlighting is not included).
+This option saves the currently selected frame as a PNG image.  The image saved contains both the visible and non-visible frame image.  The option saves the currently displayed image (however, dropout highlighting is not included).
 
 ## Exit
 
@@ -430,8 +432,8 @@ The VBI (Vertical Banking Interval) contains a number of metadata fields providi
 
 * SMPTE VITC TimeCode - Runtime & segment runtime timecode
 * Disc type - CAV or CLV
-* Picture number - The current frame number (only for CAV discs)
-* CLV time code - The current time code (only for CLV discs)
+* Picture number - The current frame number (only for CAV discs), written with no zeros before it (123)
+* CLV time code - The current time code (only for CLV discs), written hours:minutes:seconds.picture with the hours as they are and the other parts on two digits (1:23:45.06); a part that is not read is shown as xx. The status bar of the main window and the disc label of ld-stacker-gui write it the same way
 * Chapter number - The current chapter number
 * Lead in - a special flag found at the start of LaserDiscs
 * Lead out - a special flag found at the end of LaserDiscs
@@ -492,7 +494,7 @@ The YC tick-box shows the combined Y (Luminance) and C (Chrominance) values (the
 
 ![](assets/ld-analyse_osc-yc.png)
 
-The 'dropouts' tick-box will highlight any drop-outs detected on the line in red (in the YC view).  Unticking this box removes the highlighting:
+The 'dropouts' tick-box will highlight any dropouts detected on the line in red (in the YC view).  Unticking this box removes the highlighting:
 
 ![](assets/ld-analyse_osc-yc-no-do.png)
 

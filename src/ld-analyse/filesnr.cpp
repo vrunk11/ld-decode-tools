@@ -44,16 +44,11 @@ void FileSnr::setVideoParameters(const LdDecodeMetaData::VideoParameters &parame
 // the fields that have one)
 void FileSnr::computeFrame(qint32 index)
 {
-    double blackTotal = 0, whiteTotal = 0;
-    qint32 blackPoints = 0, whitePoints = 0;
-    for (const VitsRawMeasurements *raw: { &rawFirst[index], &rawSecond[index] }) {
-        LdDecodeMetaData::Field field;
-        applyVitsLevels(*raw, videoParameters, field, vitsIreSpan(videoParameters.system));
-        if (std::isfinite(field.vitsMetrics.bPSNR) && field.vitsMetrics.bPSNR > 0) { blackTotal += field.vitsMetrics.bPSNR; blackPoints++; }
-        if (std::isfinite(field.vitsMetrics.wSNR) && field.vitsMetrics.wSNR > 0) { whiteTotal += field.vitsMetrics.wSNR; whitePoints++; }
-    }
-    frameBlack[index] = blackPoints ? blackTotal / blackPoints : std::nan("");
-    frameWhite[index] = whitePoints ? whiteTotal / whitePoints : std::nan("");
+    SnrAverage snr;
+    snr.add(rawFirst[index], videoParameters);
+    snr.add(rawSecond[index], videoParameters);
+    frameBlack[index] = snr.black();
+    frameWhite[index] = snr.white();
 }
 
 void FileSnr::run()

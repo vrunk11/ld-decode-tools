@@ -24,11 +24,11 @@
 
 #include "vitsanalyser.h"
 #include "vitsmetrics.h"
-#include "processingpool.h"
+#include "tbc/fieldpool.h"
 #include "tbc/logging.h"
 
-VitsAnalyser::VitsAnalyser(QAtomicInt& _abort, ProcessingPool& _processingPool, QObject *parent)
-    : QThread(parent), abort(_abort), processingPool(_processingPool)
+VitsAnalyser::VitsAnalyser(QAtomicInt& _abort, FieldPool& _fieldPool, QObject *parent)
+    : QThread(parent), abort(_abort), fieldPool(_fieldPool)
 {
 
 }
@@ -44,7 +44,7 @@ void VitsAnalyser::run()
 
     while(!abort) {
         // Get the next field to process from the input file
-        if (!processingPool.getInputField(fieldNumber, sourceFieldData, fieldMetadata, videoParameters)) {
+        if (!fieldPool.getInputField(fieldNumber, sourceFieldData, fieldMetadata, videoParameters)) {
             // No more input fields -- exit
             break;
         }
@@ -64,7 +64,7 @@ void VitsAnalyser::run()
                  << " and bPSNR of " << fieldMetadata.vitsMetrics.bPSNR << " (" << old_bPSNR << ")";
 
         // Write the result to the output metadata
-        if (!processingPool.setOutputField(fieldNumber, fieldMetadata)) {
+        if (!fieldPool.setOutputField(fieldNumber, fieldMetadata)) {
             abort = true;
             break;
         }

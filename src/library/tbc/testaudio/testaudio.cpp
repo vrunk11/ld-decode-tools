@@ -88,7 +88,6 @@ int main(int argc, char *argv[])
         tbc.close();
         SourceAudio source;
         CHECK(source.open(QFileInfo(directory.path() + "/short.tbc")));
-        CHECK(source.getNumberOfSamples() == 1000);
         bool shortRead = true;
         SourceAudio::Data inside = source.getAudioDataPadded(100, 50, &shortRead);
         CHECK(!shortRead && inside.size() == 100 && inside[0] == audio[200] && inside[99] == audio[299]);

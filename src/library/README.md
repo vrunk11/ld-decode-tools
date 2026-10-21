@@ -57,13 +57,14 @@ Time Base Corrected video format handling and metadata management.
 - **`dropouts.h/cpp`**: Dropout detection and management
 - **`filters.h/cpp`**: Video-specific filters
 - **`vbidecoder.h/cpp`**: VBI data extraction
+- **`discnumbering.h/cpp`**: the frame numbers of a disc read from the VBI of a capture (CAV or CLV, first and last number)
 - **`logging.h/cpp`**: Logging infrastructure
 
 #### Features
 - Complete TBC format support (PAL, NTSC, PAL-M)
 - SQLite metadata backend
 - Dropout tracking and correction
-- VBI decoding (frame numbers, time codes, chapters)
+- VBI decoding (frame numbers, timecodes, chapters)
 - Field-level video access
 - Audio PCM handling
 

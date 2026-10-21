@@ -164,13 +164,13 @@ int main(int argc, char *argv[])
         outputFilename = positionalArguments.at(1);
     } else {
         qWarning() << "Too many arguments. Expected: [input] [output] (use '-' for stdin/stdout)";
-        return 1;
+        return 2;
     }
 
     // Check for incompatible options
     if (outputDataMetadata && outputFilename == "-") {
         qWarning() << "Error: --output-metadata cannot be used when outputting to stdout. Please specify a file for output.";
-        return 1;
+        return 2;
     }
 
     // An LDX file as the input: the stages of the EFM decoder before this one are run on its EFM, with the tools beside this

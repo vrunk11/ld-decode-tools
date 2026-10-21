@@ -16,11 +16,12 @@
 #include <QTimer>
 #include <cmath>
 
-DropoutAnalysisDialog::DropoutAnalysisDialog(QWidget *parent) :
+DropoutAnalysisDialog::DropoutAnalysisDialog(QWidget *parent, bool visibleOnly) :
     QDialog(parent),
     ui(new Ui::DropoutAnalysisDialog)
 {
     ui->setupUi(this);
+    if (visibleOnly) setWindowTitle("Visible Dropout Loss Analysis");
     setWindowFlags(Qt::Window);
 
     // Set up the plot widget
@@ -29,7 +30,7 @@ DropoutAnalysisDialog::DropoutAnalysisDialog(QWidget *parent) :
     ui->verticalLayout->addWidget(plot);
 
     // Set up series and marker
-    series = plot->addSeries("Dropout Length");
+    series = plot->addSeries(visibleOnly ? "Visible Dropout Length" : "Dropout Length");
     series->setPen(QPen(Qt::red, 1));
     series->setStyle(PlotSeries::Bars);
     

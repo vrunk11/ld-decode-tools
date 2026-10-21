@@ -92,6 +92,114 @@ void testFieldProvider() {
     }
 }
 
+// (assert is removed by NDEBUG in a release build, and the test would then check nothing)
+#define CHECK(condition) \
+    do { \
+        if (!(condition)) { \
+            std::cerr << "FAILED: " #condition " (line " << __LINE__ << ")\n"; \
+            std::exit(1); \
+        } \
+    } while (0)
+
+// Run unit tests for the frame rate and the CLV time codes
+void testFrameRateAndTimecodes() {
+    std::cerr << "Testing frame rates and CLV time codes\n";
+
+    // The time of the video: 25, or 30000 / 1001 for the two 525-line systems
+    CHECK(frameRateNumerator(PAL) == 25 && frameRateDenominator(PAL) == 1);
+    CHECK(frameRateNumerator(NTSC) == 30000 && frameRateDenominator(NTSC) == 1001);
+    CHECK(frameRateNumerator(PAL_M) == 30000 && frameRateDenominator(PAL_M) == 1001);
+    CHECK(videoFrameRate(PAL) == 25.0);
+    CHECK(std::fabs(videoFrameRate(NTSC) - 29.97002997) < 1e-8);
+    CHECK(videoFrameRate(PAL_M) == videoFrameRate(NTSC));
+
+    // What a time code counts in a second: the round figure
+    CHECK(timecodeFramesPerSecond(PAL) == 25);
+    CHECK(timecodeFramesPerSecond(NTSC) == 30);
+    CHECK(timecodeFramesPerSecond(PAL_M) == 30);
+
+    // A time code to a frame number and back
+    const struct { VideoSystem system; qint32 fps; } systems[] = { { PAL, 25 }, { NTSC, 30 }, { PAL_M, 30 } };
+    for (const auto &entry : systems) {
+        LdDecodeMetaData metaData;
+        metaData.initialiseDefault(entry.system);
+
+        LdDecodeMetaData::ClvTimecode time;
+        time.hours = 1;
+        time.minutes = 23;
+        time.seconds = 45;
+        time.pictureNumber = 6;
+        const qint32 expected = ((1 * 60 + 23) * 60 + 45) * entry.fps + 6;
+        CHECK(metaData.convertClvTimecodeToFrameNumber(time) == expected);
+
+        const LdDecodeMetaData::ClvTimecode back = metaData.convertFrameNumberToClvTimecode(expected);
+        CHECK(back.hours == 1 && back.minutes == 23 && back.seconds == 45 && back.pictureNumber == 6);
+
+        // The first frame, and a time code with a part that is missing
+        time.hours = time.minutes = time.seconds = time.pictureNumber = 0;
+        CHECK(metaData.convertClvTimecodeToFrameNumber(time) == 0);
+        time.minutes = -1;
+        CHECK(metaData.convertClvTimecodeToFrameNumber(time) == -1);
+    }
+}
+
+// Run unit tests for the accessors of the fields
+void testFieldAccessors() {
+    std::cerr << "Testing the accessors of the fields\n";
+
+    LdDecodeMetaData metaData;
+    metaData.initialiseDefault(NTSC);
+    metaData.ensureFields(4);
+
+    // Each kind of data of a field is kept for the field it was given for, and not for the others
+    LdDecodeMetaData::VitsMetrics vits;
+    vits.inUse = true;
+    vits.wSNR = 36.5;
+    vits.bPSNR = 41.5;
+    metaData.updateFieldVitsMetrics(vits, 3);
+    CHECK(metaData.getFieldVitsMetrics(3).wSNR == 36.5 && metaData.getFieldVitsMetrics(3).bPSNR == 41.5);
+    CHECK(!metaData.getFieldVitsMetrics(2).inUse && !metaData.getFieldVitsMetrics(4).inUse);
+
+    LdDecodeMetaData::Vbi vbi;
+    vbi.inUse = true;
+    vbi.vbiData = { 11, 22, 33 };
+    metaData.updateFieldVbi(vbi, 2);
+    CHECK(metaData.getFieldVbi(2).vbiData[1] == 22 && !metaData.getFieldVbi(1).inUse);
+
+    LdDecodeMetaData::Ntsc ntsc;
+    ntsc.inUse = true;
+    ntsc.fmCodeData = 77;
+    metaData.updateFieldNtsc(ntsc, 4);
+    CHECK(metaData.getFieldNtsc(4).fmCodeData == 77 && !metaData.getFieldNtsc(3).inUse);
+
+    LdDecodeMetaData::Vitc vitc;
+    vitc.inUse = true;
+    vitc.vitcData = { 1, 2, 3, 4, 5, 6, 7, 8 };
+    metaData.updateFieldVitc(vitc, 1);
+    CHECK(metaData.getFieldVitc(1).vitcData[7] == 8 && !metaData.getFieldVitc(2).inUse);
+
+    LdDecodeMetaData::ClosedCaption caption;
+    caption.inUse = true;
+    caption.data0 = 4;
+    caption.data1 = 5;
+    metaData.updateFieldClosedCaption(caption, 2);
+    CHECK(metaData.getFieldClosedCaption(2).data1 == 5 && !metaData.getFieldClosedCaption(1).inUse);
+
+    DropOuts dropOuts;
+    dropOuts.append(1, 2, 3);
+    metaData.updateFieldDropOuts(dropOuts, 4);
+    CHECK(metaData.getFieldDropOuts(4).size() == 1 && metaData.getFieldDropOuts(3).size() == 0);
+    metaData.clearFieldDropOuts(4);
+    CHECK(metaData.getFieldDropOuts(4).size() == 0);
+
+    // A whole field
+    LdDecodeMetaData::Field field = metaData.getField(2);
+    field.pad = true;
+    field.fieldPhaseID = 3;
+    metaData.updateField(field, 2);
+    CHECK(metaData.getField(2).pad && metaData.getField(2).fieldPhaseID == 3 && !metaData.getField(1).pad);
+}
+
 int main(int argc, char *argv[])
 {
     // Initialise Qt
@@ -128,6 +236,8 @@ int main(int argc, char *argv[])
         // Run unit tests
         testVideoSystem();
         testFieldProvider();
+        testFrameRateAndTimecodes();
+        testFieldAccessors();
         return 0;
     }
     if (positionalArguments.count() > 2) {

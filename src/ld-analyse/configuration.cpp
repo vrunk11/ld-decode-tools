@@ -199,16 +199,6 @@ QByteArray Configuration::getMainWindowGeometry(void)
     return settings.windows.mainWindowGeometry;
 }
 
-void Configuration::setMainWindowScaleFactor(double mainWindowScaleFactor)
-{
-    settings.windows.mainWindowScaleFactor = mainWindowScaleFactor;
-}
-
-double Configuration::getMainWindowScaleFactor(void)
-{
-    return settings.windows.mainWindowScaleFactor;
-}
-
 void Configuration::setVbiDialogGeometry(QByteArray vbiDialogGeometry)
 {
     settings.windows.vbiDialogGeometry = vbiDialogGeometry;

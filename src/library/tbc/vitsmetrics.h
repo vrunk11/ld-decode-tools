@@ -60,4 +60,29 @@ void computeVitsMetrics(const SourceVideo::Data &fieldLines, qint32 firstLineInD
                         const LdDecodeMetaData::VideoParameters &videoParameters,
                         LdDecodeMetaData::Field &fieldMetadata);
 
+// The SNR of a frame from its fields: the average of the fields that have a value. A value that is not finite or not above 0 (0 is what applyVitsLevels
+// puts for a measure that could not be made) is not a measure and is left out. NaN if no field has one.
+class SnrAverage
+{
+public:
+    // The white SNR and black PSNR of a field
+    void add(double whiteSnr, double blackPsnr);
+    void add(const LdDecodeMetaData::VitsMetrics &metrics) { add(metrics.wSNR, metrics.bPSNR); }
+    // A field that was measured (measureVitsRaw), with the levels of videoParameters and the span of IRE of its video system
+    void add(const VitsRawMeasurements &raw, const LdDecodeMetaData::VideoParameters &videoParameters);
+    // A field from its test signal lines (as for measureVitsRaw)
+    void add(const SourceVideo::Data &fieldLines, qint32 firstLineInData, const LdDecodeMetaData::VideoParameters &videoParameters);
+
+    bool hasWhite() const { return whitePoints > 0; }
+    bool hasBlack() const { return blackPoints > 0; }
+    double white() const;
+    double black() const;
+
+private:
+    double whiteTotal = 0;
+    double blackTotal = 0;
+    qint32 whitePoints = 0;
+    qint32 blackPoints = 0;
+};
+
 #endif // VITSMETRICS_H

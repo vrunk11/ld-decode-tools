@@ -40,6 +40,8 @@
 #include "cvbs.h"
 #include "tbc/logging.h"
 #include "tbc/metadataoptions.h"
+#include "tbc/pipedinputoptions.h"
+#include "tbc/commonoptions.h"
 
 #include "comb.h"
 #include "monodecoder.h"
@@ -141,37 +143,9 @@ int main(int argc, char *argv[])
 
     // -- Input from a pipe --
 
-    // Option to say what a pipe carries
-    QCommandLineOption inputFormatOption(QStringList() << "input-format",
-                                         QCoreApplication::translate("main", "Piped input: ldx (an LDX stream, which says what it holds: the default when nothing else is said), tbc (fields) or cvbs (frames, as decode-orc writes them)"),
-                                         QCoreApplication::translate("main", "format"));
-    parser.addOption(inputFormatOption);
-
-    // Options for piped input that comes without metadata
-    QCommandLineOption systemOption(QStringList() << "system",
-                                    QCoreApplication::translate("main", "Piped input without metadata: the video system (pal, ntsc or pal-m)"),
-                                    QCoreApplication::translate("main", "system"));
-    parser.addOption(systemOption);
-
-    QCommandLineOption blackLevelOption(QStringList() << "black-level",
-                                        QCoreApplication::translate("main", "Piped TBC input without metadata: the black16bIre of the capture (default: the standard level of the system)"),
-                                        QCoreApplication::translate("main", "number"));
-    parser.addOption(blackLevelOption);
-
-    QCommandLineOption whiteLevelOption(QStringList() << "white-level",
-                                        QCoreApplication::translate("main", "Piped TBC input without metadata: the white16bIre of the capture (default: the standard level of the system)"),
-                                        QCoreApplication::translate("main", "number"));
-    parser.addOption(whiteLevelOption);
-
-    QCommandLineOption subcarrierLockedOption(QStringList() << "subcarrier-locked",
-                                              QCoreApplication::translate("main", "Piped input without metadata: whether PAL was sampled locked to the subcarrier, which puts the second field 2 samples off (yes or no; default yes for CVBS, no for TBC)"),
-                                              QCoreApplication::translate("main", "yes|no"));
-    parser.addOption(subcarrierLockedOption);
-
-    QCommandLineOption sampleEncodingOption(QStringList() << "sample-encoding",
-                                            QCoreApplication::translate("main", "Piped CVBS input: u10 (CVBS_U10_4FSC, the default), u16, tpg21 or s16"),
-                                            QCoreApplication::translate("main", "encoding"));
-    parser.addOption(sampleEncodingOption);
+    // Options for video that comes in a pipe: what it carries, and for piped input without metadata the video system and its levels
+    PipedInputOptions pipedOptions;
+    pipedOptions.addTo(parser);
 
     QCommandLineOption bufferFramesOption(QStringList() << "buffer-frames",
                                           QCoreApplication::translate("main", "Piped input: frames read ahead of the one being decoded, and kept behind it (default 32)"),
@@ -191,9 +165,8 @@ int main(int argc, char *argv[])
     parser.addOption(lengthOption);
 
     // Option to reverse the field order (-r)
-    QCommandLineOption setReverseOption(QStringList() << "r" << "reverse",
-                                       QCoreApplication::translate("main", "Reverse the field order to second/first (default first/second)"));
-    parser.addOption(setReverseOption);
+    ReverseOption setReverseOption;
+    setReverseOption.addTo(parser);
 
     // Option to specify chroma gain
     QCommandLineOption chromaGainOption(QStringList() << "chroma-gain",
@@ -231,31 +204,29 @@ int main(int argc, char *argv[])
     parser.addOption(decoderOption);
 
     // Option to select the number of threads (-t)
-    QCommandLineOption threadsOption(QStringList() << "t" << "threads",
-                                     QCoreApplication::translate("main", "Specify the number of concurrent threads (default number of logical CPUs)"),
-                                     QCoreApplication::translate("main", "number"));
-    parser.addOption(threadsOption);
+    ThreadsOption threadsOption;
+    threadsOption.addTo(parser);
 
     // Option to override calculated firstActiveFieldLine in our video parameters (-ffll)
-    QCommandLineOption firstFieldLineOption(QStringList() << "ffll" << "first_active_field_line",
+    QCommandLineOption firstFieldLineOption(QStringList() << "ffll" << "first-active-field-line" << "first_active_field_line",
                                             QCoreApplication::translate("main", "The first visible line of a field. Range 1-259 for NTSC (default: 20), 2-308 for PAL (default: 22)"),
                                             QCoreApplication::translate("main", "number"));
     parser.addOption(firstFieldLineOption);
 
     // Option to override calculated lastActiveFieldLine in our video parameters (-lfll)
-    QCommandLineOption lastFieldLineOption(QStringList() << "lfll" << "last_active_field_line",
+    QCommandLineOption lastFieldLineOption(QStringList() << "lfll" << "last-active-field-line" << "last_active_field_line",
                                            QCoreApplication::translate("main", "The last visible line of a field. Range 1-259 for NTSC (default: 259), 2-308 for PAL (default: 308)"),
                                            QCoreApplication::translate("main", "number"));
     parser.addOption(lastFieldLineOption);
 
     // Option to override calculated firstActiveFrameLine in our video parameters (-ffrl)
-    QCommandLineOption firstFrameLineOption(QStringList() << "ffrl" << "first_active_frame_line",
+    QCommandLineOption firstFrameLineOption(QStringList() << "ffrl" << "first-active-frame-line" << "first_active_frame_line",
                                             QCoreApplication::translate("main", "The first visible line of a frame. Range 1-525 for NTSC (default: 40), 1-620 for PAL (default: 44)"),
                                             QCoreApplication::translate("main", "number"));
     parser.addOption(firstFrameLineOption);
 
     // Option to override calculated lastActiveFieldLine in our video parameters (-lfll)
-    QCommandLineOption lastFrameLineOption(QStringList() << "lfrl" << "last_active_frame_line",
+    QCommandLineOption lastFrameLineOption(QStringList() << "lfrl" << "last-active-frame-line" << "last_active_frame_line",
                                            QCoreApplication::translate("main", "The last visible line of a frame. Range 1-525 for NTSC (default: 525), 1-620 for PAL (default: 620)"),
                                            QCoreApplication::translate("main", "number"));
     parser.addOption(lastFrameLineOption);
@@ -269,13 +240,13 @@ int main(int argc, char *argv[])
 
     // Option to set the chroma noise reduction level
     QCommandLineOption chromaNROption(QStringList() << "chroma-nr",
-                                      QCoreApplication::translate("main", "NTSC: Chroma noise reduction level in dB (default 0.0)"),
+                                      QCoreApplication::translate("main", "NTSC: Chroma noise reduction level in IRE (default 0.0)"),
                                       QCoreApplication::translate("main", "number"));
     parser.addOption(chromaNROption);
 
     // Option to set the luma noise reduction level
     QCommandLineOption lumaNROption(QStringList() << "luma-nr",
-                                    QCoreApplication::translate("main", "Luma noise reduction level in dB (default 0.0)"),
+                                    QCoreApplication::translate("main", "Luma noise reduction level in IRE (default 0.0)"),
                                     QCoreApplication::translate("main", "number"));
     parser.addOption(lumaNROption);
 
@@ -333,7 +304,7 @@ int main(int argc, char *argv[])
 
     // Standard logging options
     processStandardDebugOptions(parser);
-    if (!metadataOptions.process(parser)) return -1;
+    if (!metadataOptions.process(parser)) return 2;
 
     // Get the arguments from the parser
     QString inputFileName;
@@ -347,7 +318,7 @@ int main(int argc, char *argv[])
     } else {
         // Quit with error
         qCritical("You must specify the input TBC and output files");
-        return -1;
+        return 2;
     }
 
     // Piped input is standard input or a named pipe. It can come without metadata, when
@@ -357,52 +328,42 @@ int main(int argc, char *argv[])
                         || (QFileInfo::exists(inputFileName) && !QFileInfo(inputFileName).isFile());
     // An LDX stream on the standard input says by itself what it holds (the video system, the metadata): it is what a pipe
     // is when no other format is asked for, no metadata is given and no video system is said
-    const bool formatGiven = parser.isSet(inputFormatOption);
+    QString inputFormat;
+    if (!pipedOptions.format(parser, inputFormat)) return 2;
+    const bool formatGiven = !inputFormat.isEmpty();
     // (with no format said and no metadata given, the way the input begins tells an LDX stream from raw video)
-    const bool ldxInput = inputFileName == "-" && (formatGiven ? parser.value(inputFormatOption).toLower() == "ldx"
+    const bool ldxInput = inputFileName == "-" && (formatGiven ? inputFormat == "ldx"
                                                                : (!metadataOptions.isInputFileSet() && LdxStream::stdinIsLdx()));
     if (ldxInput) {
         QString streamError;
         if (!LdxStream::openStdin(streamError)) {
             qCritical().noquote() << streamError;
-            return -1;
+            return 1;
         }
     }
     const bool hasNoMetadata = isPipe && !metadataOptions.isInputFileSet() && !ldxInput;
 
     StreamReader::Options streamOptions;
     bool encodingGiven = false;
-    if (parser.isSet(inputFormatOption)) {
-        const QString format = parser.value(inputFormatOption).toLower();
-        if (format != "tbc" && format != "cvbs" && format != "ldx") {
-            qCritical().noquote() << "Unknown input format" << format << "- use ldx, tbc or cvbs";
-            return -1;
-        }
-        streamOptions.cvbs = format == "cvbs";
-    }
-    if (parser.isSet(sampleEncodingOption)) {
-        const QString name = parser.value(sampleEncodingOption);
-        if (!Cvbs::parseSampleEncodingName(name, streamOptions.encoding)
-            && !Cvbs::parseSampleEncodingName("CVBS_" + name + "_4FSC", streamOptions.encoding)) {
-            qCritical().noquote() << "Unknown sample encoding" << name << "- use u10, u16, tpg21 or s16";
-            return -1;
-        }
+    if (!inputFormat.isEmpty()) streamOptions.cvbs = inputFormat == "cvbs";
+    if (pipedOptions.isSampleEncodingSet(parser)) {
+        if (!pipedOptions.sampleEncoding(parser, streamOptions.encoding)) return 2;
         encodingGiven = true;
     }
     if (parser.isSet(bufferFramesOption)) {
         streamOptions.bufferFrames = parser.value(bufferFramesOption).toInt();
         if (streamOptions.bufferFrames < 1) {
             qCritical("The buffer must hold at least 1 frame");
-            return -1;
+            return 2;
         }
     }
-    if (!isPipe && (parser.isSet(inputFormatOption) || parser.isSet(bufferFramesOption))) {
+    if (!isPipe && (pipedOptions.isFormatSet(parser) || parser.isSet(bufferFramesOption))) {
         qWarning() << "--input-format and --buffer-frames only apply to piped input";
     }
     if (inputFileName == outputFileName && outputFileName != "-") {
         // Quit with error
         qCritical("Input and output files cannot be the same");
-        return -1;
+        return 2;
     }
 
     qint32 startFrame = -1;
@@ -419,7 +380,7 @@ int main(int argc, char *argv[])
         if (startFrame < 1) {
             // Quit with error
             qCritical("Specified startFrame must be at least 1");
-            return -1;
+            return 2;
         }
     }
 
@@ -429,19 +390,11 @@ int main(int argc, char *argv[])
         if (length < 1) {
             // Quit with error
             qCritical("Specified length must be greater than zero frames");
-            return -1;
+            return 2;
         }
     }
 
-    if (parser.isSet(threadsOption)) {
-        maxThreads = parser.value(threadsOption).toInt();
-
-        if (maxThreads < 1) {
-            // Quit with error
-            qCritical("Specified number of threads must be greater than zero");
-            return -1;
-        }
-    }
+    if (!threadsOption.process(parser, maxThreads)) return 2;
 
     if (parser.isSet(chromaGainOption)) {
         const double value = parser.value(chromaGainOption).toDouble();
@@ -451,7 +404,7 @@ int main(int argc, char *argv[])
         if (value < 0.0) {
             // Quit with error
             qCritical("Chroma gain must not be less than 0");
-            return -1;
+            return 2;
         }
     }
 
@@ -477,7 +430,7 @@ int main(int argc, char *argv[])
         if (combConfig.cNRLevel < 0.0) {
             // Quit with error
             qCritical("Chroma noise reduction cannot be negative");
-            return -1;
+            return 2;
         }
     }
 
@@ -489,7 +442,7 @@ int main(int argc, char *argv[])
         if (combConfig.yNRLevel < 0.0) {
             // Quit with error
             qCritical("Luma noise reduction cannot be negative");
-            return -1;
+            return 2;
         }
     }
 
@@ -502,7 +455,7 @@ int main(int argc, char *argv[])
 
         if (combConfig.adaptThreshold <= 0.0) {
             qCritical("Adapt threshold must be greater than 0");
-            return -1;
+            return 2;
         }
     }
 
@@ -511,7 +464,7 @@ int main(int argc, char *argv[])
 
         if (combConfig.chromaWeight < 0.0) {
             qCritical("Chroma weight must be greater than or equal to 0");
-            return -1;
+            return 2;
         }
     }
 
@@ -525,7 +478,7 @@ int main(int argc, char *argv[])
         if (palConfig.transformThreshold < 0.0 || palConfig.transformThreshold > 1.0) {
             // Quit with error
             qCritical("Transform threshold must be between 0 and 1");
-            return -1;
+            return 2;
         }
     }
 
@@ -565,41 +518,21 @@ int main(int argc, char *argv[])
         streamOptions.cvbs = ldxStream->isCvbs();
     } else if (hasNoMetadata) {
         // Piped input with no metadata: the video system must be said, the rest has defaults
-        if (!parser.isSet(systemOption)) {
+        if (!pipedOptions.isSystemSet(parser)) {
             qCritical("Piped input without metadata needs the video system (--system pal, ntsc or pal-m), "
                       "or the input metadata file (--input-metadata)");
-            return -1;
+            return 2;
         }
-        const QString systemName = parser.value(systemOption).toUpper().replace('-', '_');
         VideoSystem system;
-        if (!parseVideoSystemName(systemName, system)) {
-            qCritical().noquote() << "Unknown video system" << parser.value(systemOption) << "- use pal, ntsc or pal-m";
-            return -1;
-        }
+        if (!pipedOptions.videoSystem(parser, system)) return 2;
 
         qint32 blackLevel = -1;
         qint32 whiteLevel = -1;
-        if (parser.isSet(blackLevelOption)) blackLevel = parser.value(blackLevelOption).toInt();
-        if (parser.isSet(whiteLevelOption)) whiteLevel = parser.value(whiteLevelOption).toInt();
-        if ((parser.isSet(blackLevelOption) && blackLevel < 0) || (parser.isSet(whiteLevelOption) && whiteLevel < 1)) {
-            qCritical("The black and white levels must be positive");
-            return -1;
-        }
-        if (streamOptions.cvbs && (parser.isSet(blackLevelOption) || parser.isSet(whiteLevelOption))) {
-            qWarning() << "--black-level and --white-level apply to TBC input, not CVBS (which has standard levels): ignored";
-            blackLevel = whiteLevel = -1;
-        }
+        if (!pipedOptions.levels(parser, streamOptions.cvbs, blackLevel, whiteLevel)) return 2;
 
         // ld-decode 8 and decode-orc mark the CVBS they write as locked
-        bool isSubcarrierLocked = streamOptions.cvbs;
-        if (parser.isSet(subcarrierLockedOption)) {
-            const QString value = parser.value(subcarrierLockedOption).toLower();
-            if (value != "yes" && value != "no") {
-                qCritical().noquote() << "--subcarrier-locked must be yes or no, not" << value;
-                return -1;
-            }
-            isSubcarrierLocked = value == "yes";
-        }
+        bool isSubcarrierLocked;
+        if (!pipedOptions.subcarrierLocked(parser, streamOptions.cvbs, isSubcarrierLocked)) return 2;
 
         metaData.initialiseDefault(system, blackLevel, whiteLevel, isSubcarrierLocked);
         qInfo().noquote() << "No metadata: assuming" << Cvbs::presetName(system) << "video at the standard levels"
@@ -607,17 +540,17 @@ int main(int argc, char *argv[])
                           << "that runs until the input ends";
     } else {
         QString inputMetadataFileName;
-        if (!metadataOptions.selectInput(inputFileName, true, inputMetadataFileName)) return -1;
+        if (!metadataOptions.selectInput(inputFileName, true, inputMetadataFileName)) return 1;
 
         // Load the source video metadata
         if (!metaData.read(inputMetadataFileName)) {
             qCritical() << "Unable to open ld-decode metadata file:" << inputMetadataFileName;
-            return -1;
+            return 1;
         }
 
         // CVBS core metadata says how its samples are stored
         if (metaData.isCvbs() && !encodingGiven) streamOptions.encoding = metaData.getCvbsFileMetadata().sampleEncoding;
-        if (parser.isSet(systemOption) || parser.isSet(blackLevelOption) || parser.isSet(whiteLevelOption)) {
+        if (pipedOptions.isSystemSet(parser) || pipedOptions.isLevelSet(parser)) {
             qWarning() << "--system, --black-level and --white-level are for input without metadata: the metadata is used";
         }
     }
@@ -626,7 +559,7 @@ int main(int argc, char *argv[])
     metaData.processLineParameters(lineParameters);
     
     // Reverse field order if required
-    if (parser.isSet(setReverseOption)) {
+    if (setReverseOption.isSet(parser)) {
         qInfo() << "Expected field order is reversed to second field/first field";
         metaData.setIsFirstFieldFirst(false);
     }
@@ -645,20 +578,20 @@ int main(int argc, char *argv[])
             }
         } catch (const std::exception& e) {
             qCritical() << "Failed to access video parameters from metadata file:" << e.what();
-            return -1;
+            return 1;
         }
     }
 
     // Require ntsc3d if the map overlay is selected
     if (combConfig.showMap && decoderName != "ntsc3d") {
         qCritical() << "Can only show adaptive filter map with the ntsc3d decoder";
-        return -1;
+        return 2;
     }
 
     // Require transform2d/3d if the FFT overlay is selected
     if (palConfig.showFFTs && decoderName != "transform2d" && decoderName != "transform3d") {
         qCritical() << "Can only show FFTs with the transform2d/transform3d decoders";
-        return -1;
+        return 2;
     }
 
     // Select the decoder
@@ -668,13 +601,13 @@ int main(int argc, char *argv[])
     } else if (decoderName == "transform2d") {
         palConfig.chromaFilter = PalColour::transform2DFilter;
         if (!loadTransformThresholds(parser, transformThresholdsOption, palConfig)) {
-            return -1;
+            return 1;
         }
         decoder = std::make_unique<PalDecoder>(palConfig);
     } else if (decoderName == "transform3d") {
         palConfig.chromaFilter = PalColour::transform3DFilter;
         if (!loadTransformThresholds(parser, transformThresholdsOption, palConfig)) {
-            return -1;
+            return 1;
         }
         decoder = std::make_unique<PalDecoder>(palConfig);
     } else if (decoderName == "ntsc1d") {
@@ -694,7 +627,7 @@ int main(int argc, char *argv[])
         decoder = std::make_unique<MonoDecoder>(monoConfig);
     } else {
         qCritical() << "Unknown decoder" << decoderName;
-        return -1;
+        return 2;
     }
 
     // Select the output format
@@ -717,7 +650,7 @@ int main(int argc, char *argv[])
         outputConfig.pixelFormat = OutputWriter::PixelFormat::RGB48;
     } else {
         qCritical() << "Unknown output format" << outputFormatName;
-        return -1;
+        return 2;
     }
 
     if (parser.isSet(outputPaddingOption)) {
@@ -732,7 +665,7 @@ int main(int argc, char *argv[])
     DecoderPool decoderPool(*decoder, inputFileName, metaData, outputConfig, outputFileName, startFrame, length, maxThreads);
     decoderPool.setStreamOptions(streamOptions);
     if (!decoderPool.process()) {
-        return -1;
+        return 1;
     }
 
     // Quit with success

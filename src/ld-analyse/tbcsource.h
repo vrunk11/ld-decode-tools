@@ -35,6 +35,7 @@
 // Chroma decoder includes
 #include "palcolour.h"
 #include "comb.h"
+#include "colourconfiguration.h"
 #include "monodecoder.h"
 
 class TbcSource : public QObject
@@ -140,7 +141,6 @@ public:
 
     void setHighlightDropouts(bool _state);
     void setChromaDecoder(bool _state);
-    void setFieldView(bool _state);
     void setFieldOrder(bool _state);
 	void setCombine(bool _state);
     bool getHighlightDropouts();
@@ -200,7 +200,6 @@ public:
     // fields are put top field first, so the lines are where they belong). The next load() goes back to real frames.
     void loadWeave(qint32 p);
     void setWeavePlayback(bool on) { weaveOn = on; }
-    bool getWeavePlayback() const { return weaveOn; }
     // Forget the image given by setPrerenderedImage and the cache (after a playback of weaves)
     void clearPrerendered();
 
@@ -388,8 +387,6 @@ private:
     void loadInputFields();
     void decodeFrame();
     QImage generateQImage();
-    QImage generateChromaImage();
-    QImage generateMonoImage();
     void generateData();
     bool startBackgroundLoad(QString sourceFilename);
     bool startBackgroundStream();

@@ -32,7 +32,7 @@ ld-process-efm [options] <input.efm> <output>
 - `-p, --pad`: Pad the start of the audio from 00:00 to match the initial disc time
 - `-b, --data`: Decode F1 frames as data instead of audio
 - `-D, --dts`: Audio is DTS rather than PCM (allow non-standard F3 syncs)
-- `-t, --time`: Non-standard audio decode (no time-stamp information)
+- `-t, --time`: Non-standard audio decode (no timestamp information)
 
 ### Detailed Debug
 - `--debug-efmtof3frames`, `--debug-syncf3frames`, `--debug-f3tof2frames`, `--debug-f2tof1frame`, `--debug-f1toaudio`, `--debug-f1todata`: detailed debug output for each decoding stage
@@ -52,5 +52,5 @@ ld-process-efm --data capture.efm capture.bin
 
 ## See Also
 
-- [docs/Tools/ld-process-efm.md](../../docs/Tools/ld-process-efm.md) - formats, AC-3 and DTS discs, and discs without audio time stamps
+- [docs/Tools/ld-process-efm.md](../../docs/Tools/ld-process-efm.md) - formats, AC-3 and DTS discs, and discs without audio timestamps
 - [efm-decoder](../efm-decoder/README.md) - the staged EFM decoder suite

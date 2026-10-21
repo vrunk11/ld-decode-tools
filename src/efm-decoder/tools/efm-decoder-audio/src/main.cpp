@@ -177,7 +177,7 @@ int main(int argc, char *argv[])
         outputFilename = positionalArguments.at(1);
     } else {
         qWarning() << "Too many arguments. Expected: [input] [output] (use '-' for stdin/stdout)";
-        return 1;
+        return 2;
     }
 
     // An LDX file as the output: the audio is decoded to a file of its own, and then put in the LDX file as a track
@@ -187,11 +187,11 @@ int main(int argc, char *argv[])
     if (ldxOutput) {
         if (outputWavMetadata) {
             qCritical() << "The Audacity labels are not put in an LDX file: name a .wav file";
-            return 1;
+            return 2;
         }
         if (!QFileInfo::exists(ldxFile)) {
             qCritical().noquote() << ldxFile << "must be an LDX file that exists: the audio is added to it as a track";
-            return 1;
+            return 2;
         }
         outputFilename = ldxFile + ".audio.part";
         noWavHeader = true;
@@ -201,7 +201,7 @@ int main(int argc, char *argv[])
     if (outputFilename == "-" && !noWavHeader) {
         qCritical() << "ERROR: When piping output to stdout, --no-wav-header is mandatory";
         qCritical() << "WAV headers cannot be written to stdout as they require seeking to update file size information";
-        return 1;
+        return 2;
     }
 
     // An LDX file as the input: the stages of the EFM decoder before this one are run on its EFM, with the tools beside this

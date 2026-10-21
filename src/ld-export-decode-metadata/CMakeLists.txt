@@ -1,7 +1,6 @@
 add_executable(ld-export-decode-metadata
     exportdropouts.cpp
     exportmetadata.cpp
-    jsonio.cpp
     main.cpp
     metadataconverter.cpp
 )

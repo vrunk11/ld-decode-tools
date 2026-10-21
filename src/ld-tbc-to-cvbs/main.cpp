@@ -139,21 +139,21 @@ int main(int argc, char *argv[])
 
     // Standard logging options
     processStandardDebugOptions(parser);
-    if (!metadataOptions.process(parser)) return -1;
+    if (!metadataOptions.process(parser)) return 2;
 
     const QStringList positionalArguments = parser.positionalArguments();
     if (positionalArguments.count() < 1 || positionalArguments.count() > 2) {
         qCritical("You must specify an input TBC file, and optionally the output CVBS file");
-        return -1;
+        return 2;
     }
     QString inputFileName = positionalArguments.at(0);
     if (Cvbs::isDataFileName(inputFileName)) {
         qCritical().noquote() << inputFileName << "is already CVBS";
-        return -1;
+        return 2;
     }
     if (!QFileInfo::exists(inputFileName)) {
         qCritical().noquote() << "Input file" << inputFileName << "does not exist";
-        return -1;
+        return 1;
     }
 
     // Either file of a Y/C pair (_chroma.tbc, .tbcc) names the pair: start from the luma
@@ -161,7 +161,7 @@ int main(int argc, char *argv[])
         const QString lumaFileName = TbcFiles::lumaFileName(inputFileName);
         if (!QFileInfo::exists(lumaFileName)) {
             qCritical().noquote() << "The luma file" << lumaFileName << "of the Y/C pair does not exist";
-            return -1;
+            return 1;
         }
         inputFileName = lumaFileName;
     }
@@ -173,7 +173,7 @@ int main(int argc, char *argv[])
         if (!Cvbs::parseSampleEncodingName(name, encoding)
             && !Cvbs::parseSampleEncodingName("CVBS_" + name + "_4FSC", encoding)) {
             qCritical().noquote() << "Unknown sample encoding" << name << "- use u10, u16, tpg21 or s16";
-            return -1;
+            return 2;
         }
     }
 
@@ -184,7 +184,7 @@ int main(int argc, char *argv[])
         sampleRate = parser.value(sampleRateOption).toUInt(&ok);
         if (!ok || sampleRate < 1000 || sampleRate > 384000) {
             qCritical().noquote() << "Invalid sample rate" << parser.value(sampleRateOption);
-            return -1;
+            return 2;
         }
     }
 
@@ -199,7 +199,7 @@ int main(int argc, char *argv[])
         const QString outputFileName = positionalArguments.at(1);
         if (!Cvbs::isDataFileName(outputFileName)) {
             qCritical().noquote() << "Output file" << outputFileName << "must have a .cvbs extension (.cvbsy for Y/C)";
-            return -1;
+            return 1;
         }
         outputBase = Cvbs::baseName(outputFileName);
     }
@@ -208,7 +208,7 @@ int main(int argc, char *argv[])
 
     // Read the TBC metadata
     QString inputMetadataFileName;
-    if (!metadataOptions.selectInput(inputFileName, true, inputMetadataFileName)) return -1;
+    if (!metadataOptions.selectInput(inputFileName, true, inputMetadataFileName)) return 1;
     LdDecodeMetaData inputMetaData;
     if (!inputMetaData.read(inputMetadataFileName)) {
         qCritical().noquote() << "Unable to read the TBC metadata" << inputMetadataFileName;

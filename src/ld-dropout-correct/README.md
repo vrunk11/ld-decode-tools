@@ -36,12 +36,7 @@ ld-dropout-correct [options] inputs output
 - `-l, --length <frames>`: Process only specified number of frames
 
 #### Additional Sources
-- `--source <file.tbc>`: Additional source file for comparison
-- Multiple `--source` options can be used
-
-#### Dropout Detection
-- `--input-dropouts <file>`: Use external dropout data
-- `--output-dropouts <file>`: Save detected dropouts to file
+- The input files are the sources: give several TBC files before the output file (`ld-dropout-correct a.tbc b.tbc output.tbc`); the first is the one that is corrected, the others replace its dropouts where they have good video
 
 #### Verbosity
 - `-q, --quiet`: Suppress informational messages
@@ -54,9 +49,7 @@ ld-dropout-correct [options] inputs output
 ld-dropout-correct input.tbc output.tbc
 
 # Using Additional Sources
-ld-dropout-correct input.tbc output.tbc \
-    --source capture2.tbc \
-    --source capture3.tbc
+ld-dropout-correct input.tbc capture2.tbc capture3.tbc output.tbc
 
 # Intra-Field Correction
 ld-dropout-correct --intra input.tbc output.tbc

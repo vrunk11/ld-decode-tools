@@ -81,16 +81,16 @@ int main(int argc, char *argv[])
         inputSqliteFilename = positionalArguments.at(0);
     } else {
         qCritical("You must specify one input SQLite file, using --input-sqlite or as a positional argument");
-        return -1;
+        return 2;
     }
 
     if (!QFileInfo::exists(inputSqliteFilename)) {
         qCritical().noquote() << "Input file" << inputSqliteFilename << "does not exist";
-        return -1;
+        return 1;
     }
     if (LdDecodeMetaData::detectFormat(inputSqliteFilename) != LdDecodeMetaData::MetadataFormat::Sqlite) {
         qCritical().noquote() << inputSqliteFilename << "is not SQLite metadata (it is probably JSON already)";
-        return -1;
+        return 2;
     }
 
     // Work out the output JSON filename: capture.tbc.db -> capture.tbc.json
@@ -106,14 +106,14 @@ int main(int argc, char *argv[])
     // The library writes SQLite for a .db name, whatever is asked for
     if (outputJsonFilename.endsWith(".db", Qt::CaseInsensitive)) {
         qCritical().noquote() << "Output file" << outputJsonFilename << "has a .db extension - give a .json file name";
-        return -1;
+        return 1;
     }
 
     // An existing .tbc.json may hold metadata not in the SQLite file: never overwrite one
     if (QFileInfo::exists(outputJsonFilename)) {
         qCritical().noquote() << "Output file" << outputJsonFilename
                               << "already exists - will not overwrite it (remove it first, or use --output-json)";
-        return -1;
+        return 1;
     }
 
     // Read the SQLite metadata and write it out as JSON

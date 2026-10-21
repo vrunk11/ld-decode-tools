@@ -152,23 +152,6 @@ TbcDebugStream tbcDebugStream()
     return TbcDebugStream();
 }
 
-// Open debug file
-void openDebugFile(QString filename)
-{
-    // Open output files for writing
-    debugFile = new QFile(filename);
-    if (!debugFile->open(QIODevice::WriteOnly)) {
-        // Failed to open source sample file
-        tbcDebugStream() << "Could not open" << filename << "as debug output file";
-    } else saveDebug = true;
-}
-
-// Close debug file
-void closeDebugFile(void)
-{
-    if (saveDebug) debugFile->close();
-}
-
 // Control the show debug flag (debug to stderr if true)
 void setDebug(bool state)
 {

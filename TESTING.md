@@ -9,7 +9,7 @@ slice and fails if a test carries neither.
 
 | Label | Tests | Where defined | Needs |
 | --- | --- | --- | --- |
-| `unit` | `testfilter`, `testlinenumber`, `testmetadata`, `testvbidecoder`, `testvitcdecoder` | `src/library/**/test*/CMakeLists.txt` | the build only |
+| `unit` | the library's (`testfilter`, `testaudio`, `testcvbs`, `testldx`, `testlinenumber`, `testmetadata`, `testtbcfiles`, `testvbidecoder`, `testvitcdecoder`, `testdiscnumbering`, `testdropouts`, `testvitsmetrics`, `testsqliteschema`, `teststackframe`, `teststackercore`, `testcommonoptions`, `testpipedinputoptions`, `testsourcefilechecks`, `testfieldpool`), the chroma decoder's (`testlumacoring`), the windows' (`testdropoutdrawing`, `testaspectratio`, `testappearancemenus` in `gui-common`; `testremote`, `testshortcuts`, `testvideofilter`, `testwaveform`, `testweave` in `ld-analyse`; `teststackproject` in `ld-stacker-gui`) and `ld-discmap`'s (`testframe`) | `src/**/test*/CMakeLists.txt` | the build only (the tests of the windows run without a screen) |
 | `functional` | `chroma-*`, `decode-pretbc-*` | root `CMakeLists.txt` | Python 3 + numpy, ffmpeg |
 
 ### Unit tests
@@ -22,6 +22,9 @@ case in the matching `test*` directory. New unit tests:
 add_test(NAME testfoo COMMAND testfoo)
 set_tests_properties(testfoo PROPERTIES LABELS unit)
 ```
+
+A test that checks with `assert()` must be built with `-UNDEBUG` (`target_compile_options(testfoo PRIVATE $<IF:$<CXX_COMPILER_ID:MSVC>,/UNDEBUG,-UNDEBUG>)`): the Release and
+RelWithDebInfo builds define `NDEBUG`, which removes every `assert()` and leaves a test that checks nothing. Or check with a macro that does not depend on it, as `testdiscnumbering` does.
 
 ### Functional tests
 

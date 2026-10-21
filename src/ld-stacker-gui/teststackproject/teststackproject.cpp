@@ -17,6 +17,7 @@
 #include <cmath>
 
 #include "ldxcapture.h"
+#include "discnumbering.h"
 #include "tbcfiles.h"
 #include "lddecodemetadata.h"
 #include "stackedvideo.h"
@@ -330,13 +331,18 @@ int main(int argc, char *argv[])
         qint32 total = 0;
         qint32 discAtStart = 0;
         // a begins at picture 100 (10 frames), b at 105 (8 frames), c has no numbers (3 frames, offset 1): it begins at the number 0, plus its offset
-        const QVector<qint32> placed = StackedVideo::alignedPositions({ 100, 105, -1 }, { 0, 0, 1 }, { 10, 8, 3 }, total, &discAtStart);
+        const QVector<qint32> placed = StackedVideo::alignedPositions({ 100, 105, DiscNumbering::NoNumber }, { 0, 0, 1 }, { 10, 8, 3 }, total, &discAtStart);
         CHECK(placed == QVector<qint32>({ 99, 104, 0 }) && total == 112 && discAtStart == 1);
         // an offset that puts a source before the earliest moves the start of the timeline
         const QVector<qint32> earlier = StackedVideo::alignedPositions({ 100, 105 }, { 0, -10 }, { 10, 8 }, total, &discAtStart);
         CHECK(earlier == QVector<qint32>({ 5, 0 }) && total == 15 && discAtStart == 95);
         const QVector<qint32> none = StackedVideo::alignedPositions({}, {}, {}, total, &discAtStart);
         CHECK(none.isEmpty() && total == 0);
+        // the numbers of the disc can be 0 or negative: a capture that begins with frames of a lead-in, before the first picture, is not moved to 0
+        const QVector<qint32> lead = StackedVideo::alignedPositions({ -99, 1 }, { 0, 0 }, { 120, 50 }, total, &discAtStart);
+        CHECK(lead == QVector<qint32>({ 0, 100 }) && total == 150 && discAtStart == -99);
+        const QVector<qint32> zero = StackedVideo::alignedPositions({ 0, 3 }, { 0, 0 }, { 10, 10 }, total, &discAtStart);
+        CHECK(zero == QVector<qint32>({ 0, 3 }) && total == 13 && discAtStart == 0);
 
         // From metadata: the metadata of the session has the frames of both, in the order of the disc
         const auto writeCapture = [&](const QString &name, qint32 firstPicture, qint32 frames, bool mapped = false) {

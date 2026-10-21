@@ -68,6 +68,9 @@ and command lines working (see §2 and §10).
 | Directory | Binaries | Purpose |
 | --- | --- | --- |
 | `src/ld-analyse/` | `ld-analyse` | Qt GUI: TBC inspection, scopes, SNR/dropout analysis |
+| `src/ld-stacker-gui/` | `ld-stacker-gui` | Qt GUI: stack several captures of a disc, with a live preview and a `.stack` session |
+| `src/gui-common/` | `lddecode-gui` (static) | What the two windows share: themes and their menus, dropout drawing, aspect ratio |
+| `src/ld-container/` | `ld-container` | Pack, add, extract and stack the tracks of an `.ldx` container |
 | `src/ld-chroma-decoder/` | `ld-chroma-decoder`, `ld-chroma-encoder` | PAL/NTSC colour decoding to RGB/YUV; test encoder |
 | `src/ld-process-vbi/` | `ld-process-vbi` | Decode VBI (frame numbers, timecodes, VITC, closed captions) |
 | `src/ld-process-vits/` | `ld-process-vits` | Vertical interval test signal measurements |
@@ -180,13 +183,19 @@ Do not touch headers of vendored code.
 - Never name a file, symbol, branch or CMake target after a plan step or iteration
   (`phase0`, `v2`, `new`, `final`, `refactored`). Name things after what they do.
 
+### 4.4 Exit codes of the command line tools
+
+A tool exits with **0** when it did what it was asked, **2** when the command line is wrong (an option or a value that is not valid, an argument missing or too many, options that
+cannot go together, an output that would be a conversion), and **1** when the work failed (a file that cannot be opened or written, data that cannot be used, a stage that stops). Not -1, which a shell sees as 255.
+`ld-container` and `ld-process-ac3` still use their own (1).
+
 ## 5. Testing
 
 Source of truth: [TESTING.md](TESTING.md). In short:
 
 | CTest label | What | Needs |
 | --- | --- | --- |
-| `unit` | `src/library/**/test*` executables | nothing beyond the build |
+| `unit` | the `src/**/test*` executables (library, chroma decoder, windows) | nothing beyond the build |
 | `functional` | `scripts/test-chroma`, `scripts/test-decode-pretbc` over `test-data/` | Python 3 + numpy, ffmpeg (all in the dev shell) |
 
 - **Every** `add_test()` must carry exactly one of these labels; CI fails on an unlabelled test.

@@ -26,7 +26,7 @@ efm-decoder-f2 [options] <input.efm> <output.f2>
 - `--show-channel-debug` - Show channel to F3 decoding debug
 - `--show-f3-debug` - Show F3 to F2 section decoding debug  
 - `--show-f2-correct-debug` - Show F2 section correction debug
-- `--show-all-debug` - Show all debug output
+- `--show-all-debug` - Show all decoding debug
 - `--no-timecodes` - Process input EFM data with no timecodes (may increase error rates)
 
 ### Arguments

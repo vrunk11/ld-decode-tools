@@ -20,11 +20,12 @@ efm-decoder-d24 [options] <input.f2> <output.d24>
 - `-v, --version` - Display version information
 - `-d, --debug` - Show debug output
 - `-q, --quiet` - Suppress info and warning messages
+- `--no-timecodes` - For an LDX file as the input: decode its EFM without timecodes (EFM that is not ECMA-130 compliant, the usual one of a LaserDisc)
 - `--show-f1` - Show F1 frame data
 - `--show-data24` - Show Data24 frame data
 - `--show-f2-debug` - Show F2 to F1 decoding debug
 - `--show-f1-debug` - Show F1 to Data24 decoding debug
-- `--show-all-debug` - Show all debug options
+- `--show-all-debug` - Show all decoding debug
 
 ### Arguments
 

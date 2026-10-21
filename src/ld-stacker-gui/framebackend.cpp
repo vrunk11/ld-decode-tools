@@ -9,6 +9,8 @@
  ******************************************************************************/
 
 #include "framebackend.h"
+#include "stackframe.h"
+#include "dropoutdrawing.h"
 
 #include "stackedvideo.h"
 
@@ -26,35 +28,8 @@
 #include "tbc/logging.h"
 #include "vitsmetrics.h"
 
-namespace {
-
-// The SNR of a frame from its two fields: the average of those that have one
-float frameSnr(const LdDecodeMetaData::Field &first, const LdDecodeMetaData::Field &second, bool white)
-{
-    double total = 0;
-    qint32 points = 0;
-    for (const LdDecodeMetaData::Field *field: { &first, &second }) {
-        const double value = white ? field->vitsMetrics.wSNR : field->vitsMetrics.bPSNR;
-        if (std::isfinite(value) && value > 0) {
-            total += value;
-            points++;
-        }
-    }
-    return points ? static_cast<float>(total / points) : std::nanf("");
-}
-
-// The SNR of a stacked field, measured from its test signal lines
-void measureField(const SourceVideo::Data &field, const LdDecodeMetaData::VideoParameters &videoParameters,
-                  double &whiteTotal, qint32 &whitePoints, double &blackTotal, qint32 &blackPoints)
-{
-    LdDecodeMetaData::Field metrics;
-    const VitsRawMeasurements raw = measureVitsRaw(field, 1, videoParameters);
-    applyVitsLevels(raw, videoParameters, metrics, vitsIreSpan(videoParameters.system));
-    if (std::isfinite(metrics.vitsMetrics.wSNR) && metrics.vitsMetrics.wSNR > 0) { whiteTotal += metrics.vitsMetrics.wSNR; whitePoints++; }
-    if (std::isfinite(metrics.vitsMetrics.bPSNR) && metrics.vitsMetrics.bPSNR > 0) { blackTotal += metrics.vitsMetrics.bPSNR; blackPoints++; }
-}
-
-} // namespace
+// The lines of a field that the SNR is measured from: the test signals are on the first 22 lines (VITS_END_FIELD_LINE), a couple more for the neighbours
+static constexpr qint32 snrLines = 24;
 
 FrameBackend::FrameBackend(QObject *parent)
     : QObject(parent)
@@ -142,10 +117,7 @@ void FrameBackend::addSource(const QString &id, const QString &file, bool revers
         if (first.pad || second.pad) info.paddedFrames++;
         if (!first.pad && !second.pad && !isWholeDropout(first.dropOuts, videoParameters.fieldWidth, videoParameters.fieldHeight)
             && !isWholeDropout(second.dropOuts, videoParameters.fieldWidth, videoParameters.fieldHeight)) {
-            qint64 length = 0;
-            for (const DropOuts *dropOuts: { &first.dropOuts, &second.dropOuts }) {
-                for (qint32 i = 0; i < dropOuts->size(); i++) length += qMax(0, dropOuts->endx(i) - dropOuts->startx(i));
-            }
+            const qint64 length = first.dropOuts.totalLength() + second.dropOuts.totalLength();
             info.dropoutLength[frame - 1] = static_cast<float>(length);
         }
 
@@ -172,8 +144,11 @@ void FrameBackend::addSource(const QString &id, const QString &file, bool revers
             if (previousSeconds != -1 && (seconds < previousSeconds || seconds > previousSeconds + 1)) info.jumps++;
             previousSeconds = seconds;
         }
-        info.whiteSnr[frame - 1] = frameSnr(first, second, true);
-        info.blackSnr[frame - 1] = frameSnr(first, second, false);
+        SnrAverage snr;
+        snr.add(first.vitsMetrics);
+        snr.add(second.vitsMetrics);
+        info.whiteSnr[frame - 1] = static_cast<float>(snr.white());
+        info.blackSnr[frame - 1] = static_cast<float>(snr.black());
     }
 
     info.chapters = chapterNumbers.size();
@@ -199,19 +174,13 @@ void FrameBackend::setReverseFields(bool reverseFields)
 
 qint32 FrameBackend::sourceFrame(Loaded &source, qint32 frame, qint32 offset)
 {
-    // A source shifted by +2 starts two frames later on the timeline of the stack
-    const qint32 own = frame - offset;
-    if (own < 1 || own > source.metadata.getNumberOfFrames()) return -1;
-    return own;
+    return StackFrame::ownFrame(frame, offset, source.metadata.getNumberOfFrames());
 }
 
 // A frame with a padded (missing) field is not one the stack can use
 bool FrameBackend::isPadded(Loaded &source, qint32 ownFrame)
 {
-    const qint32 first = source.metadata.getFirstFieldNumber(ownFrame);
-    const qint32 second = source.metadata.getSecondFieldNumber(ownFrame);
-    if (first < 1 || second < 1) return true;
-    return source.metadata.getField(first).pad || source.metadata.getField(second).pad;
+    return StackFrame::isPadded(source.metadata, ownFrame);
 }
 
 // The picture of a frame as ld-analyse shows a field (its lines doubled) or both fields (split: the first above
@@ -240,31 +209,13 @@ QImage FrameBackend::applyView(const QImage &frame, qint32 viewMode, qint32 fiel
 // not drawn, since it would colour the whole picture
 bool FrameBackend::isWholeDropout(const DropOuts &dropOuts, qint32 fieldWidth, qint32 fieldHeight)
 {
-    if (dropOuts.size() < fieldHeight) return false;
-    QVector<bool> covered(fieldHeight + 1, false);
-    qint32 lines = 0;
-    for (qint32 i = 0; i < dropOuts.size(); i++) {
-        const qint32 line = dropOuts.fieldLine(i);
-        if (line < 1 || line > fieldHeight || covered[line] || dropOuts.startx(i) > 0 || dropOuts.endx(i) < fieldWidth - 1) continue;
-        covered[line] = true;
-        lines++;
-    }
-    return lines >= fieldHeight;
+    return dropOuts.coversWholeField(fieldWidth, fieldHeight);
 }
 
 // The dropouts of one field, on the rows it has in the frame. The first field is drawn in the colour, the second a little darker so that the two can be told apart.
 void FrameBackend::drawDropouts(QImage &image, const DropOuts &dropOuts, bool secondField, const QColor &color)
 {
-    if (image.isNull() || image.format() != QImage::Format_RGB32) return;
-    const QRgb pixel = (secondField ? color.darker(130) : color.lighter(135)).rgb();
-    for (qint32 i = 0; i < dropOuts.size(); i++) {
-        const qint32 row = 2 * (dropOuts.fieldLine(i) - 1) + (secondField ? 1 : 0);
-        if (row < 0 || row >= image.height()) continue;
-        const qint32 from = qMax(0, dropOuts.startx(i));
-        const qint32 to = qMin(image.width(), dropOuts.endx(i) + 1);
-        QRgb *line = reinterpret_cast<QRgb *>(image.scanLine(row));
-        for (qint32 x = from; x < to; x++) line[x] = pixel;
-    }
+    DropoutDrawing::draw(image, dropOuts, secondField, secondField ? color.darker(130) : color.lighter(135));
 }
 
 // The dropouts that the capture has for a frame of it, unless the whole frame is marked as a dropout
@@ -336,8 +287,7 @@ void FrameBackend::configureDecoders(LdDecodeMetaData::VideoParameters videoPara
     if (key == decoderKey) return;
     decoderKey = key;
 
-    if (videoParameters.system == PAL || videoParameters.system == PAL_M) palColour.updateConfiguration(videoParameters, palConfiguration);
-    else ntscColour.updateConfiguration(videoParameters, ntscConfiguration);
+    updateColourConfiguration(videoParameters, palColour, palConfiguration, ntscColour, ntscConfiguration);
     outputWriter.updateConfiguration(videoParameters, outputConfiguration);
 }
 
@@ -462,12 +412,11 @@ void FrameBackend::render(const FrameRequest &request)
                 result.image = applyView(result.image, request.viewMode, request.fieldIndex);
                 // (the fields are whole here: the SNR of the frame is known, and a measure of the source that goes by the frames that are seeked to takes it)
                 {
-                    double whiteTotal = 0, blackTotal = 0;
-                    qint32 whitePoints = 0, blackPoints = 0;
-                    measureField(firstData, videoParameters, whiteTotal, whitePoints, blackTotal, blackPoints);
-                    measureField(secondData, videoParameters, whiteTotal, whitePoints, blackTotal, blackPoints);
-                    if (whitePoints) result.sourceWhiteSnr = whiteTotal / whitePoints;
-                    if (blackPoints) result.sourceBlackSnr = blackTotal / blackPoints;
+                    SnrAverage snr;
+                    snr.add(firstData, 1, videoParameters);
+                    snr.add(secondData, 1, videoParameters);
+                    if (snr.hasWhite()) result.sourceWhiteSnr = snr.white();
+                    if (snr.hasBlack()) result.sourceBlackSnr = snr.black();
                 }
             }
         }
@@ -519,19 +468,15 @@ void FrameBackend::render(const FrameRequest &request)
     result.image = applyView(result.image, request.viewMode, request.fieldIndex);
 
     // The SNR of the stack is not in any metadata: it is measured from the stacked fields
-    double whiteTotal = 0, blackTotal = 0;
-    qint32 whitePoints = 0, blackPoints = 0;
-    measureField(main.first, main.videoParameters, whiteTotal, whitePoints, blackTotal, blackPoints);
-    measureField(main.second, main.videoParameters, whiteTotal, whitePoints, blackTotal, blackPoints);
-    if (whitePoints) result.stackWhiteSnr = whiteTotal / whitePoints;
-    if (blackPoints) result.stackBlackSnr = blackTotal / blackPoints;
+    SnrAverage stackSnr;
+    stackSnr.add(main.first, 1, main.videoParameters);
+    stackSnr.add(main.second, 1, main.videoParameters);
+    if (stackSnr.hasWhite()) result.stackWhiteSnr = stackSnr.white();
+    if (stackSnr.hasBlack()) result.stackBlackSnr = stackSnr.black();
     // (and the dropouts it is left with: its fields are whole here, so they are known)
     if (!isWholeDropout(main.firstDropOuts, main.videoParameters.fieldWidth, main.videoParameters.fieldHeight)
         && !isWholeDropout(main.secondDropOuts, main.videoParameters.fieldWidth, main.videoParameters.fieldHeight)) {
-        qint64 length = 0;
-        for (const DropOuts *dropOuts: { &main.firstDropOuts, &main.secondDropOuts }) {
-            for (qint32 i = 0; i < dropOuts->size(); i++) length += qMax(0, dropOuts->endx(i) - dropOuts->startx(i));
-        }
+        const qint64 length = main.firstDropOuts.totalLength() + main.secondDropOuts.totalLength();
         result.stackResidual = static_cast<double>(length);
     }
 
@@ -544,87 +489,42 @@ bool FrameBackend::stackFrame(const FrameRequest &request, qint32 frame, qint32 
 {
     const qint32 total = request.entries.size();
     QVector<qint32> frames(total, -1);
-    QVector<qint32> available;
+    QVector<StackFrame::Input> inputs(total);
     for (qint32 i = 0; i < total; i++) {
         const FrameRequest::Entry &entry = request.entries[i];
         const auto found = sources.constFind(entry.id);
         if (found == sources.constEnd() || !(*found)->ok || !entry.enabled) continue;
         frames[i] = sourceFrame(**found, frame, entry.offset);
-        if (frames[i] >= 0 && !isPadded(**found, frames[i])) available.append(i);
-    }
-    if (available.isEmpty()) return false;
-
-    // The sources must be alike: those that are not the size of the first are left out
-    LdDecodeMetaData::VideoParameters videoParameters = sources.value(request.entries[available[0]].id)->metadata.getVideoParameters();
-    QVector<qint32> usable;
-    for (qint32 i: available) {
-        const LdDecodeMetaData::VideoParameters &other = sources.value(request.entries[i].id)->metadata.getVideoParameters();
-        if (other.fieldWidth == videoParameters.fieldWidth && other.fieldHeight == videoParameters.fieldHeight) usable.append(i);
-    }
-
-    // Only the first lines, when that is all that is wanted (the stacking sees the fields as that short)
-    const qint32 readLines = lines > 0 ? qMin(lines, videoParameters.fieldHeight) : -1;
-    if (readLines > 0) videoParameters.fieldHeight = readLines;
-    const auto readField = [readLines](SourceVideo &video, qint32 field) {
-        return readLines > 0 ? video.getVideoField(field, 1, readLines) : video.getVideoField(field);
-    };
-
-    QVector<SourceVideo::Data> firstData(total), secondData(total);
-    QVector<LdDecodeMetaData::Field> firstMetadata(total), secondMetadata(total);
-    const qint32 expectedSize = videoParameters.fieldWidth * (readLines > 0 ? readLines : videoParameters.fieldHeight);
-    QVector<qint32> good;
-    for (qint32 i: usable) {
-        Loaded &source = *sources.value(request.entries[i].id);
         // (a thread that has handles of its own reads with them, and a source it has none for is left out: the one of the source is not its to use)
-        SourceVideo *video = &source.video;
-        if (videos) {
-            video = videos->value(request.entries[i].id, nullptr);
-            if (!video) continue;
-        }
-        const qint32 first = source.metadata.getFirstFieldNumber(frames[i]);
-        const qint32 second = source.metadata.getSecondFieldNumber(frames[i]);
-        const qint32 available = video->getNumberOfAvailableFields();
-        // The metadata can name fields that the file does not hold
-        if (first < 1 || second < 1 || first > available || second > available) continue;
-        // In the order of the file, to save seeking
-        if (first < second) {
-            firstData[i] = readField(*video, first);
-            secondData[i] = readField(*video, second);
-        } else {
-            secondData[i] = readField(*video, second);
-            firstData[i] = readField(*video, first);
-        }
-        if (firstData[i].size() != expectedSize || secondData[i].size() != expectedSize) continue;
-        firstMetadata[i] = source.metadata.getField(first);
-        secondMetadata[i] = source.metadata.getField(second);
-        good.append(i);
+        SourceVideo *video = videos ? videos->value(entry.id, nullptr) : &(*found)->video;
+        inputs[i].metadata = &(*found)->metadata;
+        inputs[i].video = video;
+        inputs[i].frame = frames[i];
     }
-    usable = good;
-    if (usable.isEmpty()) return false;
+
+    // The sources that have the frame, are not padded, are alike in size and have their fields in the file
+    StackFrame::Fields fields;
+    if (!StackFrame::read(inputs, StackFrame::BothFields, lines, fields)) return false;
 
     // The mode: as ld-disc-stacker, auto goes by how many sources there are
     qint32 mode = request.settings.mode;
     if (mode == -1) mode = StackerCore::autoMode(inStack);
 
     StackerCore core;
-    out.first = SourceVideo::Data(firstData[usable[0]].size());
-    out.second = SourceVideo::Data(secondData[usable[0]].size());
-    DropOuts firstDropOuts, secondDropOuts;
-    const bool noDiffDod = !request.settings.diffDod;
-    core.stackField(frame, firstData, videoParameters, firstMetadata, usable, noDiffDod,
-                    request.settings.passthrough, out.first, firstDropOuts, mode,
-                    request.settings.smartThreshold * 256, false);
-    core.stackField(frame, secondData, videoParameters, secondMetadata, usable, noDiffDod,
-                    request.settings.passthrough, out.second, secondDropOuts, mode,
-                    request.settings.smartThreshold * 256, false);
+    StackFrame::Result result;
+    StackFrame::stack(core, fields, StackFrame::BothFields, frame, mode, request.settings.smartThreshold, request.settings.diffDod,
+                      request.settings.passthrough, result);
 
-    out.firstDropOuts = firstDropOuts;
-    out.secondDropOuts = secondDropOuts;
+    const qint32 reference = fields.usable[0];
+    out.first = result.first;
+    out.second = result.second;
+    out.firstDropOuts = result.firstDropOuts;
+    out.secondDropOuts = result.secondDropOuts;
     out.ok = true;
-    out.usable = usable;
-    out.ownFrame = frames[usable[0]];
-    out.sourceId = request.entries[usable[0]].id;
-    out.videoParameters = videoParameters;
+    out.usable = fields.usable;
+    out.ownFrame = frames[reference];
+    out.sourceId = request.entries[reference].id;
+    out.videoParameters = fields.videoParameters;
     out.mode = mode;
     return true;
 }
@@ -633,26 +533,21 @@ bool FrameBackend::stackFrame(const FrameRequest &request, qint32 frame, qint32 
 // more for the neighbours). videos: the handles on the files that this thread has (null: those of the sources, for the thread of the backend)
 StackSnrPoint FrameBackend::measureStackFrame(const FrameRequest &request, qint32 frame, qint32 inStack, const QMap<QString, SourceVideo *> *videos)
 {
-    constexpr qint32 vitsLines = 24;
     StackSnrPoint point;
     point.frame = frame;
     point.white = std::nanf("");
     point.residual = std::nanf("");
     StackedFrame stacked;
     // (the dropouts of the stack are on every line of the field, so they need the whole fields, not only the lines of the test signals)
-    if (stackFrame(request, frame, inStack, stacked, request.measureResidual ? -1 : vitsLines, videos)) {
-        double whiteTotal = 0, blackTotal = 0;
-        qint32 whitePoints = 0, blackPoints = 0;
-        measureField(stacked.first, stacked.videoParameters, whiteTotal, whitePoints, blackTotal, blackPoints);
-        measureField(stacked.second, stacked.videoParameters, whiteTotal, whitePoints, blackTotal, blackPoints);
-        if (whitePoints) point.white = static_cast<float>(whiteTotal / whitePoints);
-        if (blackPoints) point.black = static_cast<float>(blackTotal / blackPoints);
+    if (stackFrame(request, frame, inStack, stacked, request.measureResidual ? -1 : snrLines, videos)) {
+        SnrAverage snr;
+        snr.add(stacked.first, 1, stacked.videoParameters);
+        snr.add(stacked.second, 1, stacked.videoParameters);
+        if (snr.hasWhite()) point.white = static_cast<float>(snr.white());
+        if (snr.hasBlack()) point.black = static_cast<float>(snr.black());
         if (request.measureResidual && !isWholeDropout(stacked.firstDropOuts, stacked.videoParameters.fieldWidth, stacked.videoParameters.fieldHeight)
             && !isWholeDropout(stacked.secondDropOuts, stacked.videoParameters.fieldWidth, stacked.videoParameters.fieldHeight)) {
-            qint64 length = 0;
-            for (const DropOuts *dropOuts: { &stacked.firstDropOuts, &stacked.secondDropOuts }) {
-                for (qint32 i = 0; i < dropOuts->size(); i++) length += qMax(0, dropOuts->endx(i) - dropOuts->startx(i));
-            }
+            const qint64 length = stacked.firstDropOuts.totalLength() + stacked.secondDropOuts.totalLength();
             point.residual = static_cast<float>(length);
         }
     }
@@ -688,6 +583,32 @@ void FrameBackend::openSnrReaders(const FrameRequest &request, qint32 threads, q
 }
 
 // The measure in the background waits for the person to be done navigating (a picture asked for in the last moments), unless it was stopped meanwhile
+// Run count jobs on the given number of threads of the lowest priority, and wait for them: each thread takes the next job number until none is left or
+// the generation has changed; job(thread, number) does the job on the thread that takes it
+template <typename Job>
+void FrameBackend::runSnrJobs(qint32 threads, qint32 count, const std::atomic<quint64> &generationNow, quint64 generation, Job job) const
+{
+    std::atomic<qint32> next{0};
+    QVector<QThread *> workers;
+    for (qint32 t = 0; t < threads; t++) {
+        QThread *worker = QThread::create([this, &next, &generationNow, generation, count, t, &job]() {
+            for (;;) {
+                const qint32 k = next.fetch_add(1);
+                if (k >= count || generation != generationNow.load()) return;
+                yieldToInteraction(generationNow, generation);
+                if (generation != generationNow.load()) return;
+                job(t, k);
+            }
+        });
+        workers.append(worker);
+        worker->start(QThread::LowestPriority);
+    }
+    for (QThread *worker: workers) {
+        worker->wait();
+        delete worker;
+    }
+}
+
 void FrameBackend::yieldToInteraction(const std::atomic<quint64> &generationNow, quint64 generation) const
 {
     while (QDateTime::currentMSecsSinceEpoch() - lastInteraction.load() < 400 && generationNow.load() == generation) QThread::msleep(40);
@@ -729,27 +650,11 @@ void FrameBackend::computeStackSnr(const FrameRequest &request, qint32 startFram
         const qint32 chunk = qMax(8, threads * 4);
         const qint32 count = qMin(chunk, (total - startFrame) / step + 1);
         points.resize(count);
-        std::atomic<qint32> next{0};
-        QVector<QThread *> workers;
-        for (qint32 t = 0; t < threads; t++) {
+        runSnrJobs(threads, count, snrGeneration, generation, [&](qint32 t, qint32 k) {
             QMap<QString, SourceVideo *> videos;
             for (auto it = snrReaders[t].cbegin(); it != snrReaders[t].cend(); ++it) videos.insert(it.key(), it.value().get());
-            QThread *worker = QThread::create([this, &request, &points, &next, videos, count, startFrame, step, inStack, generation]() {
-                for (;;) {
-                    const qint32 k = next.fetch_add(1);
-                    if (k >= count || generation != snrGeneration.load()) return;
-                    yieldToInteraction(snrGeneration, generation);
-                    if (generation != snrGeneration.load()) return;
-                    points[k] = measureStackFrame(request, startFrame + k * step, inStack, &videos);
-                }
-            });
-            workers.append(worker);
-            worker->start(QThread::LowestPriority);
-        }
-        for (QThread *worker: workers) {
-            worker->wait();
-            delete worker;
-        }
+            points[k] = measureStackFrame(request, startFrame + k * step, inStack, &videos);
+        });
         if (generation != snrGeneration.load()) return;
         frame = startFrame + count * step;
     }
@@ -768,7 +673,6 @@ void FrameBackend::computeStackSnr(const FrameRequest &request, qint32 startFram
 // The SNR of one frame of a source, measured from the first lines of its own fields, with a handle on the file that the thread has
 StackSnrPoint FrameBackend::measureSourceFrame(Loaded &source, SourceVideo &video, qint32 frame)
 {
-    constexpr qint32 vitsLines = 24;
     StackSnrPoint point;
     point.frame = frame;
     point.white = std::nanf("");
@@ -778,7 +682,7 @@ StackSnrPoint FrameBackend::measureSourceFrame(Loaded &source, SourceVideo &vide
     const qint32 available = video.getNumberOfAvailableFields();
     if (first < 1 || second < 1 || first > available || second > available) return point;
     LdDecodeMetaData::VideoParameters videoParameters = source.metadata.getVideoParameters();
-    const qint32 readLines = qMin(vitsLines, videoParameters.fieldHeight);
+    const qint32 readLines = qMin(snrLines, videoParameters.fieldHeight);
     videoParameters.fieldHeight = readLines;
     const qint32 expectedSize = videoParameters.fieldWidth * readLines;
     // (in the order of the file, to save seeking)
@@ -791,12 +695,11 @@ StackSnrPoint FrameBackend::measureSourceFrame(Loaded &source, SourceVideo &vide
         firstData = video.getVideoField(first, 1, readLines);
     }
     if (firstData.size() != expectedSize || secondData.size() != expectedSize) return point;
-    double whiteTotal = 0, blackTotal = 0;
-    qint32 whitePoints = 0, blackPoints = 0;
-    measureField(firstData, videoParameters, whiteTotal, whitePoints, blackTotal, blackPoints);
-    measureField(secondData, videoParameters, whiteTotal, whitePoints, blackTotal, blackPoints);
-    if (whitePoints) point.white = static_cast<float>(whiteTotal / whitePoints);
-    if (blackPoints) point.black = static_cast<float>(blackTotal / blackPoints);
+    SnrAverage snr;
+    snr.add(firstData, 1, videoParameters);
+    snr.add(secondData, 1, videoParameters);
+    if (snr.hasWhite()) point.white = static_cast<float>(snr.white());
+    if (snr.hasBlack()) point.black = static_cast<float>(snr.black());
     return point;
 }
 
@@ -834,26 +737,9 @@ void FrameBackend::computeSourceSnr(const QString &id, qint32 startFrame, quint6
     step = qMax(1, step);
     const qint32 count = qMin(qMax(8, workers * 4), (total - startFrame) / step + 1);
     QVector<StackSnrPoint> points(count);
-    std::atomic<qint32> next{0};
-    QVector<QThread *> threadList;
-    for (qint32 t = 0; t < workers; t++) {
-        SourceVideo *video = sourceReaders[t].get();
-        QThread *worker = QThread::create([this, &source, &points, &next, video, count, startFrame, step, generation]() {
-            for (;;) {
-                const qint32 k = next.fetch_add(1);
-                if (k >= count || generation != sourceSnrGeneration.load()) return;
-                yieldToInteraction(sourceSnrGeneration, generation);
-                if (generation != sourceSnrGeneration.load()) return;
-                points[k] = measureSourceFrame(source, *video, startFrame + k * step);
-            }
-        });
-        threadList.append(worker);
-        worker->start(QThread::LowestPriority);
-    }
-    for (QThread *worker: threadList) {
-        worker->wait();
-        delete worker;
-    }
+    runSnrJobs(workers, count, sourceSnrGeneration, generation, [&](qint32 t, qint32 k) {
+        points[k] = measureSourceFrame(source, *sourceReaders[t], startFrame + k * step);
+    });
     if (generation != sourceSnrGeneration.load()) return;
 
     const qint32 frame = startFrame + count * step;
