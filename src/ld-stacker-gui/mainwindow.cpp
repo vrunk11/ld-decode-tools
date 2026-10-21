@@ -573,6 +573,17 @@ void MainWindow::buildMenus()
         resizeOnFirstImport = on;
         QSettings().setValue("resizeOnFirstImport", on);
     });
+    // The window follows the zoom, when this is on (kept in the settings; off to begin with: the zoom changes the picture in the window as it is)
+    scaleWindowWithZoom = QSettings().value("scaleWindowWithZoom", false).toBool();
+    QAction *scaleAction = view->addAction(tr("Scale window with zoom"));
+    scaleAction->setCheckable(true);
+    scaleAction->setChecked(scaleWindowWithZoom);
+    scaleAction->setToolTip(tr("The window is resized to the picture each time the zoom changes"));
+    connect(scaleAction, &QAction::toggled, this, [this](bool on) {
+        scaleWindowWithZoom = on;
+        QSettings().setValue("scaleWindowWithZoom", on);
+        if (on) resizeToImage();
+    });
     // How the picture is enlarged: line doubling keeps the pixels as they are
     QMenu *enlarge = view->addMenu(tr("Scaling algorithm"));
     QActionGroup *enlargeGroup = new QActionGroup(this);
@@ -757,6 +768,9 @@ void MainWindow::applySession(const StackProject &loaded, const QString &fileNam
     qDeleteAll(dropoutWindows);
     dropoutWindows.clear();
 
+    // What the session says was measured is used when it is good for these captures (the keys say)
+    for (const StackMeasure &measure: loaded.measures) snrCache.insert(measure.key, { measure.white, measure.black, measure.residual });
+
     project = loaded;
     // (the stacking is off when a session is opened too: turning it on asks to map the sources that follow the map and have no mapping)
     project.showStack = false;
@@ -819,6 +833,16 @@ void MainWindow::exportSession()
 
     project.zoom = zoom;
     project.aspect = displayAspect;
+    // What was measured of these captures goes in the file: the SNR and the dropouts of the stack, and the SNR measured of each source
+    project.measures.clear();
+    for (const bool withResidual: { false, true }) {
+        const auto found = snrCache.constFind(stackCacheKey(withResidual));
+        if (found != snrCache.constEnd()) project.measures.append({ found.key(), found->white, found->black, found->residual });
+    }
+    for (const StackSource &source: project.sources) {
+        const auto found = snrCache.constFind(source.measureKey());
+        if (found != snrCache.constEnd()) project.measures.append({ found.key(), found->white, found->black, QVector<float>() });
+    }
     if (project.outputFile.isEmpty() && !project.sources.isEmpty()) {
         // Where the stack would go: beside the session, named after it
         project.outputFile = QFileInfo(fileName).absoluteDir().absoluteFilePath(QFileInfo(fileName).completeBaseName() + ".tbc");
@@ -2225,35 +2249,16 @@ void MainWindow::on_sourceSnrReady(const QString &id, quint64 generation, const 
     updatePlot();
 }
 
-// What a measure depends on: the file (its name, size and date), so that a file that was changed is measured again
-static QString fileStamp(const QString &reference)
-{
-    QString path;
-    qint32 track;
-    LdxCapture::split(reference, path, track);
-    const QFileInfo info(path);
-    return QStringLiteral("%1#%2|%3|%4").arg(info.absoluteFilePath()).arg(track).arg(info.size()).arg(info.lastModified().toMSecsSinceEpoch());
-}
-
 QString MainWindow::sourceCacheKey(const QString &id) const
 {
     const qint32 index = project.indexOfSource(id);
-    return index < 0 ? QString() : QStringLiteral("source|") + fileStamp(project.sources[index].reference());
+    return index < 0 ? QString() : project.sources[index].measureKey();
 }
 
 // The stack: the sources that are on, each with its file and where it begins on the timeline, and the options that change what is stacked
 QString MainWindow::stackCacheKey(bool withResidual) const
 {
-    QString key = withResidual ? QStringLiteral("stack+dropouts") : QStringLiteral("stack");
-    for (qint32 index = 0; index < project.sources.size(); index++) {
-        const StackSource &source = project.sources[index];
-        if (!source.enabled || !states.value(source.id).loaded) continue;
-        key += QStringLiteral("|%1@%2").arg(fileStamp(source.reference())).arg(effectiveOffset(index));
-    }
-    const StackSettings &stacking = project.stacking;
-    key += QStringLiteral("|%1,%2,%3,%4,%5,%6").arg(stacking.mode).arg(stacking.smartThreshold).arg(stacking.diffDod).arg(stacking.passthrough)
-               .arg(stacking.reverseFields).arg(totalFrames);
-    return key;
+    return project.stackMeasureKey(withResidual);
 }
 
 void MainWindow::storeInCache(const QString &key, const QVector<float> &white, const QVector<float> &black, const QVector<float> &residual)
@@ -2471,6 +2476,7 @@ void MainWindow::setZoom(double newZoom)
         zoomSpin->setValue(qRound(zoom * 100));
     }
     applyZoom();
+    if (scaleWindowWithZoom) resizeToImage();
 }
 
 // One step up or down the usual zooms, which are the ones that go through 100%

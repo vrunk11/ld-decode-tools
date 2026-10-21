@@ -12,6 +12,7 @@
 
 #include <QFileInfo>
 #include <QHash>
+#include <cmath>
 #include <limits>
 
 #include "ldxcapture.h"
@@ -154,6 +155,10 @@ bool StackedVideo::readMetadata(const QString &stackFile, LdDecodeMetaData &meta
     // The fields of the timeline: those of the first source that has the frame (with no dropouts, which the stack fills, and no VITS measurements, which are
     // those of the source and not of the stack), a padded one where none has
     const bool firstFirst = !session.stacking.reverseFields;
+    // (what the session says was measured of the stack, if it is good for these captures, offsets and options: the SNR is in the metadata of the stack)
+    const StackMeasure *measured = session.measureFor(session.stackMeasureKey(true));
+    if (!measured) measured = session.measureFor(session.stackMeasureKey(false));
+    const bool haveSnr = measured && measured->white.size() == total && measured->black.size() == total;
     QVector<LdDecodeMetaData::Field> timeline;
     timeline.reserve(total * 2);
     for (qint32 frame = 1; frame <= total; frame++) {
@@ -182,6 +187,13 @@ bool StackedVideo::readMetadata(const QString &stackFile, LdDecodeMetaData &meta
         for (LdDecodeMetaData::Field &field: pair) {
             field.dropOuts = DropOuts();
             field.vitsMetrics = LdDecodeMetaData::VitsMetrics();
+        }
+        if (haveSnr && (std::isfinite(measured->white[frame - 1]) || std::isfinite(measured->black[frame - 1]))) {
+            for (LdDecodeMetaData::Field &field: pair) {
+                field.vitsMetrics.inUse = true;
+                field.vitsMetrics.wSNR = std::isfinite(measured->white[frame - 1]) ? measured->white[frame - 1] : 0.0;
+                field.vitsMetrics.bPSNR = std::isfinite(measured->black[frame - 1]) ? measured->black[frame - 1] : 0.0;
+            }
         }
         timeline.append(firstFirst ? pair[0] : pair[1]);
         timeline.append(firstFirst ? pair[1] : pair[0]);

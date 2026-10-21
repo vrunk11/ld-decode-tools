@@ -14,6 +14,7 @@
 #include <QTemporaryDir>
 #include <cstdio>
 #include <cstdlib>
+#include <cmath>
 
 #include "ldxcapture.h"
 #include "tbcfiles.h"
@@ -437,6 +438,39 @@ int main(int argc, char *argv[])
             StackProject reread;
             CHECK(reread.load(sessionFile, error));
             CHECK(reread.sources.size() == 2 && !reread.sources[0].followMap && reread.sources[1].followMap);
+        }
+
+        // What was measured is kept in the session, and is the SNR in the metadata of the stack when it is good for these captures, offsets and options
+        {
+            StackProject measuredSession;
+            measuredSession.sources = { first, second };
+            StackMeasure measure;
+            measure.key = measuredSession.stackMeasureKey(false);
+            for (qint32 t = 1; t <= 13; t++) {
+                measure.white.append(t == 5 ? std::nanf("") : 30.0f + t);
+                measure.black.append(20.0f + t);
+                measure.residual.append(static_cast<float>(t));
+            }
+            measuredSession.measures = { measure };
+            CHECK(measuredSession.save(sessionFile, error));
+            StackProject back;
+            CHECK(back.load(sessionFile, error));
+            CHECK(back.measures.size() == 1 && back.measures[0].key == measure.key && back.measures[0].white.size() == 13);
+            CHECK(!std::isfinite(back.measures[0].white[4]) && std::fabs(back.measures[0].white[2] - 33.0f) < 0.01f && back.measures[0].residual[12] == 13.0f);
+            CHECK(back.measureFor(back.stackMeasureKey(false)) != nullptr && back.measureFor(back.stackMeasureKey(true)) == nullptr);
+            LdDecodeMetaData withSnr;
+            CHECK(StackedVideo::readMetadata(sessionFile, withSnr, error));
+            const LdDecodeMetaData::Field frame3 = withSnr.getField(withSnr.getFirstFieldNumber(3));
+            CHECK(frame3.vitsMetrics.inUse && std::fabs(frame3.vitsMetrics.wSNR - 33.0) < 0.01 && std::fabs(frame3.vitsMetrics.bPSNR - 23.0) < 0.01);
+            // (a frame that has only one of them has that one)
+            const LdDecodeMetaData::Field frame5 = withSnr.getField(withSnr.getFirstFieldNumber(5));
+            CHECK(frame5.vitsMetrics.inUse && frame5.vitsMetrics.wSNR == 0.0 && std::fabs(frame5.vitsMetrics.bPSNR - 25.0) < 0.01);
+            // Other offsets are other captures: the measure is not good for them, and there is no SNR
+            measuredSession.sources[1].offset = 3;
+            CHECK(measuredSession.save(sessionFile, error));
+            LdDecodeMetaData without;
+            CHECK(StackedVideo::readMetadata(sessionFile, without, error));
+            CHECK(!without.getField(without.getFirstFieldNumber(3)).vitsMetrics.inUse);
         }
     }
 

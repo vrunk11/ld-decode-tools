@@ -29,6 +29,8 @@ struct StackSource {
     // What the tools read for the source: reference(), or, by followMap, its mapping or the capture it is the mapping of (see the specification, section 13).
     // Nothing is made: a source that has no mapping is read as it is.
     QString resolvedReference() const;
+    // What a measure of this source is kept under (see StackMeasure): the capture that is read, by its name and size
+    QString measureKey() const;
 };
 
 // How the sources are stacked (the options of ld-disc-stacker)
@@ -39,6 +41,15 @@ struct StackSettings {
     bool passthrough = false;
     bool integrity = false;
     bool reverseFields = false;
+};
+
+// What was measured of a session, kept in the file so that it need not be measured again, and so that a tool can use it as metadata: a value for each frame, along the
+// timeline (for a source, along its own frames). key says what it was measured from: it is only good for the same captures, offsets and stacking options.
+// white and black are the SNR of the white flag and the black level in dB, residual the total length of the dropouts that the stack is left with (samples);
+// NaN is a frame where there is none.
+struct StackMeasure {
+    QString key;
+    QVector<float> white, black, residual;
 };
 
 // A stacking session: what the .stack file holds. The GUI saves and loads it, so that the work can
@@ -52,6 +63,7 @@ public:
     StackSettings stacking;
     QString outputFile;                    // absolute in memory
     QString metadataFormat = "db";         // db or json
+    QVector<StackMeasure> measures;        // what was measured (optional in the file)
 
     // What only the GUI uses
     bool chroma = false;
@@ -67,6 +79,12 @@ public:
     bool load(const QString &fileName, QString &error);
     // Write a session file (paths relative to it)
     bool save(const QString &fileName, QString &error) const;
+
+    // What the measures of the stack are kept under: the captures that are read, with their offsets, and the options that change what is stacked. The same for any
+    // tool, so that what one measured is good for another. withResidual: the measure that has the dropouts of the stack too.
+    QString stackMeasureKey(bool withResidual) const;
+    // The measure kept under a key, or null
+    const StackMeasure *measureFor(const QString &key) const;
 
     // An id that no source has yet
     QString newSourceId() const;

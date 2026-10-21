@@ -21,6 +21,10 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QSaveFile>
+#include <cmath>
+
+static QJsonArray measureArray(const QVector<float> &values);
+static QVector<float> measureValues(const QJsonArray &array);
 
 namespace {
 
@@ -137,6 +141,18 @@ bool StackProject::load(const QString &fileName, QString &error)
     loaded.showStack = view.contains("stack") ? view.value("stack").toBool(true) : (loaded.selected.isEmpty() || loaded.selected == "stack");
     if (loaded.selected == "stack") loaded.selected.clear();
 
+    // What was measured, if the session says
+    for (const QJsonValue &value: root.value("measures").toArray()) {
+        const QJsonObject object = value.toObject();
+        StackMeasure measure;
+        measure.key = object.value("key").toString();
+        if (measure.key.isEmpty()) continue;
+        measure.white = measureValues(object.value("white").toArray());
+        measure.black = measureValues(object.value("black").toArray());
+        measure.residual = measureValues(object.value("residual").toArray());
+        loaded.measures.append(measure);
+    }
+
     *this = loaded;
     return true;
 }
@@ -187,6 +203,18 @@ bool StackProject::save(const QString &fileName, QString &error) const
     root["stacking"] = stackingObject;
     root["output"] = outputObject;
     root["view"] = viewObject;
+    if (!measures.isEmpty()) {
+        QJsonArray measureList;
+        for (const StackMeasure &measure: measures) {
+            QJsonObject object;
+            object["key"] = measure.key;
+            if (!measure.white.isEmpty()) object["white"] = measureArray(measure.white);
+            if (!measure.black.isEmpty()) object["black"] = measureArray(measure.black);
+            if (!measure.residual.isEmpty()) object["residual"] = measureArray(measure.residual);
+            measureList.append(object);
+        }
+        root["measures"] = measureList;
+    }
 
     QSaveFile file(fileName);
     if (!file.open(QIODevice::WriteOnly)) {
@@ -237,6 +265,59 @@ QString StackSource::resolvedReference() const
     const QString ownMetadata = LdDecodeMetaData::findMetadataFile(name);
     if (metadataThere(ownMetadata) && own.read(ownMetadata) && own.getVideoParameters().isMapped) return name;
     return mapped;
+}
+
+// A capture by what tells it from another one, and that is the same on another machine: its name (and track) and its size
+static QString captureStamp(const QString &reference)
+{
+    QString path;
+    qint32 track;
+    LdxCapture::split(reference, path, track);
+    const QFileInfo info(path);
+    return QStringLiteral("%1#%2|%3").arg(info.fileName()).arg(track).arg(info.size());
+}
+
+QString StackSource::measureKey() const
+{
+    return QStringLiteral("source|") + captureStamp(resolvedReference());
+}
+
+QString StackProject::stackMeasureKey(bool withResidual) const
+{
+    QString key = withResidual ? QStringLiteral("stack+dropouts") : QStringLiteral("stack");
+    for (const StackSource &source: sources) {
+        if (!source.enabled) continue;
+        key += QStringLiteral("|%1@%2").arg(captureStamp(source.resolvedReference())).arg(source.offset);
+    }
+    key += QStringLiteral("|%1,%2,%3,%4,%5").arg(stacking.mode).arg(stacking.smartThreshold).arg(stacking.diffDod).arg(stacking.passthrough).arg(stacking.reverseFields);
+    return key;
+}
+
+const StackMeasure *StackProject::measureFor(const QString &key) const
+{
+    for (const StackMeasure &measure: measures) {
+        if (measure.key == key) return &measure;
+    }
+    return nullptr;
+}
+
+static QJsonArray measureArray(const QVector<float> &values)
+{
+    QJsonArray array;
+    for (const float value: values) {
+        // (two decimals are enough for dB and for lengths; a frame with none is null)
+        if (std::isfinite(value)) array.append(std::round(static_cast<double>(value) * 100.0) / 100.0);
+        else array.append(QJsonValue::Null);
+    }
+    return array;
+}
+
+static QVector<float> measureValues(const QJsonArray &array)
+{
+    QVector<float> values;
+    values.reserve(array.size());
+    for (const QJsonValue &value: array) values.append(value.isDouble() ? static_cast<float>(value.toDouble()) : std::nanf(""));
+    return values;
 }
 
 QString StackSource::reference() const

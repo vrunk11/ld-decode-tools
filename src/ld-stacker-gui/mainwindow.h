@@ -266,6 +266,7 @@ private:
     qint32 fieldIndex = 0;          // in field view, which field of the frame: 0 the first, 1 the second
     bool fitFirstSource = false;    // the next source to be loaded is the first one imported
     bool resizeOnFirstImport = true;    // View > Resize on first file import: the first source imported is shown at 100% and the window is resized to it
+    bool scaleWindowWithZoom = false;   // View > Scale window with zoom: the window is resized to the picture each time the zoom changes
     bool fitPicture = false;        // and its first picture is to be shown at its original size
     bool fitWindow = false;         // a session was opened: the window is to fit its picture at its own zoom
     QLabel *statusSources = nullptr;
