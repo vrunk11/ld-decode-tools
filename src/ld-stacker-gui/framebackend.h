@@ -20,6 +20,8 @@
 #include <atomic>
 #include <QJsonArray>
 #include <memory>
+#include <QHash>
+#include <QPointer>
 
 #include "lddecodemetadata.h"
 #include "discnumbering.h"
@@ -173,6 +175,11 @@ private:
         bool ok = false;
     };
 
+    // Read a source (in a thread of the pool: it uses no member of the backend); null, with info.error, when it cannot be used
+    static std::shared_ptr<Loaded> loadSource(const QString &id, const QString &file, bool reverseFields, SourceInfo &info);
+    void startLoad(const QString &id, const QString &file);
+    void finishLoad(const QString &id, const QString &file, bool reverseFields, quint64 token, const std::shared_ptr<Loaded> &loaded, const SourceInfo &info);
+
     // Frame number of a source for a frame of the stack, or -1 if the source has none there
     qint32 sourceFrame(Loaded &source, qint32 frame, qint32 offset);
     bool isPadded(Loaded &source, qint32 ownFrame);
@@ -214,6 +221,10 @@ private:
     void configureDecoders(LdDecodeMetaData::VideoParameters videoParameters);
 
     QMap<QString, std::shared_ptr<Loaded>> sources;
+    // The sources that are being read, with the number of the reading (a source removed meanwhile has none, and a source asked for again has a new one)
+    QHash<QString, quint64> pendingLoads;
+    quint64 loadCounter = 0;
+    bool currentReverse = false;
     // The handles on the files of the threads that measure the SNR of the stack (one map of source id to handle for each thread), for one job
     QVector<QMap<QString, std::shared_ptr<SourceVideo>>> snrReaders;
     quint64 snrReadersGeneration = 0;

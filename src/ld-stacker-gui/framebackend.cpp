@@ -21,6 +21,9 @@
 #include "ldxcapture.h"
 #include "vbidecoder.h"
 #include <QThread>
+#include <QThreadPool>
+#include <QRunnable>
+#include <QPointer>
 #include <atomic>
 #include <cmath>
 
@@ -51,9 +54,11 @@ FrameBackend::FrameBackend(QObject *parent)
     outputConfiguration.paddingAmount = 1;
 }
 
-void FrameBackend::addSource(const QString &id, const QString &file, bool reverseFields)
+// Read a source: its metadata, what they say of the video, and the file. It uses no member, so that several can be read at once, each in a thread of its own.
+// Null (and info.error says why) when the source cannot be used.
+std::shared_ptr<FrameBackend::Loaded> FrameBackend::loadSource(const QString &id, const QString &file, bool reverseFields, SourceInfo &info)
 {
-    SourceInfo info;
+    info = SourceInfo();
     info.id = id;
     info.file = file;
     info.cvbs = Cvbs::isDataFileName(StackProject::referenceFile(file));
@@ -65,16 +70,14 @@ void FrameBackend::addSource(const QString &id, const QString &file, bool revers
     info.metadataFile = metadataFile;
     if (metadataFile.isEmpty() || !loaded->metadata.read(metadataFile)) {
         info.error = tr("Could not load the metadata of %1").arg(QFileInfo(file).fileName());
-        emit sourceLoaded(info);
-        return;
+        return nullptr;
     }
 
     const LdDecodeMetaData::VideoParameters &videoParameters = loaded->metadata.getVideoParameters();
     loaded->video.setLenient(true);
     if (!loaded->video.open(file, videoParameters.fieldWidth * videoParameters.fieldHeight, videoParameters.fieldWidth)) {
         info.error = tr("Could not open %1").arg(QFileInfo(file).fileName());
-        emit sourceLoaded(info);
-        return;
+        return nullptr;
     }
     loaded->metadata.setIsFirstFieldFirst(!reverseFields);
     loaded->ok = true;
@@ -153,12 +156,50 @@ void FrameBackend::addSource(const QString &id, const QString &file, bool revers
 
     info.chapters = chapterNumbers.size();
     info.originDisc = StackedVideo::discOrigin(loaded->metadata);
-    sources.insert(id, loaded);
+    return loaded;
+}
+
+// A source is asked for: it is read in the background (the thread of the backend goes on with the pictures, and several sources are read together)
+void FrameBackend::addSource(const QString &id, const QString &file, bool reverseFields)
+{
+    currentReverse = reverseFields;
+    startLoad(id, file);
+}
+
+void FrameBackend::startLoad(const QString &id, const QString &file)
+{
+    const quint64 token = ++loadCounter;
+    pendingLoads.insert(id, token);
+    const bool reverse = currentReverse;
+    QPointer<FrameBackend> self(this);
+    QThreadPool::globalInstance()->start(QRunnable::create([self, id, file, reverse, token]() {
+        SourceInfo info;
+        std::shared_ptr<Loaded> loaded = loadSource(id, file, reverse, info);
+        if (!self) return;
+        QMetaObject::invokeMethod(self.data(), [self, id, file, reverse, token, info, loaded]() {
+            if (self) self->finishLoad(id, file, reverse, token, loaded, info);
+        }, Qt::QueuedConnection);
+    }));
+}
+
+// A source has been read, in the thread of the backend again
+void FrameBackend::finishLoad(const QString &id, const QString &file, bool reverseFields, quint64 token, const std::shared_ptr<Loaded> &loaded, const SourceInfo &info)
+{
+    // (removed, or asked for again, while it was being read)
+    if (pendingLoads.value(id, 0) != token) return;
+    pendingLoads.remove(id);
+    // (the order of the fields was changed meanwhile: what was read with the other order is read again)
+    if (loaded && reverseFields != currentReverse) {
+        startLoad(id, file);
+        return;
+    }
+    if (loaded) sources.insert(id, loaded);
     emit sourceLoaded(info);
 }
 
 void FrameBackend::removeSource(const QString &id)
 {
+    pendingLoads.remove(id);
     // (the handles of the threads that measure the SNR are on the files too: a file that is open cannot be replaced on Windows)
     snrReaders.clear();
     snrReadersGeneration = 0;
@@ -169,6 +210,7 @@ void FrameBackend::removeSource(const QString &id)
 
 void FrameBackend::setReverseFields(bool reverseFields)
 {
+    currentReverse = reverseFields;
     for (const std::shared_ptr<Loaded> &source: sources) source->metadata.setIsFirstFieldFirst(!reverseFields);
 }
 

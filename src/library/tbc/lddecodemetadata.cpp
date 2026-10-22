@@ -31,6 +31,10 @@
 #include <QDebug>
 #include <QMap>
 #include <QMultiMap>
+#include <QHash>
+#include <QSqlRecord>
+#include <algorithm>
+#include <array>
 #include <QVariant>
 #include "tbc/logging.h"
 
@@ -1518,118 +1522,164 @@ void LdDecodeMetaData::readFields(SqliteReader &reader, int captureId)
     reader.readAllFieldClosedCaptions(captureId, ccQuery);
     reader.readAllFieldDropouts(captureId, dropoutsQuery);
 
-    // Create lookup maps for fast field data retrieval
-    QMap<int, QPair<double, double>> vitsMap;
-    QMap<int, QVector<int>> vbiMap, vitcMap, ccMap;
-    QMultiMap<int, QVector<int>> dropoutsMap;
+    // Create lookup maps for fast field data retrieval. The queries give the columns in the order of their SELECT (the field first), and are
+    // read by the number of the column: a capture of an hour has millions of rows, and a column found by its name costs more than the row.
+    QHash<int, QPair<double, double>> vitsMap;
+    QHash<int, std::array<qint32, 3>> vbiMap;
+    QHash<int, std::array<qint32, 8>> vitcMap;
+    QHash<int, std::array<qint32, 2>> ccMap;
+    QHash<int, DropOuts> dropoutsMap;
 
     // Populate VITS metrics map
     while (vitsQuery.next()) {
-        int fieldId = vitsQuery.value("field_id").toInt();
-        double wSnr = vitsQuery.value("w_snr").toDouble();
-        double bPsnr = vitsQuery.value("b_psnr").toDouble();
-        vitsMap[fieldId] = qMakePair(wSnr, bPsnr);
+        vitsMap[vitsQuery.value(0).toInt()] = qMakePair(vitsQuery.value(1).toDouble(), vitsQuery.value(2).toDouble());
     }
 
     // Populate VBI map
     while (vbiQuery.next()) {
-        int fieldId = vbiQuery.value("field_id").toInt();
-        QVector<int> vbiData = {vbiQuery.value("vbi0").toInt(), 
-                               vbiQuery.value("vbi1").toInt(), 
-                               vbiQuery.value("vbi2").toInt()};
-        vbiMap[fieldId] = vbiData;
+        vbiMap[vbiQuery.value(0).toInt()] = { vbiQuery.value(1).toInt(), vbiQuery.value(2).toInt(), vbiQuery.value(3).toInt() };
     }
 
     // Populate VITC map
     while (vitcQuery.next()) {
-        int fieldId = vitcQuery.value("field_id").toInt();
-        QVector<int> vitcData;
-        for (int i = 0; i < 8; i++) {
-            vitcData.append(vitcQuery.value(QString("vitc%1").arg(i)).toInt());
-        }
-        vitcMap[fieldId] = vitcData;
+        std::array<qint32, 8> vitcData;
+        for (int i = 0; i < 8; i++) vitcData[i] = vitcQuery.value(1 + i).toInt();
+        vitcMap[vitcQuery.value(0).toInt()] = vitcData;
     }
 
     // Populate closed captions map
     while (ccQuery.next()) {
-        int fieldId = ccQuery.value("field_id").toInt();
-        QVector<int> ccData = {ccQuery.value("data0").toInt(), 
-                              ccQuery.value("data1").toInt()};
-        ccMap[fieldId] = ccData;
+        ccMap[ccQuery.value(0).toInt()] = { ccQuery.value(1).toInt(), ccQuery.value(2).toInt() };
     }
 
-    // Populate dropouts map
-    while (dropoutsQuery.next()) {
-        int fieldId = dropoutsQuery.value("field_id").toInt();
-        QVector<int> dropoutData = {dropoutsQuery.value("startx").toInt(),
-                                   dropoutsQuery.value("endx").toInt(),
-                                   dropoutsQuery.value("field_line").toInt()};
-        dropoutsMap.insert(fieldId, dropoutData);
+    // Populate dropouts map: the rows of a field come together (by field, then by start). The dropouts of a field are kept in the reverse of the order of
+    // the rows, which is what they have always been in when read from SQLite.
+    {
+        int currentField = 0;
+        bool haveField = false;
+        QVector<qint32> startx, endx, fieldLine;
+        const auto finishField = [&]() {
+            if (!haveField) return;
+            std::reverse(startx.begin(), startx.end());
+            std::reverse(endx.begin(), endx.end());
+            std::reverse(fieldLine.begin(), fieldLine.end());
+            dropoutsMap.insert(currentField, DropOuts(startx, endx, fieldLine));
+            startx = QVector<qint32>();
+            endx = QVector<qint32>();
+            fieldLine = QVector<qint32>();
+        };
+        while (dropoutsQuery.next()) {
+            const int fieldId = dropoutsQuery.value(0).toInt();
+            if (!haveField || fieldId != currentField) {
+                finishField();
+                currentField = fieldId;
+                haveField = true;
+            }
+            startx.append(dropoutsQuery.value(1).toInt());
+            endx.append(dropoutsQuery.value(2).toInt());
+            fieldLine.append(dropoutsQuery.value(3).toInt());
+        }
+        finishField();
     }
+
+    // The columns of the main field records, by number
+    const QSqlRecord record = fieldsQuery.record();
+    const int fieldIdColumn = record.indexOf("field_id");
+    const int isFirstFieldColumn = record.indexOf("is_first_field");
+    const int syncConfColumn = record.indexOf("sync_conf");
+    const int medianBurstIreColumn = record.indexOf("median_burst_ire");
+    const int fieldPhaseIdColumn = record.indexOf("field_phase_id");
+    const int audioSamplesColumn = record.indexOf("audio_samples");
+    const int diskLocColumn = record.indexOf("disk_loc");
+    const int fileLocColumn = record.indexOf("file_loc");
+    const int decodeFaultsColumn = record.indexOf("decode_faults");
+    const int efmTValuesColumn = record.indexOf("efm_t_values");
+    const int padColumn = record.indexOf("pad");
+    const int ntscFmCodeDataValidColumn = record.indexOf("ntsc_is_fm_code_data_valid");
+    const int ntscFmCodeDataColumn = record.indexOf("ntsc_fm_code_data");
+    const int ntscFieldFlagColumn = record.indexOf("ntsc_field_flag");
+    const int ntscVideoIdDataValidColumn = record.indexOf("ntsc_is_video_id_data_valid");
+    const int ntscVideoIdDataColumn = record.indexOf("ntsc_video_id_data");
+    const int ntscWhiteFlagColumn = record.indexOf("ntsc_white_flag");
+
+    // A NULL is the "missing" of the field (-1 for most, as in the files of ld-decode), not a 0
+    const auto intOr = [&](int column, int defaultValue) {
+        const QVariant value = fieldsQuery.value(column);
+        return value.isNull() ? defaultValue : value.toInt();
+    };
+    const auto doubleOr = [&](int column, double defaultValue) {
+        const QVariant value = fieldsQuery.value(column);
+        return value.isNull() ? defaultValue : value.toDouble();
+    };
+    const auto boolOr = [&](int column, bool defaultValue) {
+        const QVariant value = fieldsQuery.value(column);
+        return value.isNull() ? defaultValue : value.toInt() == 1;
+    };
+
+    fields.reserve(qMax<qint32>(videoParameters.numberOfSequentialFields, 0));
 
     // Process main field records and apply cached data
     while (fieldsQuery.next()) {
         Field field;
-        
+
         // Note: field_id in database is 0-indexed, but seqNo should be 1-indexed
-        int fieldId = fieldsQuery.value("field_id").toInt();
+        const int fieldId = fieldsQuery.value(fieldIdColumn).toInt();
         field.seqNo = fieldId + 1;
-        field.isFirstField = SqliteValue::toBoolOrDefault(fieldsQuery, "is_first_field");
-        field.syncConf = SqliteValue::toIntOrDefault(fieldsQuery, "sync_conf", 0);
-        field.medianBurstIRE = SqliteValue::toDoubleOrDefault(fieldsQuery, "median_burst_ire", 0.0);
-        field.fieldPhaseID = SqliteValue::toIntOrDefault(fieldsQuery, "field_phase_id");
-        field.audioSamples = SqliteValue::toIntOrDefault(fieldsQuery, "audio_samples");
-        field.diskLoc = SqliteValue::toDoubleOrDefault(fieldsQuery, "disk_loc");
-        field.fileLoc = SqliteValue::toLongLongOrDefault(fieldsQuery, "file_loc");
-        field.decodeFaults = SqliteValue::toIntOrDefault(fieldsQuery, "decode_faults");
-        field.efmTValues = SqliteValue::toIntOrDefault(fieldsQuery, "efm_t_values");
-        field.pad = SqliteValue::toBoolOrDefault(fieldsQuery, "pad");
+        field.isFirstField = boolOr(isFirstFieldColumn, false);
+        field.syncConf = intOr(syncConfColumn, 0);
+        field.medianBurstIRE = doubleOr(medianBurstIreColumn, 0.0);
+        field.fieldPhaseID = intOr(fieldPhaseIdColumn, -1);
+        field.audioSamples = intOr(audioSamplesColumn, -1);
+        field.diskLoc = doubleOr(diskLocColumn, -1.0);
+        {
+            const QVariant value = fieldsQuery.value(fileLocColumn);
+            field.fileLoc = value.isNull() ? -1 : value.toLongLong();
+        }
+        field.decodeFaults = intOr(decodeFaultsColumn, -1);
+        field.efmTValues = intOr(efmTValuesColumn, -1);
+        field.pad = boolOr(padColumn, false);
 
         // Read NTSC data from the main field record
-        field.ntsc.isFmCodeDataValid = fieldsQuery.value("ntsc_is_fm_code_data_valid").toInt() == 1;
-        field.ntsc.fmCodeData = fieldsQuery.value("ntsc_fm_code_data").toInt();
-        field.ntsc.fieldFlag = fieldsQuery.value("ntsc_field_flag").toInt() == 1;
-        field.ntsc.isVideoIdDataValid = fieldsQuery.value("ntsc_is_video_id_data_valid").toInt() == 1;
-        field.ntsc.videoIdData = fieldsQuery.value("ntsc_video_id_data").toInt();
-        field.ntsc.whiteFlag = fieldsQuery.value("ntsc_white_flag").toInt() == 1;
+        field.ntsc.isFmCodeDataValid = fieldsQuery.value(ntscFmCodeDataValidColumn).toInt() == 1;
+        field.ntsc.fmCodeData = fieldsQuery.value(ntscFmCodeDataColumn).toInt();
+        field.ntsc.fieldFlag = fieldsQuery.value(ntscFieldFlagColumn).toInt() == 1;
+        field.ntsc.isVideoIdDataValid = fieldsQuery.value(ntscVideoIdDataValidColumn).toInt() == 1;
+        field.ntsc.videoIdData = fieldsQuery.value(ntscVideoIdDataColumn).toInt();
+        field.ntsc.whiteFlag = fieldsQuery.value(ntscWhiteFlagColumn).toInt() == 1;
         field.ntsc.inUse = field.ntsc.isFmCodeDataValid || field.ntsc.isVideoIdDataValid;
 
         // Apply cached optional field data
-        if (vitsMap.contains(fieldId)) {
-            field.vitsMetrics.wSNR = vitsMap[fieldId].first;
-            field.vitsMetrics.bPSNR = vitsMap[fieldId].second;
+        const auto vits = vitsMap.constFind(fieldId);
+        if (vits != vitsMap.constEnd()) {
+            field.vitsMetrics.wSNR = vits->first;
+            field.vitsMetrics.bPSNR = vits->second;
             field.vitsMetrics.inUse = true;
         }
 
-        if (vbiMap.contains(fieldId)) {
-            QVector<int> vbiData = vbiMap[fieldId];
-            field.vbi.vbiData[0] = vbiData[0];
-            field.vbi.vbiData[1] = vbiData[1]; 
-            field.vbi.vbiData[2] = vbiData[2];
+        const auto vbi = vbiMap.constFind(fieldId);
+        if (vbi != vbiMap.constEnd()) {
+            field.vbi.vbiData[0] = (*vbi)[0];
+            field.vbi.vbiData[1] = (*vbi)[1];
+            field.vbi.vbiData[2] = (*vbi)[2];
             field.vbi.inUse = true;
         }
 
-        if (vitcMap.contains(fieldId)) {
-            QVector<int> vitcData = vitcMap[fieldId];
-            for (int i = 0; i < 8 && i < vitcData.size(); i++) {
-                field.vitc.vitcData[i] = vitcData[i];
-            }
+        const auto vitc = vitcMap.constFind(fieldId);
+        if (vitc != vitcMap.constEnd()) {
+            for (int i = 0; i < 8; i++) field.vitc.vitcData[i] = (*vitc)[i];
             field.vitc.inUse = true;
         }
 
-        if (ccMap.contains(fieldId)) {
-            QVector<int> ccData = ccMap[fieldId];
-            field.closedCaption.data0 = ccData[0];
-            field.closedCaption.data1 = ccData[1];
+        const auto cc = ccMap.constFind(fieldId);
+        if (cc != ccMap.constEnd()) {
+            field.closedCaption.data0 = (*cc)[0];
+            field.closedCaption.data1 = (*cc)[1];
             field.closedCaption.inUse = true;
         }
 
-        if (dropoutsMap.contains(fieldId)) {
-            field.dropOuts.clear();
-            auto dropouts = dropoutsMap.values(fieldId);
-            for (const auto& dropout : dropouts) {
-                field.dropOuts.append(dropout[0], dropout[1], dropout[2]);
-            }
+        const auto dropouts = dropoutsMap.constFind(fieldId);
+        if (dropouts != dropoutsMap.constEnd()) {
+            field.dropOuts = *dropouts;
         }
 
         fields.push_back(field);

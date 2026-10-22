@@ -12,6 +12,8 @@
 #include <QFile>
 #include <QTemporaryDir>
 #include <QVector>
+#include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
@@ -554,6 +556,98 @@ static void testWords()
     }
 }
 
+// The phase IDs of the fields of a file, and of the same fields given as TBC samples: frames of random burst (a rising or a falling one at random,
+// some absent) and noise, for each video system. The checksums of what the first version of the measure gave are those of the test: a faster measure
+// (reading the lines that it needs, in several threads) has to give the same IDs.
+static quint64 phaseChecksum(const QVector<qint32> &ids)
+{
+    quint64 sum = 1469598103934665603ULL;
+    for (qint32 id: ids) sum = (sum ^ static_cast<quint64>(id + 2)) * 1099511628211ULL;
+    return sum;
+}
+
+static void testPhaseIDs(const QString &directory)
+{
+    std::cerr << "Testing the phase IDs of fields\n";
+
+    struct Case { VideoSystem system; quint64 expected; };
+    for (const Case &testCase: { Case{ NTSC, 15024710925806840341ULL }, Case{ PAL, 12649747838196231000ULL }, Case{ PAL_M, 13531806909005407734ULL } }) {
+        const VideoSystem system = testCase.system;
+        const Cvbs::Geometry geometry = Cvbs::geometry(system);
+        const qint32 frames = 150;
+        const qint32 burstStart = system == NTSC ? 72 : 98;
+        const double blanking = Cvbs::standardLevels(system).blanking;
+        const Cvbs::SampleConverter converter(Cvbs::SampleEncoding::U10_4FSC, system);
+
+        quint32 seed = 12345 + static_cast<quint32>(system);
+        const auto random = [&seed]() { seed = seed * 1664525u + 1013904223u; return seed >> 8; };
+
+        QVector<qint16> words(static_cast<qsizetype>(frames) * geometry.frameSamples);
+        for (qint32 frame = 0; frame < frames; frame++) {
+            qint16 *samples = words.data() + static_cast<qsizetype>(frame) * geometry.frameSamples;
+            const qint32 frameLines = geometry.field1Lines + geometry.field2Lines;
+            for (qint32 line = 0; line < frameLines; line++) {
+                const qint64 lineStart = geometry.lineOffset(line);
+                const double amplitude = (random() % 4 == 0) ? 0.0 : 8.0 + (random() % 120);
+                const qint32 phase = static_cast<qint32>(random() % 4);
+                for (qint32 n = 0; n < geometry.lineWidth; n++) {
+                    double value = blanking + (static_cast<double>(random() % 11) - 5.0);
+                    if (n >= burstStart - 4 && n < burstStart + 50) {
+                        static const double cosine[4] = { 1.0, 0.0, -1.0, 0.0 };
+                        value += amplitude * cosine[(lineStart + n + phase) % 4];
+                    }
+                    samples[lineStart + n] = static_cast<qint16>(std::max(8.0, std::min(1000.0, value)));
+                }
+            }
+        }
+
+        const QString fileName = directory + "/phases.cvbs";
+        {
+            QFile file(fileName);
+            CHECK(file.open(QIODevice::WriteOnly));
+            CHECK(file.write(reinterpret_cast<const char *>(words.constData()), words.size() * 2) == words.size() * 2);
+        }
+
+        QVector<qint32> fromFile(frames * 2, -3);
+        CHECK(Cvbs::measureFieldPhaseIDs(fileName, system, Cvbs::SampleEncoding::U10_4FSC, false, frames,
+                                         [&](qint32 field, qint32 id) { fromFile[field] = id; }));
+
+        QVector<qint32> fromSamples;
+        for (qint32 frame = 0; frame < frames; frame++) {
+            const qint16 *samples = words.constData() + static_cast<qsizetype>(frame) * geometry.frameSamples;
+            for (qint32 field = 0; field < 2; field++) {
+                const qint32 firstLine = field == 0 ? 0 : geometry.field1Lines;
+                QVector<quint16> tbc(40 * geometry.lineWidth);
+                for (qint32 i = 0; i < tbc.size(); i++) tbc[i] = converter.toTbc(samples[geometry.lineOffset(firstLine) + i]);
+                fromSamples.append(Cvbs::measureFieldPhaseID(tbc.constData(), system, field == 0));
+            }
+        }
+
+        CHECK(fromFile == fromSamples);
+        qint32 measured = 0;
+        for (qint32 id: fromFile) measured += id >= 1 ? 1 : 0;
+        std::cerr << "  system " << system << ": " << measured << " of " << fromFile.size() << " fields measured, checksum " << phaseChecksum(fromFile) << "\n";
+        CHECK(measured > frames / 2);
+        CHECK(phaseChecksum(fromFile) == testCase.expected);
+
+        // A file that stops: the fields before it are measured, and the call fails
+        {
+            QFile file(fileName);
+            CHECK(file.open(QIODevice::ReadWrite));
+            file.resize(static_cast<qint64>(geometry.frameSamples) * 2 * 100 + geometry.lineOffset(geometry.field1Lines) * 2 + 1000);
+        }
+        QVector<qint32> truncated(frames * 2, -3);
+        CHECK(!Cvbs::measureFieldPhaseIDs(fileName, system, Cvbs::SampleEncoding::U10_4FSC, false, frames,
+                                          [&](qint32 field, qint32 id) { truncated[field] = id; }));
+        // (the first field of the frame it stops in is whole in the file, the second is not)
+        for (qint32 field = 0; field < 201; field++) CHECK(truncated[field] == fromFile[field]);
+        CHECK(truncated[201] == -3);
+        CHECK(truncated[202] == -3);
+        CHECK(!Cvbs::measureFieldPhaseIDs(directory + "/no-such-file.cvbs", system, Cvbs::SampleEncoding::U10_4FSC, false, 1, [](qint32, qint32) {}));
+    }
+}
+
+
 int main(int argc, char *argv[])
 {
     QCoreApplication app(argc, argv);
@@ -571,6 +665,7 @@ int main(int argc, char *argv[])
     testFileMetadata(directory.path());
     testAudio(directory.path());
     testPhaseGaps();
+    testPhaseIDs(directory.path());
     testStreamReader(directory.path());
 
     std::cerr << "Tests complete\n";

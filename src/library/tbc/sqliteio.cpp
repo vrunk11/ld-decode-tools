@@ -317,6 +317,7 @@ bool SqliteReader::readPcmAudioParameters(int captureId, int &bits, bool &isSign
 bool SqliteReader::readFields(int captureId, QSqlQuery &fieldsQuery)
 {
     fieldsQuery = QSqlQuery(db);
+    fieldsQuery.setForwardOnly(true);   // (millions of rows: not kept in memory)
     fieldsQuery.prepare("SELECT field_id, audio_samples, decode_faults, disk_loc, "
                        "efm_t_values, field_phase_id, file_loc, is_first_field, "
                        "median_burst_ire, pad, sync_conf, ntsc_is_fm_code_data_valid, "
@@ -419,6 +420,7 @@ bool SqliteReader::readFieldDropouts(int captureId, int fieldId, QSqlQuery &drop
 bool SqliteReader::readAllFieldVitsMetrics(int captureId, QSqlQuery &vitsQuery)
 {
     vitsQuery = QSqlQuery(db);
+    vitsQuery.setForwardOnly(true);   // (millions of rows: not kept in memory)
     vitsQuery.prepare("SELECT field_id, w_snr, b_psnr FROM vits_metrics "
                      "WHERE capture_id = ? ORDER BY field_id");
     vitsQuery.addBindValue(captureId);
@@ -428,6 +430,7 @@ bool SqliteReader::readAllFieldVitsMetrics(int captureId, QSqlQuery &vitsQuery)
 bool SqliteReader::readAllFieldVbi(int captureId, QSqlQuery &vbiQuery)
 {
     vbiQuery = QSqlQuery(db);
+    vbiQuery.setForwardOnly(true);   // (millions of rows: not kept in memory)
     vbiQuery.prepare("SELECT field_id, vbi0, vbi1, vbi2 FROM vbi "
                     "WHERE capture_id = ? ORDER BY field_id");
     vbiQuery.addBindValue(captureId);
@@ -437,6 +440,7 @@ bool SqliteReader::readAllFieldVbi(int captureId, QSqlQuery &vbiQuery)
 bool SqliteReader::readAllFieldVitc(int captureId, QSqlQuery &vitcQuery)
 {
     vitcQuery = QSqlQuery(db);
+    vitcQuery.setForwardOnly(true);   // (millions of rows: not kept in memory)
     vitcQuery.prepare("SELECT field_id, vitc0, vitc1, vitc2, vitc3, vitc4, vitc5, vitc6, vitc7 FROM vitc "
                      "WHERE capture_id = ? ORDER BY field_id");
     vitcQuery.addBindValue(captureId);
@@ -446,6 +450,7 @@ bool SqliteReader::readAllFieldVitc(int captureId, QSqlQuery &vitcQuery)
 bool SqliteReader::readAllFieldClosedCaptions(int captureId, QSqlQuery &ccQuery)
 {
     ccQuery = QSqlQuery(db);
+    ccQuery.setForwardOnly(true);   // (millions of rows: not kept in memory)
     ccQuery.prepare("SELECT field_id, data0, data1 FROM closed_caption "
                    "WHERE capture_id = ? ORDER BY field_id");
     ccQuery.addBindValue(captureId);
@@ -455,6 +460,7 @@ bool SqliteReader::readAllFieldClosedCaptions(int captureId, QSqlQuery &ccQuery)
 bool SqliteReader::readAllFieldDropouts(int captureId, QSqlQuery &dropoutsQuery)
 {
     dropoutsQuery = QSqlQuery(db);
+    dropoutsQuery.setForwardOnly(true);   // (millions of rows: not kept in memory)
     dropoutsQuery.prepare("SELECT field_id, startx, endx, field_line FROM drop_outs "
                          "WHERE capture_id = ? ORDER BY field_id, startx");
     dropoutsQuery.addBindValue(captureId);

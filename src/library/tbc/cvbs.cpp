@@ -12,6 +12,7 @@
 
 #include <QAtomicInt>
 #include <QFile>
+#include <QThread>
 #include <QFileInfo>
 #include <QSqlDatabase>
 #include <QSqlError>
@@ -20,6 +21,8 @@
 #include <QVariant>
 #include <QDebug>
 #include <algorithm>
+#include <atomic>
+#include <limits>
 #include <cmath>
 
 namespace Cvbs {
@@ -588,6 +591,41 @@ constexpr qint32 BURST_SAMPLES = 40;
 // Below this amplitude (10-bit units) the burst is considered absent
 constexpr double MIN_BURST_AMPLITUDE = 20.0;
 
+// The samples that the phase of a field is measured from: BURST_SAMPLES from burstStart on each of some lines of the field (NTSC: the even lines from 8 to
+// 38; PAL: lines 5, 6, 10, 14, 18 and 19). Only these are read and converted, not the 40 lines.
+struct PhaseSamples {
+    qint32 burstStart;
+    qint32 firstLine;
+    qint32 lastLine;
+    QVector<qint32> lines;
+};
+
+PhaseSamples phaseSamples(VideoSystem system)
+{
+    PhaseSamples samples;
+    // (the burst of PAL-M, a 525-line system, starts where that of NTSC does, and its lines are those of PAL)
+    samples.burstStart = system == PAL ? 98 : 72;
+    if (system == NTSC) {
+        for (qint32 line = 8; line < PHASE_LINES; line += 2) samples.lines.append(line);
+    } else {
+        samples.lines = { 5, 6, 10, 14, 18, 19 };
+    }
+    samples.firstLine = samples.lines.first();
+    samples.lastLine = samples.lines.last();
+    return samples;
+}
+
+// Fill region (the lines of a field, line by line, as PhaseMeter reads them) with the 10-bit values of the burst samples of the lines it looks at, from the words
+// of the lines firstLine to lastLine of the field (the first of them is words[0])
+template <typename Convert>
+void fillPhaseRegion(const PhaseSamples &samples, qint32 lineWidth, const Convert &convert, double *region)
+{
+    for (const qint32 line: samples.lines) {
+        const qint64 start = static_cast<qint64>(line) * lineWidth + samples.burstStart;
+        for (qint32 n = 0; n < BURST_SAMPLES; n++) region[start + n] = convert(start - static_cast<qint64>(samples.firstLine) * lineWidth + n);
+    }
+}
+
 // Measures colour burst phase on lines of a frame, following decode-orc's
 // colour frame phase observer, which mirrors ld-decode's own measurements
 class PhaseMeter
@@ -595,7 +633,7 @@ class PhaseMeter
 public:
     PhaseMeter(VideoSystem _system, double _blanking)
         : system(_system), geometry(Cvbs::geometry(_system)), blanking(_blanking),
-          burstStart(_system == PAL ? 98 : 72)
+          burstStart(phaseSamples(_system).burstStart)
     {
     }
 
@@ -704,38 +742,83 @@ private:
 bool measureFieldPhaseIDs(const QString &dataFileName, VideoSystem system, SampleEncoding encoding, bool isChroma,
                           qint32 numberOfFrames, const std::function<void(qint32, qint32)> &setPhaseID)
 {
-    QFile file(dataFileName);
-    if (!file.open(QIODevice::ReadOnly)) {
-        qWarning().noquote() << "Cannot read the colour burst from" << dataFileName;
-        return false;
+    {
+        QFile probe(dataFileName);
+        if (!probe.open(QIODevice::ReadOnly)) {
+            qWarning().noquote() << "Cannot read the colour burst from" << dataFileName;
+            return false;
+        }
     }
 
     const Geometry frame = geometry(system);
     const SampleConverter converter(encoding, system);
     const double zero = isChroma ? 512.0 : standardLevels(system).blanking;
     const PhaseMeter meter(system, zero);
+    const PhaseSamples samples = phaseSamples(system);
     const qint64 frameBytes = frame.frameSamples * 2;
     const qint32 regionSamples = PHASE_LINES * frame.lineWidth;
+    const qint32 readSamples = (samples.lastLine - samples.firstLine + 1) * frame.lineWidth;
 
-    QVector<qint16> raw(regionSamples);
-    QVector<double> region(regionSamples);
+    // The ID of each field, measured by several threads, each with a handle of its own on the file, a block of frames at a time (the file of a capture
+    // of an hour is tens of gigabytes: the bursts are read in a small part of each frame, and waiting for the disc is most of the time)
+    QVector<qint32> phaseIDs(numberOfFrames > 0 ? numberOfFrames * 2 : 0, -1);
+    constexpr qint32 BLOCK_FRAMES = 64;
+    std::atomic<qint32> nextFrame{0};
+    // The first field (0-based) that could not be read; the fields before it are given
+    std::atomic<qint64> failedField{std::numeric_limits<qint64>::max()};
 
-    for (qint32 frameNumber = 0; frameNumber < numberOfFrames; frameNumber++) {
-        for (qint32 field = 0; field < 2; field++) {
-            const qint32 firstFrameLine = field == 0 ? 0 : frame.field1Lines;
-            const qint64 position = frameBytes * frameNumber + frame.lineOffset(firstFrameLine) * 2;
-            if (!file.seek(position)
-                || file.read(reinterpret_cast<char *>(raw.data()), regionSamples * 2) != regionSamples * 2) {
-                return false;
-            }
-
-            // The 10-bit domain of the encoding, as decode-orc measures in
-            for (qint32 i = 0; i < regionSamples; i++) region[i] = converter.toTbc(raw[i]) / 64.0;
-
-            setPhaseID(frameNumber * 2 + field, meter.phaseID(region.constData(), firstFrameLine, field == 0));
+    const auto work = [&]() {
+        QFile file(dataFileName);
+        if (!file.open(QIODevice::ReadOnly)) {
+            qint64 expected = failedField.load();
+            while (expected > 0 && !failedField.compare_exchange_weak(expected, 0)) {}
+            return;
         }
+        QVector<qint16> raw(readSamples);
+        QVector<double> region(regionSamples, 0.0);
+
+        for (;;) {
+            const qint32 start = nextFrame.fetch_add(BLOCK_FRAMES);
+            if (start >= numberOfFrames) return;
+            const qint32 end = std::min(start + BLOCK_FRAMES, numberOfFrames);
+            for (qint32 frameNumber = start; frameNumber < end; frameNumber++) {
+                for (qint32 field = 0; field < 2; field++) {
+                    const qint64 index = static_cast<qint64>(frameNumber) * 2 + field;
+                    // (a field after one that could not be read is not wanted)
+                    if (index > failedField.load()) return;
+                    const qint32 firstFrameLine = field == 0 ? 0 : frame.field1Lines;
+                    const qint64 position = frameBytes * frameNumber + (frame.lineOffset(firstFrameLine) + static_cast<qint64>(samples.firstLine) * frame.lineWidth) * 2;
+                    if (!file.seek(position) || file.read(reinterpret_cast<char *>(raw.data()), readSamples * 2) != readSamples * 2) {
+                        qint64 expected = failedField.load();
+                        while (expected > index && !failedField.compare_exchange_weak(expected, index)) {}
+                        return;
+                    }
+
+                    // The 10-bit domain of the encoding, as decode-orc measures in
+                    fillPhaseRegion(samples, frame.lineWidth, [&](qint64 i) { return converter.toTbc(raw[static_cast<qsizetype>(i)]) / 64.0; }, region.data());
+                    phaseIDs[index] = meter.phaseID(region.constData(), firstFrameLine, field == 0);
+                }
+            }
+        }
+    };
+
+    const qint32 threads = qMax(1, qMin(QThread::idealThreadCount(), qMin<qint32>(4, numberOfFrames / BLOCK_FRAMES)));
+    QVector<QThread *> workers;
+    for (qint32 i = 1; i < threads; i++) {
+        QThread *worker = QThread::create(work);
+        worker->start();
+        workers.append(worker);
     }
-    return true;
+    work();
+    for (QThread *worker: workers) {
+        worker->wait();
+        delete worker;
+    }
+
+    const qint64 failed = failedField.load();
+    const qint64 given = std::min<qint64>(failed, phaseIDs.size());
+    for (qint64 i = 0; i < given; i++) setPhaseID(static_cast<qint32>(i), phaseIDs[static_cast<qsizetype>(i)]);
+    return failed == std::numeric_limits<qint64>::max();
 }
 
 void fillPhaseGaps(QVector<qint32> &phaseIDs, qint32 modulus, qint32 anchorIndex, qint32 anchorPhase)
@@ -793,9 +876,10 @@ qint32 measureFieldPhaseID(const quint16 *field, VideoSystem system, bool isFirs
     const Geometry frame = geometry(system);
     const PhaseMeter meter(system, standardLevels(system).blanking);
 
-    // The 10-bit domain, as decode-orc measures in
-    QVector<double> region(PHASE_LINES * frame.lineWidth);
-    for (qint32 i = 0; i < region.size(); i++) region[i] = field[i] / 64.0;
+    // The 10-bit domain, as decode-orc measures in (the samples that are looked at)
+    const PhaseSamples samples = phaseSamples(system);
+    QVector<double> region(PHASE_LINES * frame.lineWidth, 0.0);
+    fillPhaseRegion(samples, frame.lineWidth, [&](qint64 i) { return field[i + static_cast<qint64>(samples.firstLine) * frame.lineWidth] / 64.0; }, region.data());
 
     return meter.phaseID(region.constData(), isFirstField ? 0 : frame.field1Lines, isFirstField);
 }
