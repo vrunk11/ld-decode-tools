@@ -15,6 +15,7 @@
 #include <QComboBox>
 #include <QColor>
 #include <QLabel>
+#include <QPixmap>
 #include <QString>
 #include <QVector>
 #include <QWidget>
@@ -54,6 +55,7 @@ signals:
 
 protected:
     void paintEvent(QPaintEvent *event) override;
+    void changeEvent(QEvent *event) override;
     void mousePressEvent(QMouseEvent *event) override;
     void mouseMoveEvent(QMouseEvent *event) override;
     void leaveEvent(QEvent *event) override;
@@ -67,6 +69,14 @@ private:
 
     qint32 plotWidth() const { return qMax(1, width() - AXIS_WIDTH); }
     qint32 frameAt(qint32 x) const;
+
+    // The curves, drawn once (see ensureLayer), and the range of the scale that they were drawn for
+    void ensureLayer();
+    QPixmap layer;
+    qreal layerRatio = 0;
+    bool layerDirty = true;
+    bool rangeAny = false;
+    double rangeLo = 0, rangeSpan = 1;
 
     QVector<SnrCurve> curves;
     qint32 totalFrames = 0;

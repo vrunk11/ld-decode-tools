@@ -15,6 +15,8 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
+#include <QEvent>
+#include <algorithm>
 #include <QVBoxLayout>
 #include <cmath>
 
@@ -31,6 +33,7 @@ SnrPlot::SnrPlot(QWidget *parent)
 void SnrPlot::setCurves(const QVector<SnrCurve> &newCurves)
 {
     curves = newCurves;
+    layerDirty = true;
     totalFrames = 0;
     for (const SnrCurve &curve: curves) totalFrames = qMax(totalFrames, static_cast<qint32>(curve.values.size()));
     update();
@@ -48,6 +51,7 @@ void SnrPlot::setRange(bool fixed, double low, double high)
     fixedRange = fixed;
     fixedLow = low;
     fixedHigh = high;
+    layerDirty = true;
     update();
 }
 
@@ -65,14 +69,16 @@ qint32 SnrPlot::frameAt(qint32 x) const
     return 1 + qRound(fraction * (totalFrames - 1));
 }
 
-void SnrPlot::paintEvent(QPaintEvent *)
+// The curves are drawn once, on a layer, and the paint puts the layer on the plot with the marker and the values under the cursor: a capture of an hour has
+// 100 000 frames, and drawing all their points for each movement of the cursor or of the marker took more than a second. The layer is made again when the curves,
+// the scale, the size or the colours change.
+void SnrPlot::ensureLayer()
 {
-    QPainter painter(this);
-    painter.setRenderHint(QPainter::Antialiasing, true);
-
-    const qint32 plotW = plotWidth();
-    const QRectF area(0, 4, plotW, height() - 8);
-    const QColor textColor = palette().color(QPalette::Text);
+    const qreal ratio = devicePixelRatioF();
+    const QSize pixels(qMax(1, qRound(width() * ratio)), qMax(1, qRound(height() * ratio)));
+    if (!layerDirty && layer.size() == pixels && layerRatio == ratio) return;
+    layerDirty = false;
+    layerRatio = ratio;
 
     // The range of what is shown
     bool any = false;
@@ -94,14 +100,119 @@ void SnrPlot::paintEvent(QPaintEvent *)
         any = true;
     }
 
-    double lo = 0, span = 1;
+    rangeAny = any;
+    rangeLo = 0;
+    rangeSpan = 1;
     if (any) {
-        span = high - low;
-        lo = low;
+        double span = high - low;
+        double lo = low;
         if (span < 1.0) { lo -= (1.0 - span) / 2; span = 1.0; }
         lo -= span * 0.05;   // a little room above and below
         span *= 1.1;
+        rangeLo = lo;
+        rangeSpan = span;
     }
+
+    layer = QPixmap(pixels);
+    layer.setDevicePixelRatio(ratio);
+    layer.fill(Qt::transparent);
+    if (totalFrames < 1 || !any) return;
+
+    QPainter painter(&layer);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+
+    const qint32 plotW = plotWidth();
+    const QRectF area(0, 4, plotW, height() - 8);
+    const auto toPoint = [&](qint32 index, float value) {
+        const qreal x = totalFrames > 1 ? static_cast<qreal>(index) * (plotW - 1) / (totalFrames - 1) : 0;
+        const qreal y = area.bottom() - (value - rangeLo) / rangeSpan * area.height();
+        return QPointF(x, y);
+    };
+    const auto columnOf = [&](qint32 index) {
+        return totalFrames > 1 ? static_cast<qint32>(static_cast<qreal>(index) * (plotW - 1) / (totalFrames - 1)) : 0;
+    };
+
+    // The thin ones first, so that they are behind
+    for (const bool thin: { true, false }) {
+        for (const SnrCurve &curve: curves) {
+            if (!curve.visible || curve.thin != thin) continue;
+            QColor color = curve.color;
+            if (thin) color.setAlpha(150);
+            painter.setPen(QPen(color, thin ? 1.0 : 1.5));
+
+            // The points that the curve is drawn through: where there are more frames than pixels, the first, the lowest, the highest and the last value of
+            // the frames of each column of pixels, in the order of the frames (that is all that can be seen of the others)
+            QVector<qint32> drawn;
+            QVector<char> breaks;     // 1 where the line is broken before the point (a frame with no value before it)
+            drawn.reserve(qMin<qsizetype>(curve.values.size(), 4 * (plotW + 1)));
+            breaks.reserve(drawn.capacity());
+            bool broken = true;
+            qint32 column = -1, firstIndex = 0, lowIndex = 0, highIndex = 0, lastIndex = 0;
+            const auto finishColumn = [&]() {
+                if (column < 0) return;
+                qint32 indexes[4] = { firstIndex, lowIndex, highIndex, lastIndex };
+                std::sort(indexes, indexes + 4);
+                for (qint32 i = 0; i < 4; i++) {
+                    if (i > 0 && indexes[i] == indexes[i - 1]) continue;
+                    drawn.append(indexes[i]);
+                    breaks.append(broken ? 1 : 0);
+                    broken = false;
+                }
+                column = -1;
+            };
+            for (qint32 i = 0; i < curve.values.size(); i++) {
+                const float value = curve.values[i];
+                if (!std::isfinite(value)) {
+                    if (!curve.bridge) { finishColumn(); broken = true; }
+                    continue;
+                }
+                const qint32 at = columnOf(i);
+                if (at != column) {
+                    finishColumn();
+                    column = at;
+                    firstIndex = lowIndex = highIndex = lastIndex = i;
+                } else {
+                    if (value < curve.values[lowIndex]) lowIndex = i;
+                    if (value > curve.values[highIndex]) highIndex = i;
+                    lastIndex = i;
+                }
+            }
+            finishColumn();
+
+            // A line, broken where a frame has no value
+            QPainterPath path;
+            for (qint32 i = 0; i < drawn.size(); i++) {
+                const QPointF at = toPoint(drawn[i], curve.values[drawn[i]]);
+                if (breaks[i]) path.moveTo(at); else path.lineTo(at);
+            }
+            painter.drawPath(path);
+            if (curve.bridge) {
+                painter.setBrush(color);
+                for (qint32 i = 0; i < drawn.size(); i++) painter.drawEllipse(toPoint(drawn[i], curve.values[drawn[i]]), 1.8, 1.8);
+                painter.setBrush(Qt::NoBrush);
+            }
+        }
+    }
+}
+
+void SnrPlot::changeEvent(QEvent *event)
+{
+    if (event->type() == QEvent::PaletteChange || event->type() == QEvent::StyleChange) layerDirty = true;
+    QWidget::changeEvent(event);
+}
+
+void SnrPlot::paintEvent(QPaintEvent *)
+{
+    QPainter painter(this);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+
+    const qint32 plotW = plotWidth();
+    const QRectF area(0, 4, plotW, height() - 8);
+    const QColor textColor = palette().color(QPalette::Text);
+
+    ensureLayer();
+    const bool any = rangeAny;
+    const double lo = rangeLo, span = rangeSpan;
 
     // A grid that can be seen on any theme, with what each line is worth in dB in the margin on the right
     QColor gridColor = textColor;
@@ -124,40 +235,8 @@ void SnrPlot::paintEvent(QPaintEvent *)
     painter.setPen(QPen(gridColor, 1));
     painter.drawLine(QPointF(plotW, 0), QPointF(plotW, height()));
 
-    if (totalFrames > 0 && any) {
-        const auto toPoint = [&](qint32 index, float value) {
-            const qreal x = totalFrames > 1 ? static_cast<qreal>(index) * (plotW - 1) / (totalFrames - 1) : 0;
-            const qreal y = area.bottom() - (value - lo) / span * area.height();
-            return QPointF(x, y);
-        };
-
-        // The thin ones first, so that they are behind
-        for (const bool thin: { true, false }) {
-            for (const SnrCurve &curve: curves) {
-                if (!curve.visible || curve.thin != thin) continue;
-                QColor color = curve.color;
-                if (thin) color.setAlpha(150);
-                painter.setPen(QPen(color, thin ? 1.0 : 1.5));
-
-                // A line, broken where a frame has no value
-                QPainterPath path;
-                bool drawing = false;
-                for (qint32 i = 0; i < curve.values.size(); i++) {
-                    if (!std::isfinite(curve.values[i])) { if (!curve.bridge) drawing = false; continue; }
-                    const QPointF at = toPoint(i, curve.values[i]);
-                    if (!drawing) { path.moveTo(at); drawing = true; } else { path.lineTo(at); }
-                }
-                painter.drawPath(path);
-                if (curve.bridge) {
-                    painter.setBrush(color);
-                    for (qint32 i = 0; i < curve.values.size(); i++) {
-                        if (std::isfinite(curve.values[i])) painter.drawEllipse(toPoint(i, curve.values[i]), 1.8, 1.8);
-                    }
-                    painter.setBrush(Qt::NoBrush);
-                }
-            }
-        }
-    }
+    // The curves
+    if (totalFrames > 0 && any) painter.drawPixmap(0, 0, layer);
 
     // The frame viewed
     const auto xOf = [&](qint32 frame) {
