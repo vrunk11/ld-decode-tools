@@ -553,12 +553,6 @@ void PlotMarker::setPosition(const QPointF &pos)
     update();
 }
 
-void PlotMarker::setLabel(const QString &label)
-{
-    m_label = label;
-    update();
-}
-
 QRectF PlotMarker::boundingRect() const
 {
     if (!m_plotWidget || m_plotRect.isEmpty()) return QRectF();
@@ -609,14 +603,6 @@ void PlotMarker::paint(QPainter *painter, const QStyleOptionGraphicsItem *option
         painter->drawLine(QPointF(m_plotRect.left(), scenePos.y()), 
                          QPointF(m_plotRect.right(), scenePos.y()));
         break;
-    }
-    
-    if (!m_label.isEmpty()) {
-        QFont font = painter->font();
-        QFontMetrics fm(font);
-        QRect textRect = fm.boundingRect(m_label);
-        QPointF textPos = scenePos + QPointF(5, -5);
-        painter->drawText(textPos, m_label);
     }
 }
 

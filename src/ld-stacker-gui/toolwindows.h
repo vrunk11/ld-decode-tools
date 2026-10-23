@@ -57,7 +57,6 @@ public:
 
     void setPicture(const QImage &image, const QString &caption);
     void setMessage(const QString &message);
-    void setSmooth(bool smooth);
 
 signals:
     void closed();
@@ -72,7 +71,6 @@ private:
     QLabel *label = nullptr;
     QLabel *caption = nullptr;
     QImage image;
-    bool smooth = false;
 };
 
 // The dropouts of one source in a window of its own, as the SNR of a source has: the total length of the dropouts of each frame along the timeline, on the

@@ -25,8 +25,8 @@ ld-json-converter [options]
 - `-q, --quiet`: Suppress info and warning messages
 
 #### Input/Output
-- `--input-json <filename>`: Specify the input JSON file
-- `--output-sqlite <filename>`: Specify the output SQLite file (default same as input but with .db extension)
+- `--input-metadata <filename>`: Specify the input JSON file
+- `--output-metadata <filename>`: Specify the output SQLite file (default same as input but with .db extension)
 
 #### Standard Options
 - `-d, --debug`: Show debug messages

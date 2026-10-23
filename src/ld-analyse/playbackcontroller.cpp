@@ -129,7 +129,6 @@ void PlaybackController::tick()
                 emit positionDue(lastPosition);
             }
             emit stateChanged(false);
-            emit reachedEnd();
             return;
         }
     }

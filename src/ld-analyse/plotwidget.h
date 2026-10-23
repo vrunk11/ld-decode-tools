@@ -214,7 +214,6 @@ public:
     void setStyle(MarkerStyle style);
     void setPen(const QPen &pen);
     void setPosition(const QPointF &pos);
-    void setLabel(const QString &label);
     
     QRectF boundingRect() const override;
     void paint(QPainter *painter, const QStyleOptionGraphicsItem *option, QWidget *widget) override;
@@ -225,7 +224,6 @@ private:
     MarkerStyle m_style;
     QPen m_pen;
     QPointF m_dataPos;
-    QString m_label;
     QRectF m_plotRect;
     QRectF m_dataRect;
     PlotWidget *m_plotWidget;

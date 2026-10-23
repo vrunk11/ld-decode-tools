@@ -13,9 +13,9 @@ Options:
   -v, --version              Displays version information.
   -d, --debug                Show application debug messages
   -q, --quiet                Suppress info and warning messages
-  --input-sqlite <filename>  Specify the input SQLite file
-  --output-json <filename>   Specify the output JSON file (default same as
-                             input but with -export.json extension)
+  --input-metadata <filename>  Specify the input SQLite file
+  --output-metadata <filename>  Specify the output JSON file (default same as
+                             input but with the extension .export.json)
 ```
 
 The layout of the exported file is described in the [README of the tool](../../src/ld-export-decode-metadata/README.md).

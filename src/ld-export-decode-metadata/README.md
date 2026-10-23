@@ -26,8 +26,8 @@ ld-export-decode-metadata [options]
 - `-q, --quiet`: Suppress info and warning messages
 
 #### Input/Output
-- `--input-sqlite <filename>`: Specify the input SQLite file
-- `--output-json <filename>`: Specify the output JSON file (default same as input but with -export.json extension))
+- `--input-metadata <filename>`: Specify the input SQLite file
+- `--output-metadata <filename>`: Specify the output JSON file (default same as input but with the extension .export.json))
 
 #### Standard Options
 - `-d, --debug`: Show debug messages

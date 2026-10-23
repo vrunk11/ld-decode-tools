@@ -50,8 +50,6 @@ public:
 signals:
     // The position now due. Not emitted for a position that is already showing.
     void positionDue(qint32 position);
-    // Playback reached the end of the range (and stopped, unless looping)
-    void reachedEnd();
     void stateChanged(bool playing);
     // Playback went from the end to the start again (looping)
     void looped();

@@ -111,18 +111,12 @@ void StackOutputWindow::setMessage(const QString &message)
     caption->clear();
 }
 
-void StackOutputWindow::setSmooth(bool newSmooth)
-{
-    smooth = newSmooth;
-    showScaled();
-}
-
 void StackOutputWindow::showScaled()
 {
     if (image.isNull()) return;
     label->setText(QString());
     label->setPixmap(QPixmap::fromImage(image).scaled(label->size(), Qt::KeepAspectRatio,
-                                                      smooth ? Qt::SmoothTransformation : Qt::FastTransformation));
+                                                      Qt::FastTransformation));
 }
 
 void StackOutputWindow::resizeEvent(QResizeEvent *event)

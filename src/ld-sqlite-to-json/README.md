@@ -24,8 +24,8 @@ ld-sqlite-to-json [options] [input]
 - `-q, --quiet`: Suppress info and warning messages
 
 ### Input/Output
-- `--input-sqlite <filename>`: Specify the input SQLite file (alternatively give it as the positional argument)
-- `--output-json <filename>`: Specify the output JSON file (default: the input name with `.db` replaced by `.json`)
+- `--input-metadata <filename>`: Specify the input SQLite file (alternatively give it as the positional argument)
+- `--output-metadata <filename>`: Specify the output JSON file (default: the input name with `.db` replaced by `.json`)
 
 ## Examples
 
@@ -37,7 +37,7 @@ Writes `capture.tbc.json` next to `capture.tbc.db`.
 
 ### Choose the output file
 ```bash
-ld-sqlite-to-json --input-sqlite capture.tbc.db --output-json other.tbc.json
+ld-sqlite-to-json --input-metadata capture.tbc.db --output-metadata other.tbc.json
 ```
 
 ## Safety Checks

@@ -51,20 +51,30 @@ int main(int argc, char *argv[])
     // Add the standard debug options --debug and --quiet
     addStandardDebugOptions(parser);
 
-    // Option to specify the SQLite input file
+    // Option to specify the SQLite input file (--input-metadata, as in the other tools; the original --input-sqlite is accepted, and not shown)
+    QCommandLineOption inputMetadataOption(QStringList() << "input-metadata",
+                                           QCoreApplication::translate("main", "Specify the input SQLite file"),
+                                           QCoreApplication::translate("main", "filename"));
+    parser.addOption(inputMetadataOption);
     QCommandLineOption inputSqliteOption(QStringList() << "input-sqlite",
-                                         QCoreApplication::translate("main", "Specify the input SQLite file"),
+                                         QCoreApplication::translate("main", "Original name of --input-metadata"),
                                          QCoreApplication::translate("main", "filename"));
+    inputSqliteOption.setFlags(QCommandLineOption::HiddenFromHelp);
     parser.addOption(inputSqliteOption);
 
-    // Option to specify the JSON output file
+    // Option to specify the JSON output file (--output-metadata; the original --output-json is accepted, and not shown)
+    QCommandLineOption outputMetadataOption(QStringList() << "output-metadata",
+                                            QCoreApplication::translate("main", "Specify the output JSON file (default same as input but with .json extension)"),
+                                            QCoreApplication::translate("main", "filename"));
+    parser.addOption(outputMetadataOption);
     QCommandLineOption outputJsonOption(QStringList() << "output-json",
-                                        QCoreApplication::translate("main", "Specify the output JSON file (default same as input but with .json extension)"),
+                                        QCoreApplication::translate("main", "Original name of --output-metadata"),
                                         QCoreApplication::translate("main", "filename"));
+    outputJsonOption.setFlags(QCommandLineOption::HiddenFromHelp);
     parser.addOption(outputJsonOption);
 
-    // Positional argument, as an alternative to --input-sqlite
-    parser.addPositionalArgument("input", QCoreApplication::translate("main", "Input SQLite file (if --input-sqlite is not given)"));
+    // Positional argument, as an alternative to --input-metadata
+    parser.addPositionalArgument("input", QCoreApplication::translate("main", "Input SQLite file (if --input-metadata is not given)"));
 
     // Process the command line options and arguments given by the user
     parser.process(a);
@@ -72,15 +82,22 @@ int main(int argc, char *argv[])
     // Standard logging options
     processStandardDebugOptions(parser);
 
+    if ((parser.isSet(inputMetadataOption) && parser.isSet(inputSqliteOption)) || (parser.isSet(outputMetadataOption) && parser.isSet(outputJsonOption))) {
+        qCritical("--input-metadata is the same option as --input-sqlite, and --output-metadata the same as --output-json - give only one of each");
+        return 2;
+    }
+    const QCommandLineOption &inputGiven = parser.isSet(inputMetadataOption) ? inputMetadataOption : inputSqliteOption;
+    const QCommandLineOption &outputGiven = parser.isSet(outputMetadataOption) ? outputMetadataOption : outputJsonOption;
+
     // Get the input SQLite filename
     QString inputSqliteFilename;
     const QStringList positionalArguments = parser.positionalArguments();
-    if (parser.isSet(inputSqliteOption) && positionalArguments.isEmpty()) {
-        inputSqliteFilename = parser.value(inputSqliteOption);
-    } else if (!parser.isSet(inputSqliteOption) && positionalArguments.count() == 1) {
+    if (parser.isSet(inputGiven) && positionalArguments.isEmpty()) {
+        inputSqliteFilename = parser.value(inputGiven);
+    } else if (!parser.isSet(inputGiven) && positionalArguments.count() == 1) {
         inputSqliteFilename = positionalArguments.at(0);
     } else {
-        qCritical("You must specify one input SQLite file, using --input-sqlite or as a positional argument");
+        qCritical("You must specify one input SQLite file, using --input-metadata or as a positional argument");
         return 2;
     }
 
@@ -95,8 +112,8 @@ int main(int argc, char *argv[])
 
     // Work out the output JSON filename: capture.tbc.db -> capture.tbc.json
     QString outputJsonFilename;
-    if (parser.isSet(outputJsonOption)) {
-        outputJsonFilename = parser.value(outputJsonOption);
+    if (parser.isSet(outputGiven)) {
+        outputJsonFilename = parser.value(outputGiven);
     } else if (inputSqliteFilename.endsWith(".db", Qt::CaseInsensitive)) {
         outputJsonFilename = inputSqliteFilename.left(inputSqliteFilename.length() - 3) + ".json";
     } else {
@@ -112,7 +129,7 @@ int main(int argc, char *argv[])
     // An existing .tbc.json may hold metadata not in the SQLite file: never overwrite one
     if (QFileInfo::exists(outputJsonFilename)) {
         qCritical().noquote() << "Output file" << outputJsonFilename
-                              << "already exists - will not overwrite it (remove it first, or use --output-json)";
+                              << "already exists - will not overwrite it (remove it first, or use --output-metadata)";
         return 1;
     }
 

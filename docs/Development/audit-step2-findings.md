@@ -6,7 +6,7 @@ How they are found and worked on: [audit-step2-plan.md](audit-step2-plan.md). St
 ## Workflow 3 - putting a capture in order of the disc
 
 ### S-01 - Mapping writes the whole capture again
-- **kind**: suboptimal and impractical. **status**: direction decided (2026-10-22): the map in the session and in an LDX track, the copy kept as `--copy`; details in audit-step2-mapping.md; confirmed (read).
+- **kind**: suboptimal and impractical. **status**: done (2026-10-23): the map in the session, in the metadata of the capture (JSON, SQLite, LDX) and read by the tools; the mapped copy is `ld-discmap --legacy` (decided 2026-10-22 as `--copy`, renamed with the person); details in audit-step2-mapping.md.
 - **where**: `ld-discmap/discmapper.cpp:713` (`saveDiscMap`): every field of the result is read from the input and written to a new TBC, with the audio copied beside it and the
   metadata written again. `ld-stacker-gui/mapdialog.cpp` runs it and puts the result next to the capture (`name_map.tbc`, or a mapped track of an LDX file with `mappedFrom`).
 - **what**: what the mapping decides is small: for each frame of the disc, which frame of the capture goes there (or none: a padded frame), and the numbers. That is a list of
@@ -127,7 +127,7 @@ observation store and scheduler, `buffered_file_io.h`), `orc/plugins/stages/fram
   in steps, S-01 first.
 
 ### S-08 - Measures of the video are computed by passes that rewrite the metadata, and never cached
-- **kind**: suboptimal and impractical. **status**: direction (2026-10-22, the person): push the new formats (LDX for the communication between tools and the history, `.stack` sessions) rather than a separate cache; decided together with S-01 and S-07; confirmed (read). **closed** (2026-10-23, the person): no measure cache and no measure on demand. The metadata already hold the VBI and the VITS (the stacker GUI keeps its SNR in its session, the CVBS phases in `.cvbs.phases`); the black PSNR is 1 part of 1004 in the quality that `ld-discmap` uses to choose a duplicate and the map never depends on it, so nothing is added. No code change; the doc of ld-discmap says so.
+- **kind**: suboptimal and impractical. **status**: closed, nothing built (2026-10-23). Direction (2026-10-22, the person): push the new formats (LDX for the communication between tools and the history, `.stack` sessions) rather than a separate cache; decided together with S-01 and S-07; confirmed (read). **closed** (2026-10-23, the person): no measure cache and no measure on demand. The metadata already hold the VBI and the VITS (the stacker GUI keeps its SNR in its session, the CVBS phases in `.cvbs.phases`); the black PSNR is 1 part of 1004 in the quality that `ld-discmap` uses to choose a duplicate and the map never depends on it, so nothing is added. No code change; the doc of ld-discmap says so.
 - **what**: the VBI and the VITS of a capture are measured by `ld-process-vbi` and `ld-process-vits`, which read the whole capture and write the whole metadata; the tools that need them
   (`ld-discmap` for its quality, `ld-analyse`, the stacking tools for the SNR) depend on a person having run them, in the right order. What a window measures (`ld-stacker-gui`) is kept in its
   session only. The phase IDs of a CVBS capture are measured at each opening (S-06).
@@ -136,7 +136,7 @@ observation store and scheduler, `buffered_file_io.h`), `orc/plugins/stages/fram
   measure, used by the tools and the windows; `ld-process-vbi` and `ld-process-vits` kept to write the measures into the metadata for the tools of ld-decode. **risk**: medium to high.
 
 ### S-09 - The picture number is not checked between the two VBI lines that carry it
-- **kind**: illogical (validity). **status**: confirmed (read: `library/tbc/vbidecoder.cpp`, `decode`, "IEC 60857-1986 - 10.1.3").
+- **kind**: illogical (validity). **status**: done (2026-10-23, inside the building of the map; see below) (read: `library/tbc/vbidecoder.cpp`, `decode`, "IEC 60857-1986 - 10.1.3").
 - **what**: line 17 is decoded, then line 18 is decoded over it: when the two disagree (a bit error on one of them) the value of line 18 is kept, and nothing says that it was doubtful. IEC
   60857 and 60856 carry the number twice for that reason; decode-orc keeps it only when the two agree, and flags it when only one decodes.
 - **effect**: a wrong picture number reaches `ld-discmap` (a frame put in the wrong place, a gap padded) and the stacking tools (a frame lined up with the wrong one).
@@ -152,7 +152,7 @@ observation store and scheduler, `buffered_file_io.h`), `orc/plugins/stages/fram
 - **proposal**: fix the two formulas, and say in the docs that the VITS metrics are used (or measure them, S-08). **risk**: medium (it changes which copy of a duplicate is kept: to compare).
 
 ### S-11 - `ld-discmap` pads any gap that the numbers show
-- **kind**: illogical (validity). **status**: to verify (read: `padDiscMap` has no bound on the length of a gap).
+- **kind**: illogical (validity). **status**: done (2026-10-23, inside the building of the map; see below) (read: `padDiscMap` had no bound on the length of a gap).
 - **what**: a misread picture number at the end of a run (S-09) makes a gap of thousands of frames, all padded with black, and the mapped capture grows by that much.
 - **decode-orc**: a gap is padded only up to the frames captured across it + 100 (a player can skip forward over a few pictures, not over thousands).
 - **proposal**: the same bound, with a message when a gap is refused. **risk**: medium.
@@ -164,7 +164,7 @@ The documented route for several captures of a disc (`docs/How-to-guides/Working
 Seven steps, five of them writing a whole capture or the whole metadata, and a visual check in the middle. S-01, S-07 and S-08 are about that; the entries below are what else was found on the way.
 
 ### S-13 - The stack and the corrected capture come out without their audio, EFM and AC3
-- **kind**: impractical (and the metadata then say something false). **status**: partly done (2026-10-23); confirmed (run: the outputs of `ld-disc-stacker` and `ld-dropout-correct` on `test-data` are a `.tbc` and a `.tbc.db`, no `.pcm`, though every input has one).
+- **kind**: impractical (and the metadata then say something false). **status**: done for the streams and the audio (2026-10-23); not realigned, only recorded (see below); confirmed (run: the outputs of `ld-disc-stacker` and `ld-dropout-correct` on `test-data` are a `.tbc` and a `.tbc.db`, no `.pcm`, though every input has one).
 - **where**: `ld-disc-stacker/stackingpool.cpp`, `ld-dropout-correct/correctorpool.cpp` (no audio code at all; `ld-discmap` has it).
 - **what**: the audio file of the source is not copied, mixed or linked. The metadata of the output still carry the `audioSamples` (and `efmTValues`, `diskLoc`) of the first source. A person who wants audio with the stacked video copies the `.pcm`
   of one source by hand and renames it.
@@ -187,7 +187,7 @@ Seven steps, five of them writing a whole capture or the whole metadata, and a v
 - **proposal**: `--overcorrect` stays and takes an optional number of samples; `--max-distance <lines>` (default: as today, so the same output); `--highlight` for a diagnostic output. **risk**: low (new options, defaults unchanged).
 
 ### S-16 - Making a video file needs a hand-written `ffmpeg` command that the tool could give
-- **kind**: impractical. **status**: confirmed (read: `docs/How-to-guides/Creating-video-from-PAL-decodes.md`: commands of about ten options each, `-pix_fmt`, `-color_primaries`, `-top 1`, `setdar=4/3`, `-flags +ilme+ildct`, the audio as `-f s16le -ar 44.1k`).
+- **kind**: impractical. **status**: dropped (2026-10-23, the person) (read: `docs/How-to-guides/Creating-video-from-PAL-decodes.md`: commands of about ten options each, `-pix_fmt`, `-color_primaries`, `-top 1`, `setdar=4/3`, `-flags +ilme+ildct`, the audio as `-f s16le -ar 44.1k`).
 - **what**: what these options say is in the metadata of the capture (video system, widescreen, field order, the sample rate of the audio). The person has to know and type it, for every capture, for PAL and for NTSC (two pages), and a wrong flag gives a video that
   looks right and is not (the wrong field order, the wrong aspect).
 - **decode-orc**: the `video_sink` stage writes the video file with the audio muxed in, choosing the settings from the metadata.
@@ -211,7 +211,7 @@ Seven steps, five of them writing a whole capture or the whole metadata, and a v
 - **proposal**: the same reduction in `PlotSeries` (the points that are drawn, not all), keeping the data whole for the value under the cursor. **risk**: low (look to compare; the data are the same).
 
 ### S-19 - Results that are not right, found in step 1 and kept (the "possible wrong results" of the plan)
-- **kind**: illogical (validity). **status**: confirmed by reading for each (references: the notes of [audit-refactor-plan.md](audit-refactor-plan.md)).
+- **kind**: illogical (validity). **status**: done for each, decided one by one (2026-10-23; only the shared plot component of 7 is not built) (references: the notes of [audit-refactor-plan.md](audit-refactor-plan.md)).
 - **what** (each is a small separate piece of work, with its test):
   1. `ld-export-metadata/closedcaptions.cpp:49` uses 29.97 for the time of a caption; the rate is 30000/1001 (A-04).
   2. In the smart-neighbour mode of `StackerCore` the centre is unsigned, so `centre - threshold` wraps when the centre is under the threshold (B-05).
@@ -235,7 +235,7 @@ Seven steps, five of them writing a whole capture or the whole metadata, and a v
 - **proposal**: return an error, once, with the reason; no `qFatal` in a library; a limit on the search of (2). **risk**: low to medium (a tool that stopped hard now stops with a message).
 
 ### S-21 - Behaviour that nothing checks
-- **kind**: inconsistent (tests). **status**: confirmed.
+- **kind**: inconsistent (tests). **status**: in progress (2026-10-23): tests added for the video input and output, the JSON, the metadata options, the process window; `navigation` and `efmchain` have none.
 - **what**: library code with no test (`sourcevideo`, `targetvideo`, `metadataoptions`, `navigation`, `jsonio`, `efmchain`, `ldxstream`... M-07); the Python functional tests (not run here, and the `assert` fault of M-08 not looked for in them); the windows are checked by a
   build and by hand only (the step 1 changes in the status bar, rates and `NoNumber` were never seen on the screen). Step 2 added tests for what it changed (`testsqliteread`, `testsnrplot`, the phase IDs in `testcvbs`).
 - **proposal**: a test for each piece of the work list before it is changed; a list of what to try by hand for the windows (it can be given with each change). The functional tests to be run once on a machine that has Python and ffmpeg.
@@ -261,6 +261,15 @@ Reproduced in the real window (Start then Cancel at once: the program stopped wi
 - `cancel()` killed the process and waited for it: `waitForFinished` gives `finished` at once, to `stepFinished`, which let go of the process and set the pointer to null, and `cancel()` then called `deleteLater()` on that null pointer. The process is taken away from the window and its signals cut before it is killed.
 - The files that a step writes were put in the list of what to take back **after** the step succeeded, so a stack cancelled (or one that failed) in the middle of its step was **left on disk half written**, and the next try was refused ("already exists: the stacking does not overwrite files"; seen in the window after the crash). The files of the stack (and of its conversion, and the LDX file) are in the list before the steps begin, those that were not there only.
 `testprocessdialog` starts a stack and cancels it at once, after 30 ms and after 150 ms: the log says `Cancelled`, the file is not left, the buttons are as they were.
+
+### The points that were left open, gone through (2026-10-23)
+
+The statuses of S-01, S-08, S-09, S-11, S-13, S-16, S-19, S-21 above were brought up to date. What the notes of step 1 and the plan carried to step 2, one by one:
+- **Done**: the 28 names "declared and used nowhere" were counted again: 25 are used now (the step 1 work used them) or are Qt overrides; three had no caller and are removed (`PlaybackController::reachedEnd`, a signal emitted and connected to nothing; `PlotMarker::setLabel` and its drawing; `StackOutputWindow::setSmooth`, a smoothing that was never on). M-04: `ld-export-decode-metadata` no longer says it is a "JSON converter tool", and its help and pages say `.export.json`, the extension it writes (they said `-export.json`). **N-04** (decided with the person): `ld-json-converter`, `ld-sqlite-to-json` and `ld-export-decode-metadata` take `--input-metadata` and `--output-metadata` as the other tools do; the original names stay as aliases, not shown in `--help`; both for one file is an error (checked: same output with either name).
+- **Decided, nothing changed**: S-12, the metadata of the other format that a tool leaves out of date are only warned about (the tool does not write or remove a file it was not asked to); the EFM chain (I-01, I-03) is out of the scope of the audit; H-03, the limit 0 to 10 of the noise reduction in the windows against "not negative" in `ld-chroma-decoder` stays as decided on 2026-10-21; N-02, the suffixes that stay are `.stacking` (a file on the way, taken away) and `_audio_0.wav` (the name decode-orc gives).
+- **Moot**: B-03 (the stacker has no mapping of its own now: it takes the mapped sources, the map of the session or, with `--no-map`, lines up by position, as its page says) and A-02 (the range of the numbers of a disc is worked out over every frame, with a test of a corrupt number: `scanRange`).
+- **Not done, said**: the functional tests (`ctest -L functional`, they need Python and ffmpeg: none here), the Windows/MSVC and macOS builds (only MinGW was built), and the reading of the tools that step 1 did not look at (`ld-ac3-demodulate` and `ld-ac3-decode` together, `transformpal2d` and `3d`, `ntscencoder` and `palencoder`).
+- **The map is metadata, so every tool follows it** (decided with the person, 2026-10-23: the map is not a capture, it works as for the other tools): `ld-export-metadata`, `ld-tbc-to-cvbs` and `ld-cvbs-to-tbc` (and the chroma file of a Y/C pair, which shares the table) read a capture through the map its metadata keep, `--ignore-map` reads it as it is. The converters write the view: the frames of the disc, the missing ones blank, the analogue audio in the same order with silence for them (`FieldAudio`), and the metadata of the view. Checked on a capture with a gap of 5 frames (`ld-discmap --save-map`: 29 frames, 5 padded): `ld-export-metadata --vbi-csv` 29 rows (24 with `--ignore-map`); `ld-tbc-to-cvbs` 29 frames and 42 676 audio samples (24 and 35 316 with `--ignore-map`); `ld-cvbs-to-tbc` on a CVBS capture given the same map: 58 fields, the fields of the capture before and after the gap equal to the conversion of the capture as it is, the 10 fields of the gap padded (a CVBS capture can only get a map by hand: `ld-discmap` maps TBC captures). Without a map the outputs are byte for byte the same as before, with or without `--ignore-map`. Left on the capture: `ld-discmap`, `ld-process-vbi` and `ld-process-vits` (they write its metadata).
 
 ### Not read in detail (and why)
 The EFM chain (`ld-process-efm`, `efm-decoder-*`: the choice between them was deferred in step 1, I-01, I-03); `ld-process-ac3` (two programs on a pipe, not reviewed beyond its options); the exports (`ld-export-metadata`, `ld-export-decode-metadata`); `ld-container`'s twelve commands
