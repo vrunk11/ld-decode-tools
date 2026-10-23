@@ -50,6 +50,7 @@ ld-tbc-to-cvbs [options] <input> [output]
 - `--input-metadata <filename>`: Specify the input metadata file
 
 ### Audio
+- `--ignore-map`: Read the capture as it is, though its metadata keep a map (the frames in the order of the disc, from ld-discmap); by default a capture is read through the map
 - `-r, --samplerate <Hz>`: The sample rate the audio is declared to have (default: from the metadata, else 44100). The audio is copied, not resampled
 
 ### Output

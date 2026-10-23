@@ -9,7 +9,11 @@ Four small programs convert a capture from one form to another. The processing t
 | `ld-tbc-to-cvbs` | a TBC capture (`.tbc` and its metadata) | the CVBS file format read by decode-orc (`.cvbs`, `.meta`, `.dropouts.meta`) |
 | `ld-cvbs-to-tbc` | a CVBS capture (as ld-decode or decode-orc write it) | a TBC capture (`.tbc` and `.tbc.db`, or `.tbc.json`) |
 
+A capture whose metadata keep a map (ld-discmap `--save-map`) is converted through it by `ld-tbc-to-cvbs` and `ld-cvbs-to-tbc`, as every tool that reads a capture reads it: the frames of the disc in order, the missing ones blank, the analogue audio in the same order (silence for the missing ones); the metadata written are those of that view. `--ignore-map` converts the capture as it is.
+
 Every option and its default is the one of `--help`; the exit code is 0 when the work was done, 2 for a wrong command line and 1 when it failed.
+
+The metadata converters take their files with `--input-metadata` and `--output-metadata`, as the other tools do. The original names (`--input-json` and `--output-sqlite` of ld-json-converter, `--input-sqlite` and `--output-json` of ld-sqlite-to-json and ld-export-decode-metadata) are still accepted, and not shown in `--help`; giving a file under both names is an error.
 
 ### ld-json-converter
 
@@ -18,8 +22,8 @@ Converts the metadata of a capture from JSON to SQLite, written with the schema 
 ```
 ld-json-converter [options]
 
-  --input-json <filename>     Specify the input JSON file
-  --output-sqlite <filename>  Specify the output SQLite file (default same as
+  --input-metadata <filename>  Specify the input JSON file
+  --output-metadata <filename>  Specify the output SQLite file (default same as
                               input but with .db extension)
 ```
 
@@ -30,11 +34,11 @@ Converts the metadata of a capture from SQLite to JSON, the other way round.
 ```
 ld-sqlite-to-json [options] input
 
-  --input-sqlite <filename>  Specify the input SQLite file
-  --output-json <filename>   Specify the output JSON file (default same as
+  --input-metadata <filename>  Specify the input SQLite file
+  --output-metadata <filename>  Specify the output JSON file (default same as
                              input but with .json extension)
 
-  input                      Input SQLite file (if --input-sqlite is not given)
+  input                      Input SQLite file (if --input-metadata is not given)
 ```
 
 ### ld-tbc-to-cvbs
@@ -51,6 +55,9 @@ ld-tbc-to-cvbs [options] input output
                                        input.db or input.json, see --meta)
   -e, --encoding <encoding>            Sample encoding: u10 (CVBS_U10_4FSC,
                                        default), u16, tpg21 or s16
+  --ignore-map                         Read the capture as it is, though its
+                                       metadata keep a map (the frames in the
+                                       order of the disc, from ld-discmap)
   -r, --samplerate <Hz>                Sample rate of the audio in Hz (default:
                                        from the metadata, else 44100). The audio
                                        is copied as it is, not resampled
@@ -70,6 +77,9 @@ ld-cvbs-to-tbc [options] input output
   --meta, --metadata-format <db|json>  Metadata format to create: db (SQLite
                                        <output>.db, the default) or json
                                        (<output>.json)
+  --ignore-map                         Read the capture as it is, though its
+                                       metadata keep a map (the frames in the
+                                       order of the disc, from ld-discmap)
   -r, --samplerate <Hz>                Sample rate of the audio in Hz (default:
                                        that of the WAV file, normally 48000).
                                        The audio is copied as it is, not

@@ -24,10 +24,15 @@ Options:
   --audacity-labels <file>  Write navigation information as Audacity labels
   --ffmetadata <file>       Write navigation information as FFMETADATA1
   --closed-captions <file>  Write closed captions as Scenarist SCC V1.0 format
+  --ignore-map              Read the capture as it is, though its metadata
+                            keep a map (the frames in the order of the
+                            disc, from ld-discmap)
 
 Arguments:
   input                     Specify input metadata file
 ```
+
+A capture whose metadata keep a map (ld-discmap `--save-map`) is exported through it: the frames of the disc in order, the missing ones with no data, as `ld-analyse` shows them. `--ignore-map` exports the capture as it is.
 
 ## LDX files
 

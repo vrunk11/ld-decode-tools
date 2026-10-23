@@ -35,6 +35,7 @@ ld-cvbs-to-tbc [options] <input> [output]
 - `-q, --quiet`: Suppress info and warning messages
 
 ### Audio
+- `--ignore-map`: Read the capture as it is, though its metadata keep a map (the frames in the order of the disc, from ld-discmap); by default a capture is read through the map
 - `-r, --samplerate <Hz>`: The sample rate the PCM is declared to have (default: that of the WAV file, normally 48000). The audio is copied, not resampled
 
 ### Metadata

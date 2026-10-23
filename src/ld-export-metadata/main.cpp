@@ -34,7 +34,9 @@
 #include "closedcaptions.h"
 
 #include "tbc/logging.h"
+#include "commonoptions.h"
 #include "lddecodemetadata.h"
+#include "mappedmetadata.h"
 
 int main(int argc, char *argv[])
 {
@@ -95,6 +97,10 @@ int main(int argc, char *argv[])
                                              QCoreApplication::translate("main", "file"));
     parser.addOption(writeClosedCaptionsOption);
 
+    // A capture that keeps a map in its metadata is exported in the order of the map, as every tool that reads a capture reads it
+    IgnoreMapOption ignoreMapOption;
+    ignoreMapOption.addTo(parser);
+
     // -- Positional arguments --
 
     // Positional argument to specify input metadata file
@@ -121,6 +127,22 @@ int main(int argc, char *argv[])
     if (!metaData.read(inputFileName)) {
         qInfo() << "Unable to read metadata file";
         return 1;
+    }
+
+    // The metadata of a capture that keeps a map are those of the capture seen through it (the frames of the disc, the missing ones padded)
+    if (!ignoreMapOption.isSet(parser)) {
+        // (the video of the capture is the file the metadata are named for, when it is there: the map says which capture it was made for)
+        QString videoFileName = inputFileName;
+        for (const char *suffix : { ".db", ".json" }) {
+            if (videoFileName.endsWith(suffix, Qt::CaseInsensitive)) { videoFileName.chop(static_cast<qsizetype>(qstrlen(suffix))); break; }
+        }
+        QString mapError;
+        const auto viewTable = MappedMetadata::applyEmbeddedMap(metaData, inputFileName, videoFileName, mapError);
+        if (!mapError.isEmpty()) {
+            qCritical().noquote() << "Unable to use the map in the metadata:" << mapError << "(--ignore-map reads the capture as it is)";
+            return 1;
+        }
+        if (viewTable) qInfo() << "The metadata are read through the map they keep (--ignore-map reads them as they are)";
     }
 
     // Write the selected output files

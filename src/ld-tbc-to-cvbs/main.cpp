@@ -13,14 +13,18 @@
 #include <QtGlobal>
 #include <QCommandLineParser>
 #include <QFileInfo>
+#include <QTemporaryFile>
 #include <algorithm>
 #include <cmath>
 
 #include "tbc/logging.h"
 #include "tbc/metadataoptions.h"
+#include "commonoptions.h"
 #include "cvbs.h"
 #include "cvbsaudio.h"
+#include "fieldaudio.h"
 #include "lddecodemetadata.h"
+#include "mappedmetadata.h"
 #include "sourcevideo.h"
 #include "targetvideo.h"
 #include "tbcfiles.h"
@@ -117,6 +121,10 @@ int main(int argc, char *argv[])
     // Metadata options: --meta and --input-metadata
     MetadataOptions metadataOptions(MetadataOptions::InputFile);
     metadataOptions.addTo(parser);
+
+    // A capture that keeps a map in its metadata is converted in the order of the map (the frames of the disc, the missing ones blank)
+    IgnoreMapOption ignoreMapOption;
+    ignoreMapOption.addTo(parser);
 
     // Option to choose the sample encoding
     QCommandLineOption encodingOption(QStringList() << "e" << "encoding",
@@ -215,6 +223,20 @@ int main(int argc, char *argv[])
         return 1;
     }
 
+    // The capture seen through the map its metadata keep: its fields (and those of the chroma file of a pair) are read in that order, and the metadata and the
+    // audio are those of the view
+    QVector<FieldAudio::Range> audioRanges;
+    std::shared_ptr<const QVector<qint32>> viewTable;
+    if (!ignoreMapOption.isSet(parser)) {
+        QString mapError;
+        viewTable = MappedMetadata::applyEmbeddedMap(inputMetaData, inputMetadataFileName, inputFileName, mapError, false, &audioRanges);
+        if (!mapError.isEmpty()) {
+            qCritical().noquote() << "Unable to use the map in the metadata:" << mapError << "(--ignore-map reads the capture as it is)";
+            return 1;
+        }
+        if (viewTable) qInfo() << "The capture is read through the map in its metadata (--ignore-map reads it as it is)";
+    }
+
     LdDecodeMetaData::VideoParameters videoParameters = inputMetaData.getVideoParameters();
     const VideoSystem system = videoParameters.system;
     const Cvbs::Geometry geometry = Cvbs::geometry(system);
@@ -252,8 +274,8 @@ int main(int argc, char *argv[])
     // Open the video files
     SourceVideo sourceVideo;
     SourceVideo chromaSourceVideo;
-    if (!sourceVideo.open(inputFileName, geometry.fieldLength())) return 1;
-    if (isYc && !chromaSourceVideo.open(chromaFileName, geometry.fieldLength())) return 1;
+    if (!(viewTable ? sourceVideo.openMappedFields(inputFileName, geometry.fieldLength(), -1, viewTable) : sourceVideo.open(inputFileName, geometry.fieldLength()))) return 1;
+    if (isYc && !(viewTable ? chromaSourceVideo.openMappedFields(chromaFileName, geometry.fieldLength(), -1, viewTable) : chromaSourceVideo.open(chromaFileName, geometry.fieldLength()))) return 1;
     TargetVideo targetVideo;
     TargetVideo chromaTargetVideo;
     if (!targetVideo.open(outputFileName, system, encoding)) return 1;
@@ -331,14 +353,27 @@ int main(int argc, char *argv[])
                 sampleRate = hasParameters ? static_cast<quint32>(inputMetaData.getPcmAudioParameters().sampleRate)
                                            : CvbsAudio::TBC_SAMPLE_RATE;
             }
-            // All of the audio is kept, even any that belongs to fields left out
-            const qint64 audioSamples = QFileInfo(pcmFileName).size() / 4;
+            // All of the audio is kept, even any that belongs to fields left out; for a capture read through its map it is the audio of the fields of the
+            // view, in their order (silence for a padded field), put in a file on the way
+            QString audioFileName = pcmFileName;
+            QTemporaryFile viewAudio;
+            if (viewTable) {
+                FieldAudio fieldAudio;
+                if (fieldAudio.open(inputFileName, audioRanges) && viewAudio.open()) {
+                    for (qint32 fieldNumber = 1; fieldNumber <= audioRanges.size(); fieldNumber++) viewAudio.write(fieldAudio.audioOf(fieldNumber));
+                    viewAudio.flush();
+                    audioFileName = viewAudio.fileName();
+                } else {
+                    qWarning().noquote() << "The audio of" << pcmFileName << "could not be put in the order of the map: it is copied as it is";
+                }
+            }
+            const qint64 audioSamples = QFileInfo(audioFileName).size() / 4;
 
             const QString wavFileName = CvbsAudio::wavFileName(outputBase, 0);
             if (QFileInfo::exists(wavFileName)) {
                 qCritical().noquote() << "Output file" << wavFileName << "already exists - the audio was not converted";
             } else {
-                const qint64 written = CvbsAudio::pcmToWav(pcmFileName, 0, audioSamples, wavFileName, sampleRate);
+                const qint64 written = CvbsAudio::pcmToWav(audioFileName, 0, audioSamples, wavFileName, sampleRate);
                 if (written < 0 || !Cvbs::setAudioChannelPair(Cvbs::metaFileName(outputFileName), 0, "Analogue audio")) {
                     qCritical() << "Writing the CVBS audio failed";
                     return 1;

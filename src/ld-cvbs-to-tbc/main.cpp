@@ -12,13 +12,18 @@
 #include <QDebug>
 #include <QtGlobal>
 #include <QCommandLineParser>
+#include <QFile>
 #include <QFileInfo>
+#include <algorithm>
 
 #include "tbc/logging.h"
 #include "tbc/metadataoptions.h"
+#include "commonoptions.h"
 #include "cvbs.h"
 #include "cvbsaudio.h"
+#include "fieldaudio.h"
 #include "lddecodemetadata.h"
+#include "mappedmetadata.h"
 #include "sourcevideo.h"
 #include "targetvideo.h"
 #include "tbcfiles.h"
@@ -61,6 +66,10 @@ int main(int argc, char *argv[])
     // Metadata options: --meta picks the output format (the companion's, by default)
     MetadataOptions metadataOptions(MetadataOptions::FormatOnly | MetadataOptions::CreatesMetadata);
     metadataOptions.addTo(parser);
+
+    // A capture that keeps a map in its metadata is converted in the order of the map (the frames of the disc, the missing ones blank)
+    IgnoreMapOption ignoreMapOption;
+    ignoreMapOption.addTo(parser);
 
     // Option to declare the sample rate of the audio
     QCommandLineOption sampleRateOption(QStringList() << "r" << "samplerate",
@@ -139,15 +148,51 @@ int main(int argc, char *argv[])
         return 1;
     }
 
+    // The audio of channel pair 0, if there is one: each field of the capture gets its share of it, as the TBC metadata keep count of it. It is done before the
+    // map is applied, which needs it to say which audio goes with each field of the view
+    const QString wavInputFileName = CvbsAudio::wavFileName(Cvbs::baseName(inputFileName), 0);
+    CvbsAudio::WavInfo wavInfo;
+    const bool wavRead = QFileInfo::exists(wavInputFileName) && CvbsAudio::readWavInfo(wavInputFileName, wavInfo);
+    if (QFileInfo::exists(wavInputFileName) && !wavRead) return 1;
+    if (wavRead) {
+        const qint32 captureFields = metaData.getNumberOfFields();
+        for (qint32 fieldNumber = 1; fieldNumber <= captureFields; fieldNumber++) {
+            LdDecodeMetaData::Field field = metaData.getField(fieldNumber);
+            field.audioSamples = static_cast<qint32>(wavInfo.numberOfSamples * fieldNumber / captureFields
+                                                     - wavInfo.numberOfSamples * (fieldNumber - 1) / captureFields);
+            metaData.updateField(field, fieldNumber);
+        }
+        LdDecodeMetaData::PcmAudioParameters audioParameters;
+        audioParameters.sampleRate = sampleRate != 0 ? sampleRate : wavInfo.sampleRate;
+        audioParameters.bits = 16;
+        audioParameters.isSigned = true;
+        audioParameters.isLittleEndian = true;
+        audioParameters.isValid = true;
+        metaData.setPcmAudioParameters(audioParameters);
+    }
+
+    // The capture seen through the map its metadata keep: its fields (and those of the chroma file of a pair) are read in that order
+    QVector<FieldAudio::Range> audioRanges;
+    std::shared_ptr<const QVector<qint32>> viewTable;
+    if (!ignoreMapOption.isSet(parser)) {
+        QString mapError;
+        viewTable = MappedMetadata::applyEmbeddedMap(metaData, inputMetadataFileName, inputFileName, mapError, false, &audioRanges);
+        if (!mapError.isEmpty()) {
+            qCritical().noquote() << "Unable to use the map in the metadata:" << mapError << "(--ignore-map reads the capture as it is)";
+            return 1;
+        }
+        if (viewTable) qInfo() << "The capture is read through the map in its metadata (--ignore-map reads it as it is)";
+    }
+
     // The TBC metadata format: --meta, or that of the companion (SQLite if none)
     const LdDecodeMetaData::MetadataFormat outputFormat = metadataOptions.isFormatSet() ? metadataOptions.format()
                                                                                        : metaData.getFormat();
     const QString outputMetadataFileName = LdDecodeMetaData::metadataFileName(outputFileName, outputFormat);
 
     const QString outputBase = TbcFiles::baseName(outputFileName);
-    const QString wavFileName = CvbsAudio::wavFileName(Cvbs::baseName(inputFileName), 0);
+    const QString wavFileName = wavInputFileName;
     const QString outputPcmFileName = outputBase + ".pcm";
-    const bool hasAudio = QFileInfo::exists(wavFileName);
+    const bool hasAudio = wavRead;
 
     QStringList outputFiles = {outputFileName, outputMetadataFileName};
     if (hasAudio) outputFiles.append(outputPcmFileName);
@@ -164,8 +209,8 @@ int main(int argc, char *argv[])
     const qint32 fieldLength = videoParameters.fieldWidth * videoParameters.fieldHeight;
     SourceVideo sourceVideo;
     SourceVideo chromaSourceVideo;
-    if (!sourceVideo.open(inputFileName, fieldLength)) return 1;
-    if (isYc && !chromaSourceVideo.open(chromaFileName, fieldLength)) return 1;
+    if (!(viewTable ? sourceVideo.openMappedFields(inputFileName, fieldLength, -1, viewTable) : sourceVideo.open(inputFileName, fieldLength))) return 1;
+    if (isYc && !(viewTable ? chromaSourceVideo.openMappedFields(chromaFileName, fieldLength, -1, viewTable) : chromaSourceVideo.open(chromaFileName, fieldLength))) return 1;
     TargetVideo targetVideo;
     TargetVideo chromaTargetVideo;
     if (!targetVideo.open(outputFileName, videoParameters.system)) return 1;
@@ -194,8 +239,6 @@ int main(int argc, char *argv[])
     // The audio of channel pair 0 becomes the PCM, copied as it is (16 bits, not
     // resampled) and declared to be at the sample rate asked for, else the WAV's
     if (hasAudio) {
-        CvbsAudio::WavInfo wavInfo;
-        if (!CvbsAudio::readWavInfo(wavFileName, wavInfo)) return 1;
         if (sampleRate == 0) sampleRate = wavInfo.sampleRate;
 
         if (CvbsAudio::wavToPcm(wavFileName, outputPcmFileName) < 0) {
@@ -203,23 +246,46 @@ int main(int argc, char *argv[])
             return 1;
         }
 
-        // Each field gets its share of the audio, as the TBC metadata keeps count of it
-        for (qint32 fieldNumber = 1; fieldNumber <= numberOfFields; fieldNumber++) {
-            LdDecodeMetaData::Field field = metaData.getField(fieldNumber);
-            field.audioSamples = static_cast<qint32>(wavInfo.numberOfSamples * fieldNumber / numberOfFields
-                                                     - wavInfo.numberOfSamples * (fieldNumber - 1) / numberOfFields);
-            metaData.updateField(field, fieldNumber);
+        // For a capture read through its map the audio is that of the fields of the view, in their order (silence for a padded field): the PCM that was written
+        // is the audio of the capture, and is put in the order of the map in its place
+        if (viewTable) {
+            const QString viewFileName = outputPcmFileName + ".view";
+            bool reordered = false;
+            {
+                FieldAudio fieldAudio;
+                QFile view(viewFileName);
+                if (fieldAudio.open(outputFileName, audioRanges) && view.open(QIODevice::WriteOnly)) {
+                    for (qint32 fieldNumber = 1; fieldNumber <= audioRanges.size(); fieldNumber++) view.write(fieldAudio.audioOf(fieldNumber));
+                    reordered = true;
+                }
+            }
+            if (reordered && QFile::remove(outputPcmFileName) && QFile::rename(viewFileName, outputPcmFileName)) {
+                // (what the metadata count for each field is the length of its range)
+                const qint32 viewFields = std::min<qint32>(audioRanges.size(), metaData.getNumberOfFields());
+                for (qint32 fieldNumber = 1; fieldNumber <= viewFields; fieldNumber++) {
+                    LdDecodeMetaData::Field field = metaData.getField(fieldNumber);
+                    field.audioSamples = audioRanges[fieldNumber - 1].length / 4;
+                    metaData.updateField(field, fieldNumber);
+                }
+            } else {
+                qWarning().noquote() << "The audio could not be put in the order of the map: the PCM is the audio of the capture as it is";
+                QFile::remove(viewFileName);
+            }
+        } else {
+            // (the share of each field, again for the fields that were converted: the file can hold fewer than the metadata said)
+            for (qint32 fieldNumber = 1; fieldNumber <= numberOfFields; fieldNumber++) {
+                LdDecodeMetaData::Field field = metaData.getField(fieldNumber);
+                field.audioSamples = static_cast<qint32>(wavInfo.numberOfSamples * fieldNumber / numberOfFields
+                                                         - wavInfo.numberOfSamples * (fieldNumber - 1) / numberOfFields);
+                metaData.updateField(field, fieldNumber);
+            }
         }
 
-        LdDecodeMetaData::PcmAudioParameters audioParameters;
+        LdDecodeMetaData::PcmAudioParameters audioParameters = metaData.getPcmAudioParameters();
         audioParameters.sampleRate = sampleRate;
-        audioParameters.bits = 16;
-        audioParameters.isSigned = true;
-        audioParameters.isLittleEndian = true;
-        audioParameters.isValid = true;
         metaData.setPcmAudioParameters(audioParameters);
 
-        qInfo().noquote() << "Wrote" << wavInfo.numberOfSamples << "audio samples to" << outputPcmFileName
+        qInfo().noquote() << "Wrote" << QFileInfo(outputPcmFileName).size() / 4 << "audio samples to" << outputPcmFileName
                           << "declared as" << sampleRate << "Hz (not resampled)";
         if (QFileInfo::exists(CvbsAudio::wavFileName(Cvbs::baseName(inputFileName), 1))) {
             qWarning() << "Only the first audio channel pair is converted: a TBC capture has one audio track";

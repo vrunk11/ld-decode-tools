@@ -53,6 +53,7 @@ ld-export-metadata [options] <input.tbc>
 - `--audacity-labels <file>`: Write navigation information as Audacity labels
 - `--ffmetadata <file>`: Write navigation information as FFMETADATA1
 - `--closed-captions <file>`: Write closed captions as Scenarist SCC V1.0 format
+- `--ignore-map`: Read the capture as it is, though its metadata keep a map (the frames in the order of the disc, from ld-discmap); by default a capture is read through the map
 
 #### Arguments
 - `input`: Input metadata file (required)
