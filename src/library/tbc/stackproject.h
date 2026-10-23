@@ -14,6 +14,8 @@
 #include <QString>
 #include <QVector>
 
+#include "framemap.h"
+
 // One source of the stack
 struct StackSource {
     QString id;            // names the source in the session; kept when the sources are reordered
@@ -23,6 +25,8 @@ struct StackSource {
     bool enabled = true;   // an off source stays in the list but is left out of the stack
     qint32 offset = 0;     // the source is shifted by this many frames to align it with the others
     bool followMap = true;  // the mapping of the source (ld-discmap) is used when there is one; off, the capture it was made from is
+    FrameMap map;           // the map of the capture (ld-discmap), when the session holds one: the source is the capture seen through it (see FrameMap)
+    bool hasMap = false;
 
     // What opens the capture: the file, or, for a track of an LDX file, the file and "#" and the id of the track
     QString reference() const;
@@ -31,6 +35,8 @@ struct StackSource {
     QString resolvedReference() const;
     // What a measure of this source is kept under (see StackMeasure): the capture that is read, by its name and size
     QString measureKey() const;
+    // The map that is used for the source: its own, if it has one and follows it (a source that follows no map is read as the capture it is)
+    const FrameMap *activeMap() const { return (hasMap && followMap) ? &map : nullptr; }
 };
 
 // How the sources are stacked (the options of ld-disc-stacker)
@@ -41,6 +47,10 @@ struct StackSettings {
     bool passthrough = false;
     bool integrity = false;
     bool reverseFields = false;
+    // The other streams of the sources (EFM, AC3, 24-bit audio...) to copy into an LDX output (see StreamCopy): the source (its id) and the track. Not set: the
+    // default (the streams of the first source); set and empty: none.
+    bool copyStreamsSet = false;
+    QVector<QPair<QString, qint32>> copyStreams;
 };
 
 // What was measured of a session, kept in the file so that it need not be measured again, and so that a tool can use it as metadata: a value for each frame, along the
@@ -85,6 +95,10 @@ public:
     QString stackMeasureKey(bool withResidual) const;
     // The measure kept under a key, or null
     const StackMeasure *measureFor(const QString &key) const;
+
+    // The capture of a session that has one source on, for the tools that work on a capture itself (ld-process-vbi, ld-process-vits: they measure the video of
+    // the capture and write the metadata of the capture, not of the session). With several sources on, false: error says which captures to give one by one.
+    static bool singleCapture(const QString &sessionName, QString &captureFile, QString &error);
 
     // An id that no source has yet
     QString newSourceId() const;

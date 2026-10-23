@@ -17,6 +17,7 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFormLayout>
+#include "streamsdialog.h"
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QMessageBox>
@@ -66,6 +67,11 @@ ProcessDialog::ProcessDialog(const StackProject &stackProject, const QString &su
     codecCombo->addItem(tr("Lossless (FLAC for TBC and audio, FFV1 for CVBS)"), "auto");
     codecCombo->setToolTip(tr("For an .ldx file: how the video and the audio are kept in it"));
     form->addRow(tr("In an .ldx file:"), codecCombo);
+
+    streamsButton = new QPushButton(tr("Streams to copy..."));
+    streamsButton->setToolTip(tr("For an .ldx file: which other streams of the sources (EFM, AC3, RF, 24-bit audio) are copied into it, as they are"));
+    connect(streamsButton, &QPushButton::clicked, this, [this]() { chooseStreams(); });
+    form->addRow(tr("Other streams:"), streamsButton);
 
     {
         const QString suffix = QFileInfo(suggestedOutput).suffix().toLower();
@@ -140,6 +146,7 @@ void ProcessDialog::formatChanged()
     }
     metadataCombo->setEnabled(suffix != "ldx");
     codecCombo->setEnabled(suffix == "ldx");
+    if (streamsButton) streamsButton->setEnabled(suffix == "ldx");
 }
 
 bool ProcessDialog::isCvbs(const QString &file)
@@ -164,6 +171,19 @@ void ProcessDialog::log(const QString &text)
     logView->appendPlainText(text);
 }
 
+// Which other streams of the sources go into the LDX file (kept in the session that the stacking is given)
+void ProcessDialog::chooseStreams()
+{
+    StreamsDialog dialog(project, this);
+    if (!dialog.hasStreams()) {
+        QMessageBox::information(this, tr("Streams to copy"), tr("The sources hold no other stream to copy: only an LDX file holds EFM, AC3 or audio tracks of its own."));
+        return;
+    }
+    if (dialog.exec() != QDialog::Accepted) return;
+    project.stacking.copyStreamsSet = true;
+    project.stacking.copyStreams = dialog.chosen();
+}
+
 void ProcessDialog::setRunning(bool running)
 {
     startButton->setEnabled(!running);
@@ -172,6 +192,7 @@ void ProcessDialog::setRunning(bool running)
     formatCombo->setEnabled(!running);
     metadataCombo->setEnabled(!running && formatSuffix() != "ldx");
     codecCombo->setEnabled(!running && formatSuffix() == "ldx");
+    streamsButton->setEnabled(!running && formatSuffix() == "ldx");
     progress->setRange(0, running ? 0 : 1);
     progress->setValue(0);
 }

@@ -58,6 +58,9 @@ public:
         VbiDiscTypes type = VbiDiscTypes::unknownDiscType;
         QString userCode = "";
         qint32 picNo = -1;
+        // The CAV picture number is carried on two lines (17 and 18): true if it was read from one of them only, or the two disagreed and the number of line 18 was kept.
+        // (Not touched by the other fields: picNo is what it always was.)
+        bool picNoUnconfirmed = false;
         qint32 chNo = -1;
         qint32 clvHr = -1;
         qint32 clvMin = -1;

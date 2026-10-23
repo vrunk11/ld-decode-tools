@@ -13,7 +13,7 @@ Every option and its default is the one of `--help`; the exit code is 0 when the
 
 ### ld-json-converter
 
-Converts the metadata of a capture from JSON to SQLite, written with the schema of ld-decode. An existing output file is replaced.
+Converts the metadata of a capture from JSON to SQLite, written with the schema of ld-decode. An existing output file is replaced. A JSON file that has no blanking level (a NTSC one from before it was kept) gets the one the library works out from the levels of the video system, not a copy of the black level.
 
 ```
 ld-json-converter [options]

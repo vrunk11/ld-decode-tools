@@ -20,6 +20,7 @@
 #include "ldxcapture.h"
 #include "tbcfiles.h"
 #include "vbidecoder.h"
+#include "mappedmetadata.h"
 
 #include "tbc/logging.h"
 
@@ -58,6 +59,52 @@ static bool readSourceMetadata(const QString &name, bool reverseFields, LdDecode
     const QString metadataFile = LdDecodeMetaData::findMetadataFile(name);
     if (!metadataThere(metadataFile) || !metadata.read(metadataFile)) {
         error = QObject::tr("Could not read the metadata of %1").arg(name);
+        return false;
+    }
+    metadata.setIsFirstFieldFirst(!reverseFields);
+    return true;
+}
+
+// The metadata of a source of the session, with the field order the session says. A source that has a map is the capture seen through it: its
+// metadata are those of the mapped copy (see MappedMetadata), and the metadata of the capture itself are given in captureMetadata, for opening the video.
+static bool readSourceMetadata(const StackSource &entry, bool reverseFields, LdDecodeMetaData &metadata, QString &error, LdDecodeMetaData *captureMetadata = nullptr,
+                               std::shared_ptr<const QVector<qint32>> *embeddedTable = nullptr)
+{
+    const QString name = entry.resolvedReference();
+    const FrameMap *map = entry.activeMap();
+    if (!map) {
+        if (!readSourceMetadata(name, reverseFields, metadata, error)) return false;
+        // A source with no map in the session whose own metadata keep one is the capture seen through it (the Follow map box off reads the capture as it is)
+        if (entry.followMap && metadata.hasDiscMap()) {
+            const auto table = MappedMetadata::applyEmbeddedMap(metadata, LdDecodeMetaData::findMetadataFile(name), StackProject::referenceFile(name), error);
+            if (!table) {
+                if (error.isEmpty()) error = QObject::tr("The map in the metadata of %1 cannot be used").arg(name);
+                return false;
+            }
+            metadata.setIsFirstFieldFirst(!reverseFields);
+            if (embeddedTable) *embeddedTable = table;
+        }
+        return true;
+    }
+
+    LdDecodeMetaData local;
+    LdDecodeMetaData &capture = captureMetadata ? *captureMetadata : local;
+    const QString metadataFile = LdDecodeMetaData::findMetadataFile(name);
+    if (!metadataThere(metadataFile) || !capture.read(metadataFile)) {
+        error = QObject::tr("Could not read the metadata of %1").arg(name);
+        return false;
+    }
+
+    // The map is good for the capture it was made for
+    const QString videoFile = StackProject::referenceFile(name);
+    if (!LdxCapture::isLdxName(videoFile) && map->captureSize > 0 && QFileInfo::exists(videoFile) && QFileInfo(videoFile).size() != map->captureSize) {
+        error = QObject::tr("The map of %1 was made for another capture (it is not of the same size)").arg(name);
+        return false;
+    }
+
+    QString buildError;
+    if (!MappedMetadata::build(capture, *map, MappedMetadata::paddedAudioSamples(capture, metadataFile), metadata, buildError)) {
+        error = QObject::tr("The map of %1 cannot be used: %2").arg(name, buildError);
         return false;
     }
     metadata.setIsFirstFieldFirst(!reverseFields);
@@ -126,7 +173,7 @@ bool StackedVideo::readMetadata(const QString &stackFile, LdDecodeMetaData &meta
         return false;
     }
 
-    if (!readSourceMetadata(reference->resolvedReference(), session.stacking.reverseFields, metadata, error)) return false;
+    if (!readSourceMetadata(*reference, session.stacking.reverseFields, metadata, error)) return false;
 
     // The other sources that are on, to line them up with it
     std::vector<std::unique_ptr<LdDecodeMetaData>> others;
@@ -142,7 +189,7 @@ bool StackedVideo::readMetadata(const QString &stackFile, LdDecodeMetaData &meta
             continue;
         }
         auto other = std::make_unique<LdDecodeMetaData>();
-        if (!readSourceMetadata(entry.resolvedReference(), session.stacking.reverseFields, *other, error)) return false;
+        if (!readSourceMetadata(entry, session.stacking.reverseFields, *other, error)) return false;
         origins.append(discOrigin(*other));
         offsets.append(entry.offset);
         frames.append(other->getNumberOfFrames());
@@ -183,11 +230,14 @@ bool StackedVideo::readMetadata(const QString &stackFile, LdDecodeMetaData &meta
         }
         pair[0].isFirstField = true;
         pair[1].isFirstField = false;
-        for (LdDecodeMetaData::Field &field: pair) {
-            field.dropOuts = DropOuts();
-            field.vitsMetrics = LdDecodeMetaData::VitsMetrics();
+        // (a session with one source on is that source: its dropouts and its VITS measurements are the ones the video has)
+        if (frames.size() > 1) {
+            for (LdDecodeMetaData::Field &field: pair) {
+                field.dropOuts = DropOuts();
+                field.vitsMetrics = LdDecodeMetaData::VitsMetrics();
+            }
         }
-        if (haveSnr && (std::isfinite(measured->white[frame - 1]) || std::isfinite(measured->black[frame - 1]))) {
+        if (frames.size() > 1 && haveSnr && (std::isfinite(measured->white[frame - 1]) || std::isfinite(measured->black[frame - 1]))) {
             for (LdDecodeMetaData::Field &field: pair) {
                 field.vitsMetrics.inUse = true;
                 field.vitsMetrics.wSNR = std::isfinite(measured->white[frame - 1]) ? measured->white[frame - 1] : 0.0;
@@ -229,7 +279,9 @@ bool StackedVideo::open(const QString &stackFile, QString &error)
         auto source = std::make_unique<Source>();
         source->offset = entry.offset;    // (the position on the timeline is worked out below)
 
-        if (!readSourceMetadata(name, project.stacking.reverseFields, source->metadata, error)) return false;
+        LdDecodeMetaData captureMetadata;
+        std::shared_ptr<const QVector<qint32>> embeddedTable;
+        if (!readSourceMetadata(entry, project.stacking.reverseFields, source->metadata, error, &captureMetadata, &embeddedTable)) return false;
 
         const LdDecodeMetaData::VideoParameters &parameters = source->metadata.getVideoParameters();
         if (sources.empty()) {
@@ -245,7 +297,9 @@ bool StackedVideo::open(const QString &stackFile, QString &error)
         }
 
         // (with the line length, so that only the first lines of a field can be asked for)
-        if (!source->video.open(name, fieldLength, fieldWidth)) {
+        const FrameMap *map = entry.activeMap();
+        if (!(map ? source->video.openMapped(name, fieldLength, fieldWidth, *map, captureMetadata)
+                  : (embeddedTable ? source->video.openMappedFields(name, fieldLength, fieldWidth, embeddedTable) : source->video.open(name, fieldLength, fieldWidth)))) {
             error = QObject::tr("Could not open %1").arg(name);
             return false;
         }

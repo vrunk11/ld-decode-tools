@@ -648,6 +648,32 @@ static void testPhaseIDs(const QString &directory)
 }
 
 
+// The phase IDs that were measured are kept beside the file, while the file is as it was
+static void testPhaseCache(const QString &directory)
+{
+    std::cerr << "Testing the cache of the phase IDs\n";
+    const QString dataFile = directory + "/cache.cvbs";
+    {
+        QFile file(dataFile);
+        CHECK(file.open(QIODevice::WriteOnly));
+        file.write(QByteArray(1000, 'x'));
+    }
+    const QVector<qint32> ids = { 1, 2, -1, 4, 3, 8, -1, 1 };
+    QVector<qint32> read;
+    CHECK(!Cvbs::readPhaseCache(dataFile, ids.size(), read));              // (none yet)
+    CHECK(Cvbs::writePhaseCache(dataFile, ids));
+    CHECK(QFileInfo::exists(Cvbs::phaseCacheFileName(dataFile)));
+    CHECK(Cvbs::readPhaseCache(dataFile, ids.size(), read) && read == ids);
+    CHECK(!Cvbs::readPhaseCache(dataFile, ids.size() + 2, read));          // (another number of fields)
+    {
+        QFile file(dataFile);                                               // (the file is not the one that was measured)
+        CHECK(file.open(QIODevice::Append));
+        file.write("more");
+    }
+    CHECK(!Cvbs::readPhaseCache(dataFile, ids.size(), read));
+    CHECK(!Cvbs::readPhaseCache(directory + "/absent.cvbs", ids.size(), read));
+}
+
 int main(int argc, char *argv[])
 {
     QCoreApplication app(argc, argv);
@@ -666,6 +692,7 @@ int main(int argc, char *argv[])
     testAudio(directory.path());
     testPhaseGaps();
     testPhaseIDs(directory.path());
+    testPhaseCache(directory.path());
     testStreamReader(directory.path());
 
     std::cerr << "Tests complete\n";

@@ -104,10 +104,23 @@ static void testBackUp()
     CHECK(QFile::exists(metadata + ".bup"));
     QFile copy(metadata + ".bup");
     CHECK(copy.open(QIODevice::ReadOnly) && copy.readAll() == "metadata");
+    copy.close();
 
-    // A backup that is there is not replaced: it fails
-    CHECK(!NoBackupOption::backUp(metadata, metadata, false, ".bup"));
+    // A backup that is there is replaced, and the suffix is always .bup
+    {
+        QFile again(metadata);
+        CHECK(again.open(QIODevice::WriteOnly) && again.write("newer metadata") > 0);
+    }
+    CHECK(NoBackupOption::backUp(metadata, metadata, false, ".bup"));
+    QFile newer(metadata + ".bup");
+    CHECK(newer.open(QIODevice::ReadOnly) && newer.readAll() == "newer metadata");
+    newer.close();
     CHECK(NoBackupOption::backUp(metadata, metadata, false, ".vbup"));
+    CHECK(!QFile::exists(metadata + ".vbup"));
+
+    // legacy: a backup that is there is not replaced (it fails), and the suffix is the tool's
+    CHECK(!NoBackupOption::backUp(metadata, metadata, false, ".bup", true));
+    CHECK(NoBackupOption::backUp(metadata, metadata, false, ".vbup", true));
     CHECK(QFile::exists(metadata + ".vbup"));
 }
 

@@ -23,13 +23,10 @@ class QPlainTextEdit;
 class QProgressBar;
 class QPushButton;
 
-// Maps TBC captures with ld-discmap, one after the other, and says how it goes: each is written as a copy beside it (name_map.tbc, with its
-// metadata and audio) or, to overwrite, written beside it under a temporary name and put in the place of the original when it is done (so that a
-// mapping that fails leaves the capture as it was).
+// Maps TBC captures with ld-discmap, one after the other, and says how it goes: the map of each (the frames in the order of the disc, and where each
+// number comes from) is read from what ld-discmap writes, and given back with mapFor(); no copy of the capture is made. (The Update SNR task still
+// measures with ld-process-vits, in place.)
 //
-// A capture that is a track of an LDX file (file.ldx#2) is taken out into a folder beside the file, mapped there, and put back by ld-container: as a track of
-// its own that says it is the mapping of the capture (--mapped-from), or, to overwrite, in the place of the track (which is removed). The file is written
-// again under a temporary name and put in the place of the original when it is done.
 class MapDialog : public QDialog
 {
     Q_OBJECT
@@ -53,11 +50,13 @@ public:
     QStringList mappedIds() const { return done; }
     // The name of the track that replaced a capture of an LDX file that was overwritten (file.ldx#5), empty for any other
     QString replacedReference(const QString &id) const { return replaced.value(id); }
+    // The map that was worked out for a source (a FrameMap as JSON): nothing is written beside the capture, the map is kept in the session
+    QByteArray mapFor(const QString &id) const { return maps.value(id); }
+    // Keep the map of each source in the metadata of the source as well (its .tbc.db, its .tbc.json, or its LDX file), as soon as it is worked out; the sources
+    // where that was done are in savedIds() (the others, if it failed, keep the map in the session only)
+    void setSaveInSources(bool save) { saveInSources = save; }
+    QStringList savedIds() const { return saved; }
 
-    // The files that go with a TBC file and that ld-discmap writes with it: its metadata (the one that is there, db or json) and its audio
-    static QStringList companions(const QString &tbcFile);
-    // The file a job writes: the mapping (name_map.tbc), or the temporary file when the capture is overwritten
-    static QString outputFor(const QString &input, bool overwrite);
     // Whether a job is a track of an LDX file
     static bool isLdxJob(const Job &job);
 
@@ -71,8 +70,6 @@ private:
     void runNext();
     void finish(bool success, const QString &message);
     void log(const QString &text);
-    bool replaceOriginal(const Job &job, QString &error);
-    void removeOutput(const Job &job);
     QString toolPath(const QString &name = QStringLiteral("ld-discmap")) const;
 
     // What a job runs: one program after the other (ld-discmap alone for a .tbc file; for a track of an LDX file, ld-container takes its files out, then ld-discmap,
@@ -84,11 +81,9 @@ private:
         bool mapping = false;
     };
     bool plan(const Job &job, QString &error);
-    bool planLdx(const Job &job, QString &error);
     bool planSnr(const Job &job, QString &error);
     bool finishSnr(const Job &job, QString &error);
     void startStage();
-    bool finishLdx(const Job &job, QString &error);
     void cleanUp(const Job &job);
     QString workFolder(const Job &job) const;
     QVector<Stage> stages;
@@ -98,6 +93,11 @@ private:
     QString ldxResult;         // what is written (an LDX job)
     qint32 ldxTrack = 0;       // the track that was added, once known
     QHash<QString, QString> replaced;
+    QHash<QString, QByteArray> maps;
+    bool saveInSources = false;
+    QStringList saved;
+    QString mapFile;           // where ld-discmap writes the map of the job that runs
+    bool finishMap(const Job &job, QString &error);
 
     QVector<Job> jobs;
     bool overwrite;

@@ -49,6 +49,7 @@ ld-disc-stacker [options] <source1.tbc> <source2.tbc> [...] <output.tbc>
 #### Advanced Options
 - `--no-diffdod`: Do not use differential dropout detection on low source pixels
 - `--no-map`: Disable mapping requirement
+- `--measured-only`: for the sources read through a map in a session, leave out the frames whose number was not read from their own VBI
 - `--passthrough`: Pass-through dropouts present on every source
 - `--it, --integrity`: Check if frames contain skip or sample drop and discard bad source for specific frame
   - 2 = Smart mean

@@ -30,7 +30,7 @@
 
 #include "lddecodemetadata.h"
 
-QString generateTimeStamp(qint32 fieldIndex);
+QString generateTimeStamp(qint32 fieldIndex, VideoSystem system);
 qint32 sanityCheckData(qint32 dataByte);
 bool writeClosedCaptions(LdDecodeMetaData &metaData, const QString &fileName);
 

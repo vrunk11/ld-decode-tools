@@ -28,6 +28,20 @@ Options:
                                        JSON input)
   -r, --reverse                        Reverse the field order to second/first
                                        (default first/second)
+  --ignore-map                         Read the capture as it is, though its
+                                       metadata keep a map (the frames in the
+                                       order of the disc, from ld-discmap)
+  --no-audio                           Do not write the analogue audio of the
+                                       first source with the video (an LDX
+                                       output has it by default)
+  --copy-streams <streams>             The other streams of the sources (EFM, AC3,
+                                       RF, 24-bit audio) to copy as they are into
+                                       an LDX output, with their own times: none,
+                                       default (the EFM, AC3 and 24-bit audio of
+                                       the first source), or a list such as
+                                       1:efm,1:ac3,2:#5 (the number of the source
+                                       from 1, then efm, ac3, rf, audio, all or
+                                       #track)
   -t, --threads <number>               Specify the number of concurrent threads
                                        (default is the number of logical CPUs)
   -m, --mode <number>                  Specify the stacking mode to use
@@ -42,6 +56,12 @@ Options:
   --no-diffdod                         Do not use differential dropout
                                        detection on low source pixels
   --no-map                             Disable mapping requirement
+  --measured-only                      For the sources read through a map (a
+                                       session made by ld-discmap): leave out
+                                       the frames whose number was not read from
+                                       their own VBI (read from one line only,
+                                       replaced by the sequence of the numbers,
+                                       or guessed)
   --passthrough                        Pass-through dropouts present on every
                                        source
   --it, --integrity                    Check if frames contain skip or sample
@@ -65,9 +85,11 @@ Instead of the list of inputs, one `.stack` session file can be given, as saved 
 ld-disc-stacker session.stack [output.tbc]
 ```
 
-The sources that are switched on in the session are stacked, with the stacking options and the output file of the session; a source that has a mapping (the file beside it with `_map` in its name, or the mapped track of an LDX file) is read from that mapping unless its `followMap` is off in the session; what is given on the command line (such as `--mode` or `--smart-threshold`) takes precedence, and an output file after the session replaces the one in it. At least 2 sources must be on.
+The sources that are switched on in the session are stacked, with the stacking options and the output file of the session; a source that has a `map` in the session (made by `ld-discmap capture.tbc session.stack`) is read as the capture seen through that map, with no mapped copy; otherwise a source that has a mapping (the file beside it with `_map` in its name, or the mapped track of an LDX file) is read from that mapping unless its `followMap` is off in the session; what is given on the command line (such as `--mode` or `--smart-threshold`) takes precedence, and an output file after the session replaces the one in it. At least 2 sources must be on.
 
 The sources are not matched by their VBI frame numbers but lined up by an offset in frames each. The first source that is on is the reference: the stack has its frames, and its offset means nothing. The frame `f` of the stack is made from the frame `f - offset` of every other source, which has no frame there if that falls outside it. This is for captures that cannot be mapped; it needs no VBI data and no mapping with ld-discmap.
+
+`--measured-only` leaves out, for the sources that are read through a map, the frames whose number is not a measure: ld-discmap says for each frame whether its number was read from the VBI (the two lines that carry it agreeing), read from one line only or with the lines disagreeing, replaced by what the numbers around it say, deduced from the pulldown, guessed, or padded. The frames that are unconfirmed, replaced or guessed are treated as the ones that could not be numbered are (a dropout over every line, so the stack does not use them); the pulldown frames of an NTSC CAV disc stay.
 
 With no offsets, a session gives the same stack as the usual way with `--no-map` when the sources are in step.
 
@@ -94,3 +116,7 @@ The first source can be `-`, an LDX stream on the standard input (`ld-container 
 The output can be an LDX file (`out.ldx`): the video is a track of it, with a track for the metadata (the tool adds them when it is done) and, for `ld-discmap`, one for the analogue audio instead of the `.pcm` file. The history of the file records the work, with the arguments of the tool (`ld-container history out.ldx`).
 
 With `-` as the output file (and no `--output-metadata`), the output is an LDX stream on the standard output, with the metadata of each field just before its video and the history of the source and of this tool, so that the next tool can read it (`ld-container pack capture.tbc -o - | ld-disc-stacker ... - | ld-analyse -`). A raw TBC on the standard output is still written with `--output-metadata`. CVBS video is sent as `cvbs` frames (the 24-bit audio of a CVBS capture, for `ld-discmap`, as a 24-bit `pcm` track).
+
+## Output as an LDX file
+
+When the output is an LDX file, it holds the analogue audio of the **first source** (the reference) with the video, as a `pcm` track: the audio of the fields that the first source gives (for a source read through a map, the audio of the field of the capture each field is, silence for a padded frame). `--no-audio` leaves it out. **The other streams** of the sources (the EFM and AC3 tracks, the RF, the 24-bit audio of a CVBS capture) are copied as they are, block by block, with the times they have in their source, by `--copy-streams`: by default those of the first source, `none` for none, or a list (`1:efm,2:#5`). They are **not realigned** to the frames of the output, which is right for the first source when it is not shifted and not read through a map that moves frames; the history of the file says what was copied from where, and that it was not realigned, but **the offset is recorded**: each copied track has an `alignment` parameter (for each stretch of frames of the output, the frame of its source that goes with it: a shift, a skip, frames that the source does not have), and the history says whether the stream is shifted from the video, by how many frames, or in how many pieces, so that a reader can correct the offset between the video and the stream. In ld-stacker-gui the Process window (format LDX) has a *Streams to copy...* button for the choice, which the session keeps (`stacking.copyStreams`). A `.tbc` output has no audio and no other stream, as before (copy the `.pcm` of the source you want).

@@ -100,6 +100,23 @@ int main(int argc, char *argv[])
         source.close();
     }
 
+    // A capture with no audio file, or an empty one: open says no (it used to stop the program)
+    {
+        QFile none(directory.path() + "/none.tbc");
+        CHECK(none.open(QIODevice::WriteOnly));
+        none.close();
+        SourceAudio source;
+        CHECK(!source.open(QFileInfo(directory.path() + "/none.tbc")));
+
+        QFile empty(directory.path() + "/empty.pcm");
+        CHECK(empty.open(QIODevice::WriteOnly));
+        empty.close();
+        QFile emptyTbc(directory.path() + "/empty.tbc");
+        CHECK(emptyTbc.open(QIODevice::WriteOnly));
+        emptyTbc.close();
+        CHECK(!source.open(QFileInfo(directory.path() + "/empty.tbc")));
+    }
+
     // The peaks: bins, ranges, adding in pieces gives the same as all at once
     {
         const QVector<qint16> samples = ramp(5000, 3);

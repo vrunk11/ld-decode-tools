@@ -23,6 +23,7 @@
 ************************************************************************/
 
 #include "discmap.h"
+#include "mappedmetadata.h"
 #include "discnumbering.h"
 
 #include <algorithm>
@@ -80,6 +81,13 @@ DiscMap::DiscMap(const QFileInfo &metadataFileInfo, const bool reverseFieldOrder
         m_frames[frameNumber].firstField(ldDecodeMetaData->getFirstFieldNumber(frameNumber + 1));
         m_frames[frameNumber].secondField(ldDecodeMetaData->getSecondFieldNumber(frameNumber + 1));
 
+        // A frame the metadata cannot give two fields to (a hole in the fields, no first field near): the capture cannot be mapped
+        if (m_frames[frameNumber].firstField() < 1 || m_frames[frameNumber].secondField() < 1) {
+            qCritical() << "The metadata have no complete frame at frame" << (frameNumber + 1) << "- the fields of the capture are not in order, it cannot be mapped";
+            m_tbcValid = false;
+            return;
+        }
+
         // Get the VBI data and then decode (frames are indexed from 1)
         auto vbi1 = ldDecodeMetaData->getFieldVbi(ldDecodeMetaData->getFirstFieldNumber(frameNumber + 1)).vbiData;
         auto vbi2 = ldDecodeMetaData->getFieldVbi(ldDecodeMetaData->getSecondFieldNumber(frameNumber + 1)).vbiData;
@@ -117,16 +125,8 @@ DiscMap::DiscMap(const QFileInfo &metadataFileInfo, const bool reverseFieldOrder
         m_audioFieldSampleLength = 736;
     }
 
-    // A CVBS capture's audio has the rate of its WAV file, not 44.1 kHz: a field's
-    // worth of it is the rate over the field rate (50 Hz, or 60000/1001 Hz)
-    if (ldDecodeMetaData->isCvbs()) {
-        CvbsAudio::WavInfo wavInfo;
-        const QString wavFileName = CvbsAudio::wavFileName(Cvbs::baseName(Cvbs::dataFileForMetadata(m_metadataFileInfo.filePath())), 0);
-        if (QFileInfo::exists(wavFileName) && CvbsAudio::readWavInfo(wavFileName, wavInfo)) {
-            m_audioFieldSampleLength = m_isDiscPal ? qRound(wavInfo.sampleRate / 50.0)
-                                                   : qRound(wavInfo.sampleRate * 1001.0 / 60000.0);
-        }
-    }
+    // A CVBS capture's audio has the rate of its WAV file, not 44.1 kHz
+    m_audioFieldSampleLength = MappedMetadata::paddedAudioSamples(*ldDecodeMetaData, m_metadataFileInfo.filePath());
 
     // Get the disc type (CAV/CLV)
     qint32 framesToCheck = 100;
@@ -186,6 +186,7 @@ DiscMap::DiscMap(const QFileInfo &metadataFileInfo, const bool reverseFieldOrder
             }
         } else {
             m_frames[frameNumber].vbiFrameNumber(vbiData[frameNumber].picNo);
+            m_frames[frameNumber].isNumberUnconfirmed(vbiData[frameNumber].picNoUnconfirmed);
         }
     }
 
@@ -314,26 +315,18 @@ DiscMap::DiscMap(const QFileInfo &metadataFileInfo, const bool reverseFieldOrder
         double bsnr = (ldDecodeMetaData->getFieldVitsMetrics(ldDecodeMetaData->getFirstFieldNumber(frameNumber + 1)).bPSNR +
                 ldDecodeMetaData->getFieldVitsMetrics(ldDecodeMetaData->getSecondFieldNumber(frameNumber + 1)).bPSNR) / 2.0;
 
-        // Convert logarithmic to linear and then into percentage
-        double blackSnrLinear = pow(bsnr / 20, 10);
-        double snrReferenceLinear = pow(43.0 / 20, 10); // Note: 43 dB is the expected maximum
-        double bsnrPercent = (100.0 / snrReferenceLinear) * blackSnrLinear;
-        if (bsnrPercent > 100.0) bsnrPercent = 100.0;
-
         // Calculate the cumulative length of all the dropouts in the frame (by summing both fields)
-        qint32 totalDotsInFrame = (ldDecodeMetaData->getVideoParameters().fieldHeight * 2) + ldDecodeMetaData->getVideoParameters().fieldWidth;
+        const qint64 samplesInFrame = static_cast<qint64>(ldDecodeMetaData->getVideoParameters().fieldWidth) * ldDecodeMetaData->getVideoParameters().fieldHeight * 2;
         DropOuts dropOuts1 = ldDecodeMetaData->getFieldDropOuts(ldDecodeMetaData->getFirstFieldNumber(frameNumber + 1));
         DropOuts dropOuts2 = ldDecodeMetaData->getFieldDropOuts(ldDecodeMetaData->getSecondFieldNumber(frameNumber + 1));
 
         const qint64 frameDoLength = dropOuts1.totalLength() + dropOuts2.totalLength();
 
-        double frameDoPercent = 100.0 - (static_cast<double>(frameDoLength) / static_cast<double>(totalDotsInFrame));
-
         // Include the sync confidence in the quality value (this is 100% where each measurement is 50% of the total)
         qint32 syncConfPercent = (ldDecodeMetaData->getField(ldDecodeMetaData->getFirstFieldNumber(frameNumber + 1)).syncConf +
                                   ldDecodeMetaData->getField(ldDecodeMetaData->getSecondFieldNumber(frameNumber + 1)).syncConf) / 2;
 
-        m_frames[frameNumber].frameQuality((bsnrPercent + penaltyPercent + static_cast<double>(syncConfPercent) + (frameDoPercent * 1000.0)) / 1004.0);
+        m_frames[frameNumber].frameQuality(frameQualityPercent(bsnr, penaltyPercent, static_cast<double>(syncConfPercent), frameDoLength, samplesInFrame));
         //tbcDebugStream() << "Frame:" << frameNumber << bsnrPercent << penaltyPercent << syncConfPercent << frameDoPercent << "quality =" << m_frames[frameNumber].frameQuality();
     }
 
@@ -450,6 +443,39 @@ void DiscMap::setUnmappable(qint32 frameNumber)
 {
     if (frameNumber < 0 || frameNumber >= m_numberOfFrames) return;
     m_frames[frameNumber].isUnmappable(true);
+}
+
+void DiscMap::setNumberCorrected(qint32 frameNumber)
+{
+    if (frameNumber < 0 || frameNumber >= m_numberOfFrames) return;
+    m_frames[frameNumber].isNumberCorrected(true);
+}
+
+FrameMap DiscMap::toFrameMap(qint64 captureFields, qint64 captureSize) const
+{
+    QVector<MapFrame> frames;
+    frames.reserve(m_numberOfFrames);
+    for (qint32 i = 0; i < m_numberOfFrames; i++) {
+        const Frame &frame = m_frames[i];
+        MapFrame entry;
+        entry.discFrame = frame.vbiFrameNumber();
+        // The frame of the capture as its metadata give frames (the same fields that were read for it), or none if it is padded
+        entry.captureFrame = frame.isPadded() ? 0 : frame.seqFrameNumber();
+        entry.unusable = frame.isUnmappable();
+        if (frame.isPadded()) entry.basis = MapBasis::Padded;
+        else if (frame.isUnmappable()) entry.basis = MapBasis::Guessed;
+        else if (frame.isPullDown()) entry.basis = MapBasis::Pulldown;
+        else if (frame.isNumberCorrected()) entry.basis = MapBasis::Sequence;
+        else if (frame.isNumberUnconfirmed()) entry.basis = MapBasis::Unconfirmed;
+        else entry.basis = MapBasis::Measured;
+        frames.append(entry);
+    }
+    FrameMap map = FrameMap::fromFrames(frames);
+    map.captureFields = captureFields;
+    map.captureSize = captureSize;
+    map.reverseFields = m_reverseFieldOrder;
+    map.discType = m_isDiscCav ? "CAV" : "CLV";
+    return map;
 }
 
 // Method to return the original sequential frame number (which maps to the lddecodemetadata VBI)
@@ -798,189 +824,11 @@ bool DiscMap::saveTargetMetadata(QFileInfo outputFileInfo)
 
 bool DiscMap::buildTargetMetadata(LdDecodeMetaData &targetMetadata)
 {
-    qint32 notifyInterval = m_numberOfFrames / 50;
-    if (notifyInterval < 1) notifyInterval = 1;
-
-    LdDecodeMetaData::VideoParameters sourceVideoParameters = ldDecodeMetaData->getVideoParameters();
-
-    // Indicate that the source has been mapped
-    sourceVideoParameters.isMapped = true;
-    targetMetadata.setVideoParameters(sourceVideoParameters);
-
-    // Store the PCM audio parameters
-    if (ldDecodeMetaData->hasPcmAudioParameters()) {
-        targetMetadata.setPcmAudioParameters(ldDecodeMetaData->getPcmAudioParameters());
+    // The metadata of the mapped capture are those of the capture seen through the map (the library builds them, for every tool that reads a map)
+    QString error;
+    if (!MappedMetadata::build(*ldDecodeMetaData, toFrameMap(0, 0), m_audioFieldSampleLength, targetMetadata, error)) {
+        qCritical().noquote() << "Cannot build the metadata of the mapped capture:" << error;
+        return false;
     }
-
-    // Set the number of sequential fields
-    targetMetadata.setNumberOfFields(m_numberOfFrames * 2);
-
-    // Make a VBI Decoder object for verifying generated VBI
-    VbiDecoder vbiDecoder;
-
-    for (qint32 frameNumber = 0; frameNumber < m_numberOfFrames; frameNumber++) {
-        if (!m_frames[frameNumber].isPadded()) {
-            // Normal frame metadata
-
-            // Normal frame - get the data from the source video
-            qint32 firstFieldNumber = m_frames[frameNumber].firstField();
-            qint32 secondFieldNumber = m_frames[frameNumber].secondField();
-
-            // Get the source metadata for the fields
-            LdDecodeMetaData::Field firstSourceMetadata = ldDecodeMetaData->getField(firstFieldNumber);
-            LdDecodeMetaData::Field secondSourceMetadata = ldDecodeMetaData->getField(secondFieldNumber);
-
-            // Generate new VBI data for the frame
-            if (m_isDiscCav) {
-                // Disc is CAV - add a frame number
-                // The frame number is hex 0xF12345 (where 1,2,3,4,5 are hex digits 0-9)
-                // inserted into VBI lines 17 and 18 of the first field
-                if (!firstSourceMetadata.vbi.inUse) {
-                    firstSourceMetadata.vbi.inUse = true;
-                    firstSourceMetadata.vbi.vbiData[0] = 0;
-                }
-
-                firstSourceMetadata.vbi.vbiData[1] = convertFrameToVbi(m_frames[frameNumber].vbiFrameNumber());
-                firstSourceMetadata.vbi.vbiData[2] = convertFrameToVbi(m_frames[frameNumber].vbiFrameNumber());
-
-                // Note: Because only 2 lines of VBI are replaced here, its possible that corruption
-                // in the unmodified line causes the resulting VBI to be invalid - so we need to check
-                // for that here
-                VbiDecoder::Vbi vbi = vbiDecoder.decodeFrame(
-                        firstSourceMetadata.vbi.vbiData[0], firstSourceMetadata.vbi.vbiData[1], firstSourceMetadata.vbi.vbiData[2],
-                        secondSourceMetadata.vbi.vbiData[0], secondSourceMetadata.vbi.vbiData[1], secondSourceMetadata.vbi.vbiData[2]);
-
-                if (vbi.picNo != m_frames[frameNumber].vbiFrameNumber()) {
-                    qInfo() << "Warning: Updated VBI frame number for frame" << m_frames[frameNumber].vbiFrameNumber() << "has been corrupted by existing VBI data - overwriting all VBI for frame";
-                    firstSourceMetadata.vbi.vbiData[0] = 0;
-                }
-            } else {
-                // Disc is CLV - add a timecode
-                if (!firstSourceMetadata.vbi.inUse) {
-                    firstSourceMetadata.vbi.inUse = true;
-                }
-                firstSourceMetadata.vbi.vbiData[0] = convertFrameToClvPicNo(m_frames[frameNumber].vbiFrameNumber());
-                firstSourceMetadata.vbi.vbiData[1] = convertFrameToClvTimeCode(m_frames[frameNumber].vbiFrameNumber());
-                firstSourceMetadata.vbi.vbiData[2] = convertFrameToClvTimeCode(m_frames[frameNumber].vbiFrameNumber());
-            }
-
-            // A frame that could not be numbered has a dropout over the whole of each field: the stack leaves it out, as it does a dropout
-            if (m_frames[frameNumber].isUnmappable()) {
-                for (LdDecodeMetaData::Field *field: { &firstSourceMetadata, &secondSourceMetadata }) {
-                    field->dropOuts.clear();
-                    for (qint32 line = 1; line <= sourceVideoParameters.fieldHeight; line++) field->dropOuts.append(0, sourceVideoParameters.fieldWidth, line);
-                }
-            }
-
-            // Append the fields to the metadata
-            targetMetadata.appendField(firstSourceMetadata);
-            targetMetadata.appendField(secondSourceMetadata);
-        } else {
-            // Padded frame metadata
-
-            // Generate dummy target field metadata
-            LdDecodeMetaData::Field firstSourceMetadata;
-            LdDecodeMetaData::Field secondSourceMetadata;
-            firstSourceMetadata.isFirstField = true;
-            secondSourceMetadata.isFirstField = false;
-            firstSourceMetadata.pad = true;
-            secondSourceMetadata.pad = true;
-
-            // Generate VBI data for the padded (dummy) output frame
-            // Also add the padded size of the audio sample data
-            if (m_isDiscCav) {
-                // CAV
-                firstSourceMetadata.vbi.inUse = true;
-                firstSourceMetadata.vbi.vbiData[0] = 0;
-                firstSourceMetadata.vbi.vbiData[1] = convertFrameToVbi(m_frames[frameNumber].vbiFrameNumber());
-                firstSourceMetadata.vbi.vbiData[2] = convertFrameToVbi(m_frames[frameNumber].vbiFrameNumber());
-                firstSourceMetadata.audioSamples = m_audioFieldSampleLength;
-
-                secondSourceMetadata.vbi.inUse = true;
-                secondSourceMetadata.vbi.vbiData[0] = 0;
-                secondSourceMetadata.vbi.vbiData[1] = 0;
-                secondSourceMetadata.vbi.vbiData[2] = 0;
-                secondSourceMetadata.audioSamples = m_audioFieldSampleLength;
-            } else {
-                // CLV
-                firstSourceMetadata.vbi.inUse = true;
-                firstSourceMetadata.vbi.vbiData[0] = convertFrameToClvPicNo(m_frames[frameNumber].vbiFrameNumber());
-                firstSourceMetadata.vbi.vbiData[1] = convertFrameToClvTimeCode(m_frames[frameNumber].vbiFrameNumber());
-                firstSourceMetadata.vbi.vbiData[2] = convertFrameToClvTimeCode(m_frames[frameNumber].vbiFrameNumber());
-                firstSourceMetadata.audioSamples = m_audioFieldSampleLength;
-
-                secondSourceMetadata.vbi.inUse = true;
-                secondSourceMetadata.vbi.vbiData[0] = 0;
-                secondSourceMetadata.vbi.vbiData[1] = 0;
-                secondSourceMetadata.vbi.vbiData[2] = 0;
-                secondSourceMetadata.audioSamples = m_audioFieldSampleLength;
-            }
-
-            // Append the fields to the metadata
-            targetMetadata.appendField(firstSourceMetadata);
-            targetMetadata.appendField(secondSourceMetadata);
-        }
-
-        // Notify the user
-        if (frameNumber % notifyInterval == 0) {
-            qInfo() << "Created metadata for frame" << frameNumber << "of" << m_numberOfFrames;
-        }
-    }
-
     return true;
-}
-
-// Convert a frame number to the VBI hex frame number representation
-// See the IEC specification for details of the VBI format
-qint32 DiscMap::convertFrameToVbi(qint32 frameNumber)
-{
-    // Generate a string containing the required number
-    QString number = "00F" + QString("%1").arg(frameNumber, 5, 10, QChar('0'));
-    bool ok;
-    qint32 returnValue = number.toInt(&ok, 16);
-    if (!ok) returnValue = 0;
-
-    return returnValue;
-}
-
-// Convert a frame number to a VBI CLV picture number
-// See the IEC specification for details of the VBI format
-qint32 DiscMap::convertFrameToClvPicNo(qint32 frameNumber)
-{
-    // Convert the frame number into a CLV timecode
-    LdDecodeMetaData::ClvTimecode timecode = ldDecodeMetaData->convertFrameNumberToClvTimecode(frameNumber);
-
-    // Generate the seconds
-    qint32 secondsX1;
-    if (timecode.seconds % 10 == 0) secondsX1 = timecode.seconds;
-    else secondsX1 = (timecode.seconds - (timecode.seconds % 10));
-    qint32 secondsX3 = timecode.seconds - secondsX1;
-    secondsX1 = ((secondsX1 + 10) / 10) + 9;
-
-    // Generate a string containing the required number
-    QString number = "008" + QString("%1").arg(secondsX1, 1, 16, QChar('0')) + "E" +
-            QString("%1").arg(secondsX3, 1, 10, QChar('0')) +
-            QString("%1").arg(timecode.pictureNumber, 2, 10, QChar('0'));
-    bool ok;
-    qint32 returnValue = number.toInt(&ok, 16);
-    if (!ok) returnValue = 0;
-
-    return returnValue;
-}
-
-// Convert a frame number to a CLV programme time code
-// See the IEC specification for details of the VBI format
-qint32 DiscMap::convertFrameToClvTimeCode(qint32 frameNumber)
-{
-    // Convert the frame number into a CLV timecode
-    LdDecodeMetaData::ClvTimecode timecode = ldDecodeMetaData->convertFrameNumberToClvTimecode(frameNumber);
-
-    // Generate a string containing the required number
-    QString number = "00F" + QString("%1").arg(timecode.hours, 1, 10, QChar('0')) + "DD" +
-            QString("%1").arg(timecode.minutes, 2, 10, QChar('0'));
-    bool ok;
-    qint32 returnValue = number.toInt(&ok, 16);
-    if (!ok) returnValue = 0;
-
-    return returnValue;
 }

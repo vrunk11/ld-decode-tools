@@ -59,6 +59,7 @@ private:
     void setRunning(bool running);
     void runNextStep();
     void formatChanged();
+    void chooseStreams();
     QString formatSuffix() const;
     void startLdx(const QString &output);
     void finish(bool success, const QString &message);
@@ -71,6 +72,7 @@ private:
     QComboBox *formatCombo = nullptr;
     QComboBox *metadataCombo = nullptr;
     QComboBox *codecCombo = nullptr;
+    QPushButton *streamsButton = nullptr;
     QLabel *summary = nullptr;
     QPlainTextEdit *logView = nullptr;
     QProgressBar *progress = nullptr;

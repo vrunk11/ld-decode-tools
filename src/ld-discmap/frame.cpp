@@ -24,6 +24,8 @@
 
 #include "frame.h"
 
+#include <cmath>
+
 Frame::Frame(const qint32 seqFrameNumber, const qint32 vbiFrameNumber, const bool isPictureStop,
              const bool isPullDown, const bool isLeadInOrOut, const bool isMarkedForDeletion,
              const double frameQuality, const bool isPadded, const bool isClvOffset,
@@ -93,6 +95,26 @@ bool Frame::isUnmappable() const
 void Frame::isUnmappable(bool value)
 {
     m_isUnmappable = value;
+}
+
+bool Frame::isNumberCorrected() const
+{
+    return m_isNumberCorrected;
+}
+
+void Frame::isNumberCorrected(bool value)
+{
+    m_isNumberCorrected = value;
+}
+
+bool Frame::isNumberUnconfirmed() const
+{
+    return m_isNumberUnconfirmed;
+}
+
+void Frame::isNumberUnconfirmed(bool value)
+{
+    m_isNumberUnconfirmed = value;
 }
 
 bool Frame::isMarkedForDeletion() const
@@ -209,4 +231,18 @@ bool Frame::operator<(const Frame& other) const
 {
     if (m_vbiFrameNumber != other.m_vbiFrameNumber) return m_vbiFrameNumber < other.m_vbiFrameNumber;
     return !m_isPullDown && other.m_isPullDown;
+}
+
+double frameQualityPercent(double blackPsnr, double penaltyPercent, double syncConfPercent, qint64 dropOutLength, qint64 samplesInFrame)
+{
+    // Decibels to an amplitude ratio, then to a share of the reference (43 dB is the most that is expected)
+    double bsnrPercent = 100.0 * std::pow(10.0, (blackPsnr - 43.0) / 20.0);
+    if (bsnrPercent > 100.0) bsnrPercent = 100.0;
+
+    // The share of the samples of the frame that are not in a dropout
+    double frameDoPercent = 100.0;
+    if (samplesInFrame > 0) frameDoPercent = 100.0 - 100.0 * static_cast<double>(dropOutLength) / static_cast<double>(samplesInFrame);
+    if (frameDoPercent < 0.0) frameDoPercent = 0.0;
+
+    return (bsnrPercent + penaltyPercent + syncConfPercent + (frameDoPercent * 1000.0)) / 1004.0;
 }

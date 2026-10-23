@@ -22,6 +22,7 @@
 #include <functional>
 
 #include "dropouts.h"
+#include "framemap.h"
 
 class JsonReader;
 class JsonWriter;
@@ -90,6 +91,7 @@ public:
 
         bool isMapped = false;
         QString tapeFormat = "";
+        QString decoder = "ld-decode";      // what made the capture ("ld-decode" or "vhs-decode"), as the SQLite metadata say
 
         QString gitBranch;
         QString gitCommit;
@@ -227,7 +229,7 @@ public:
         void read(JsonReader &reader);
         void write(JsonWriter &writer) const;
         void read(SqliteReader &reader, int captureId);
-        void write(SqliteWriter &writer, int captureId) const;
+        void write(SqliteWriter &writer, int captureId, unsigned tables) const;     // (the tables as LdDecodeMetaData::Tables)
     };
 
     // CLV timecode (used by frame number conversion methods)
@@ -295,7 +297,19 @@ public:
     // otherwise the format the metadata was read in (see getFormat()).
     // For a CVBS capture (<base>.meta or a <base>.cvbs.db/.json companion),
     // the companion, <base>.meta and <base>.dropouts.meta are all written.
-    bool write(QString fileName) const;
+    bool write(QString fileName) const { return write(fileName, AllTables); }
+    // The tables of the fields that are written when the file is a SQLite file that exists: a tool that changes only some of them says which (the others are
+    // left as they are in the file, and are not written again). A file that does not exist gets all of them.
+    enum Tables : unsigned {
+        FieldTable = 1,         // the field records (with the NTSC data)
+        VitsTable = 2,
+        VbiTable = 4,
+        VitcTable = 8,
+        ClosedCaptionTable = 16,
+        DropOutsTable = 32,
+        AllTables = 63
+    };
+    bool write(QString fileName, unsigned tables) const;
 
     // CVBS captures (.cvbs, .cvbsy, .cvbsc): the core metadata decode-orc
     // reads, set when CVBS metadata was read or for a capture to be written
@@ -320,6 +334,11 @@ public:
     // metadata of the luma file; <name>.tbcy and <name>.tbcc (decode-orc) have that
     // of <name>.tbc.
     static QString findMetadataFile(const QString &tbcFileName);
+
+    // Keep the map of a capture in its metadata (map null: take the one there is away): a SQLite file gets the table disc_map and nothing else is touched; a JSON
+    // file is read and written again with the "ldxMap" member (a backup, name.bup, is made first); an LDX file gets the metadata with the map added, as the current
+    // ones. Returns false, with the reason in error.
+    static bool saveDiscMap(const QString &videoFileName, const FrameMap *map, QString &error);
     // The metadata file name for a TBC file in a given format; for a CVBS
     // data file, its companion (<base>.cvbs.db or <base>.cvbs.json).
     static QString metadataFileName(const QString &tbcFileName, MetadataFormat format);
@@ -327,7 +346,7 @@ public:
     void readFields(JsonReader &reader);
     void writeFields(JsonWriter &writer) const;
     void readFields(SqliteReader &reader, int captureId);
-    void writeFields(SqliteWriter &writer, int captureId) const;
+    void writeFields(SqliteWriter &writer, int captureId, unsigned tables) const;
 
     const VideoParameters &getVideoParameters();
     void setVideoParameters(const VideoParameters &videoParameters);
@@ -379,6 +398,15 @@ public:
     qint32 getFieldPcmAudioStart(qint32 sequentialFieldNumber);
     qint32 getFieldPcmAudioLength(qint32 sequentialFieldNumber);
 
+    // The map of the capture (see FrameMap), when the metadata keep one: in the "ldxMap" member of the JSON (and so in the metadata of an LDX file), and in the
+    // table disc_map of a SQLite file. It is kept with the metadata as it is read and written; the fields are those of the capture (the map is not applied here).
+    // Become the metadata of the view of a map (MappedMetadata::build): the parameters and the fields are those of view, the map is not kept (it is applied)
+    void adoptView(const LdDecodeMetaData &view);
+    bool hasDiscMap() const { return discMapPresent; }
+    const FrameMap &getDiscMap() const { return discMap; }
+    void setDiscMap(const FrameMap &map) { discMap = map; discMapPresent = true; }
+    void clearDiscMap() { discMap = FrameMap(); discMapPresent = false; }
+
     // Video system helper methods
     QString getVideoSystemDescription() const;
 
@@ -386,9 +414,12 @@ private:
     MetadataFormat format = MetadataFormat::Sqlite;
     bool isFirstFieldFirst;
     bool generatedReversed = false;
+    bool isFirstFieldSearchReported = false;     // the search for a first field failed and was said (once, not for every frame)
     FieldProvider fieldProvider;
     VideoParameters videoParameters;
     PcmAudioParameters pcmAudioParameters;
+    FrameMap discMap;
+    bool discMapPresent = false;
     QVector<Field> fields;
 
     Field &fieldAt(qint32 sequentialFieldNumber, const char *caller);
@@ -398,7 +429,7 @@ private:
     bool readJson(QString fileName);
     bool writeJson(QString fileName) const;
     bool readSqlite(QString fileName);
-    bool writeSqlite(QString fileName) const;
+    bool writeSqlite(QString fileName, unsigned tables = AllTables) const;
     void setStandardVideoParameters(VideoSystem system);
     bool readCvbsCore(QString fileName);
     bool writeCvbs(QString fileName) const;

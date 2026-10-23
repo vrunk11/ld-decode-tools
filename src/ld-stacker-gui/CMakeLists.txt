@@ -8,6 +8,7 @@ set(ld-stacker-gui_SOURCES
     toolwindows.cpp
     optionsdialogs.cpp
     processdialog.cpp
+    streamsdialog.cpp
 )
 
 qt_add_resources(ld-stacker-gui_SOURCES ld-stacker-gui-resources.qrc)

@@ -32,6 +32,10 @@ add_library(lddecode-library STATIC
     tbc/stackframe.cpp
     tbc/stackedvideo.cpp
     tbc/stackproject.cpp
+    tbc/framemap.cpp
+    tbc/fieldaudio.cpp
+    tbc/streamcopy.cpp
+    tbc/mappedmetadata.cpp
     tbc/tbcfiles.cpp
     tbc/streamreader.cpp
     tbc/targetvideo.cpp

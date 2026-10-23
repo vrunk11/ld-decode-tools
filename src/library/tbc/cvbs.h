@@ -193,6 +193,14 @@ void fieldsToFrame(const quint16 *field1, const quint16 *field2, const Geometry 
 bool measureFieldPhaseIDs(const QString &dataFileName, VideoSystem system, SampleEncoding encoding, bool isChroma,
                           qint32 numberOfFrames, const std::function<void(qint32, qint32)> &setPhaseID);
 
+// The phase IDs that were measured, kept beside the file they were measured from (<file>.phases) so that the next tool, and the next opening of the capture, need not
+// read the file again: a text line that says which file they are of (its size and date, and how many fields), then one byte for each field (the ID, or 255 for -1).
+// A cache that is not of the file as it is now is not used. Both return false when there is nothing to use / it could not be written (a folder that cannot be written
+// to is no reason to stop).
+QString phaseCacheFileName(const QString &dataFileName);
+bool readPhaseCache(const QString &dataFileName, qint32 numberOfFields, QVector<qint32> &phaseIDs);
+bool writePhaseCache(const QString &dataFileName, const QVector<qint32> &phaseIDs);
+
 // Fill the fields whose phase ID could not be measured (-1) with the one the colour
 // sequence expects there: it goes up by one for each field, from 1 to modulus and
 // round again. Phase IDs that were measured are never changed, as a measurement that

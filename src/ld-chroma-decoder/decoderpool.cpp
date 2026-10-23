@@ -59,7 +59,8 @@ bool DecoderPool::process()
     decoderLookAhead = decoder.getLookAhead();
 
     // Open the source video file
-    if (!sourceVideo.open(inputFileName, videoParameters.fieldWidth * videoParameters.fieldHeight)) {
+    const qint32 fieldLength = videoParameters.fieldWidth * videoParameters.fieldHeight;
+    if (!(viewTable ? sourceVideo.openMappedFields(inputFileName, fieldLength, -1, viewTable) : sourceVideo.open(inputFileName, fieldLength))) {
         // Could not open source video file
         qInfo() << "Unable to open ld-decode video file";
         return false;

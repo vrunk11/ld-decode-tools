@@ -43,7 +43,8 @@ void DropOutCorrect::run()
     QVector<SourceVideo::Data> secondSourceField;
     QVector<LdDecodeMetaData::Field> firstFieldMetadata;
     QVector<LdDecodeMetaData::Field> secondFieldMetadata;
-    bool reverse, intraField, overCorrect;
+    bool reverse, intraField;
+    qint32 overCorrectDots;
     QVector<qint32> availableSourcesForFrame;
     QVector<double> sourceFrameQuality;
 
@@ -54,7 +55,7 @@ void DropOutCorrect::run()
         // Get the next field to process from the input file
         if (!correctorPool.getInputFrame(frameNumber, firstFieldSeqNo, firstSourceField, firstFieldMetadata,
                                        secondFieldSeqNo, secondSourceField, secondFieldMetadata,
-                                       videoParameters, reverse, intraField, overCorrect,
+                                       videoParameters, reverse, intraField, overCorrectDots, maxDistance, highlight,
                                        availableSourcesForFrame, sourceFrameQuality)) {
             // No more input fields -- exit
             break;
@@ -93,7 +94,7 @@ void DropOutCorrect::run()
             for (qint32 i = 0; i < availableSourcesForFrame.size(); i++) {
                 qint32 currentSource = availableSourcesForFrame[i];
                 if (firstFieldMetadata[currentSource].dropOuts.size() > 0)
-                    firstFieldDropouts[currentSource] = setDropOutLocations(populateDropoutsVector(firstFieldMetadata[currentSource], overCorrect));
+                    firstFieldDropouts[currentSource] = setDropOutLocations(populateDropoutsVector(firstFieldMetadata[currentSource], overCorrectDots));
             }
 
             // Analyse the drop out locations in the second field
@@ -101,7 +102,7 @@ void DropOutCorrect::run()
             for (qint32 i = 0; i < availableSourcesForFrame.size(); i++) {
                 qint32 currentSource = availableSourcesForFrame[i];
                 if (secondFieldMetadata[currentSource].dropOuts.size() > 0)
-                    secondFieldDropouts[currentSource] = setDropOutLocations(populateDropoutsVector(secondFieldMetadata[currentSource], overCorrect));
+                    secondFieldDropouts[currentSource] = setDropOutLocations(populateDropoutsVector(secondFieldMetadata[currentSource], overCorrectDots));
             }
 
             // Correct the first field
@@ -156,7 +157,7 @@ void DropOutCorrect::correctField(const QVector<QVector<DropOutLocation>> &thisF
 }
 
 // Populate the dropouts vector
-QVector<DropOutCorrect::DropOutLocation> DropOutCorrect::populateDropoutsVector(LdDecodeMetaData::Field field, bool overCorrect)
+QVector<DropOutCorrect::DropOutLocation> DropOutCorrect::populateDropoutsVector(LdDecodeMetaData::Field field, qint32 overCorrectDots)
 {
     QVector<DropOutLocation> fieldDropOuts;
 
@@ -173,16 +174,15 @@ QVector<DropOutCorrect::DropOutLocation> DropOutCorrect::populateDropoutsVector(
         }
 
         // Is over correct mode selected?
-        if (overCorrect) {
+        if (overCorrectDots > 0) {
             // Here we deliberately extend the length of dropouts to ensure that the
             // correction captures as much as possible.  This is useful on heavily
             // damaged discs where drop-outs can 'slope' in and out fooling ld-decode's
             // detection mechanisms
 
-            qint32 overCorrectionDots = 24;
-            if (dropOutLocation.startx > overCorrectionDots) dropOutLocation.startx -= overCorrectionDots;
+            if (dropOutLocation.startx > overCorrectDots) dropOutLocation.startx -= overCorrectDots;
             else dropOutLocation.startx = 0;
-            if (dropOutLocation.endx < videoParameters[0].fieldWidth - overCorrectionDots) dropOutLocation.endx += overCorrectionDots;
+            if (dropOutLocation.endx < videoParameters[0].fieldWidth - overCorrectDots) dropOutLocation.endx += overCorrectDots;
             else dropOutLocation.endx = videoParameters[0].fieldWidth;
         }
 
@@ -375,6 +375,9 @@ DropOutCorrect::Replacement DropOutCorrect::findReplacementLine(const QVector<QV
                         candidate.fieldLine << "distance" << distance << "of source" << candidate.sourceNumber <<
                         "with a quality of" << candidate.quality;
 
+            // Too far, for the person who asked for a limit
+            if (maxDistance > 0 && distance > maxDistance) continue;
+
             // Choose the candidate if the distance is less
             if (distance < replacement.distance) {
                 replacement = candidate;
@@ -517,6 +520,13 @@ void DropOutCorrect::correctDropOut(const DropOutLocation &dropOut,
         filterLineBuf();
         for (qint32 pixel = dropOut.startx; pixel < dropOut.endx; pixel++) {
             targetLine[pixel] += chromaLine[pixel] - lineBuf[pixel];
+        }
+    }
+
+    // To see what was corrected
+    if (highlight) {
+        for (qint32 pixel = dropOut.startx; pixel < dropOut.endx; pixel++) {
+            targetLine[pixel] = static_cast<quint16>(videoParameters[0].white16bIre);
         }
     }
 

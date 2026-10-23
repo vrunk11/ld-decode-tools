@@ -38,17 +38,29 @@ using std::set;
 using std::vector;
 
 // Generate an SCC format timestamp based on the field index
+//
+// PAL counts 25 frames a second (HH:MM:SS:FF). The systems at 30000/1001 frames a second (NTSC, PAL-M) are written
+// as drop-frame timecode (HH:MM:SS;FF): the numbers 0 and 1 of the frames are skipped at the start of every minute
+// that is not a tenth minute, so that the clock follows the real time and the captions stay with the picture
+// (a count of 30 frames a second would run 3.6 seconds an hour ahead of the video).
 QString generateTimeStamp(qint32 fieldIndex, VideoSystem system)
 {
     // Convert to a 0-based count of frames
-    double frameIndex = static_cast<double>((fieldIndex - 1) / 2);
+    qint64 frameIndex = (fieldIndex - 1) / 2;
+    if (frameIndex < 0) frameIndex = 0;
 
-    // Set some constants for the timecode calculations.
-    // We are generating non-drop timecode (:ff not ;ff), so
-    // the clock actually counts at 29.97 FPS.
-    const double framesPerSecond = (system == PAL) ? 25.0 : 29.97;
-    const double framesPerMinute = framesPerSecond * 60.0;
-    const double framesPerHour = framesPerMinute * 60.0;
+    qint64 framesPerSecond = 25;
+    QChar separator = QLatin1Char(':');
+    if (system != PAL) {
+        framesPerSecond = 30;
+        separator = QLatin1Char(';');
+
+        // Number the frames as the drop-frame timecode does: 17 982 frames in 10 minutes, 1 798 in a minute that drops
+        const qint64 tenMinutes = frameIndex / 17982;
+        const qint64 inTenMinutes = frameIndex % 17982;
+        frameIndex += 18 * tenMinutes;
+        if (inTenMinutes >= 2) frameIndex += 2 * ((inTenMinutes - 2) / 1798);
+    }
 
     // Since the subtitle is relative to the video we
     // can simply calculate the timecode from the sequential
@@ -60,19 +72,17 @@ QString generateTimeStamp(qint32 fieldIndex, VideoSystem system)
     // frame-number/CLV timecode; as both are useful depending on
     // the use-case?
     //
-    const qint32 hh = static_cast<qint32>(frameIndex / framesPerHour);
-    frameIndex -= static_cast<double>(hh) * framesPerHour;
-    const qint32 mm = static_cast<qint32>(frameIndex / framesPerMinute);
-    frameIndex -= static_cast<double>(mm) * framesPerMinute;
-    const qint32 ss = static_cast<qint32>(frameIndex / framesPerSecond);
-    frameIndex -= static_cast<double>(ss) * framesPerSecond;
-    const qint32 ff = static_cast<qint32>(frameIndex);
+    const qint64 ff = frameIndex % framesPerSecond;
+    const qint64 ss = (frameIndex / framesPerSecond) % 60;
+    const qint64 mm = (frameIndex / (framesPerSecond * 60)) % 60;
+    const qint64 hh = frameIndex / (framesPerSecond * 3600);
 
     // Create the timestamp
-    return QString("%1:%2:%3:%4").arg(hh, 2, 10, QLatin1Char('0'))
-                                 .arg(mm, 2, 10, QLatin1Char('0'))
-                                 .arg(ss, 2, 10, QLatin1Char('0'))
-                                 .arg(ff, 2, 10, QLatin1Char('0'));
+    return QString("%1:%2:%3%4%5").arg(hh, 2, 10, QLatin1Char('0'))
+                                  .arg(mm, 2, 10, QLatin1Char('0'))
+                                  .arg(ss, 2, 10, QLatin1Char('0'))
+                                  .arg(separator)
+                                  .arg(ff, 2, 10, QLatin1Char('0'));
 }
 
 // Sanity check the CC data byte and set to -1 if it probably is invalid

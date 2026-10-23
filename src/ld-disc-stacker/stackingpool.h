@@ -36,6 +36,8 @@
 #include "targetvideo.h"
 #include "discnumbering.h"
 #include "lddecodemetadata.h"
+#include "fieldaudio.h"
+#include "streamcopy.h"
 #include "stacker.h"
 
 class StackingPool : public QObject
@@ -47,6 +49,7 @@ public:
                            qint32 _mode, qint32 _smartThreshold, bool _reverse, bool _noDiffDod, bool _passThrough, bool _integrityCheck, bool _verbose, QObject *parent = nullptr);
 
     bool process();
+    QString processDetail() const;
 
     // Line the sources up by an offset in frames each (as a stacking session does), instead of by their
     // VBI frame numbers: source 0 is the reference, and source n has its frame f - offset[n] at the
@@ -63,6 +66,13 @@ public:
 
     // What the output is when it is an LDX file or stream: the history of the source, and whether "-" is a stream
     void setLdx(bool stream, const QJsonArray &history, bool cvbs) { ldxStream = stream; sourceHistory = history; ldxCvbs = cvbs; }
+    // The analogue audio of the first source, to go with the video in an LDX output (null: none)
+    void setAudio(std::shared_ptr<FieldAudio> fieldAudio) { audio = fieldAudio; }
+    // The other streams of the sources to copy into an LDX output (see StreamCopy), and the names of the sources, for the history
+    void setCopiedStreams(const QVector<StreamCopy::Candidate> &streams, const QStringList &sources) { copiedStreams = streams; copiedSources = sources; }
+    // For each source: the frame of its capture that each of its own frames is (index 0 is the frame 1), when it is read through a map and its frames are not those of its
+    // capture; empty for a source that is. It gives the alignment recorded with the streams that are copied.
+    void setCaptureFrames(const QVector<QVector<qint32>> &frames) { captureFrames = frames; }
 
     bool setOutputFrame(qint32 frameNumber,
                         SourceVideo::Data firstTargetFieldData, SourceVideo::Data secondTargetFieldData,
@@ -113,6 +123,14 @@ private:
 
     // An output that is an LDX stream ("-"): each field goes with its own metadata
     bool ldxStream = false;
+    std::shared_ptr<FieldAudio> audio;
+    QVector<StreamCopy::Candidate> copiedStreams;
+    QStringList copiedSources;
+    StreamCopy streamCopy;
+    QVector<QVector<qint32>> captureFrames;
+    QMap<qint32, QJsonObject> streamAlignments;
+    qint32 ownFrameOf(qint32 outputFrame, qint32 sourceNo);
+    void computeStreamAlignments();
     bool ldxCvbs = false;
     QJsonArray sourceHistory;
     qint32 streamFieldCount = 0;

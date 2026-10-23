@@ -55,6 +55,8 @@ struct SourceInfo {
     // What the information panel of the source shows
     QString metadataFormat;       // "SQLite", "JSON" or "CVBS"
     bool isMapped = false;        // the metadata say the source was mapped (ld-discmap)
+    bool throughMap = false;      // the source is the capture read through its map (not a mapped copy)
+    bool mapInSource = false;     // the metadata of the source keep a map (it is used when the source follows the map)
     double sampleRate = 0;
     double fsc = 0;
     qint32 blackIre = -1, whiteIre = -1;
@@ -150,7 +152,8 @@ public:
     std::atomic<quint64> sourceSnrGeneration{0};
 
 public slots:
-    void addSource(const QString &id, const QString &file, bool reverseFields);
+    // mapJson: the map of the source (FrameMap as JSON), when the source is the capture seen through it; empty for a capture read as it is
+    void addSource(const QString &id, const QString &file, bool reverseFields, const QByteArray &mapJson = QByteArray(), bool followMap = true);
     void removeSource(const QString &id);
     void setReverseFields(bool reverseFields);
     void setChromaConfiguration(const PalColour::Configuration &pal, const Comb::Configuration &ntsc);
@@ -172,11 +175,14 @@ private:
         LdDecodeMetaData metadata;
         SourceVideo video;
         QString file;                 // what the video was opened from (a thread that measures the SNR opens it again)
+        std::shared_ptr<const QVector<qint32>> viewTable;     // for a source read through a map: the field of the capture that each field of the view is (shared by the handles)
         bool ok = false;
     };
 
     // Read a source (in a thread of the pool: it uses no member of the backend); null, with info.error, when it cannot be used
-    static std::shared_ptr<Loaded> loadSource(const QString &id, const QString &file, bool reverseFields, SourceInfo &info);
+    static std::shared_ptr<Loaded> loadSource(const QString &id, const QString &file, bool reverseFields, const QByteArray &mapJson, bool followMap, SourceInfo &info);
+    // Open a handle on the video of a source that is read: through its map if it has one
+    static bool openHandle(const Loaded &source, SourceVideo &video);
     void startLoad(const QString &id, const QString &file);
     void finishLoad(const QString &id, const QString &file, bool reverseFields, quint64 token, const std::shared_ptr<Loaded> &loaded, const SourceInfo &info);
 
@@ -223,6 +229,8 @@ private:
     QMap<QString, std::shared_ptr<Loaded>> sources;
     // The sources that are being read, with the number of the reading (a source removed meanwhile has none, and a source asked for again has a new one)
     QHash<QString, quint64> pendingLoads;
+    QHash<QString, QByteArray> mapOfSource;     // the map of each source that has one (as JSON), for reading it again
+    QHash<QString, bool> followOfSource;        // whether each source follows the map in its own metadata
     quint64 loadCounter = 0;
     bool currentReverse = false;
     // The handles on the files of the threads that measure the SNR of the stack (one map of source id to handle for each thread), for one job

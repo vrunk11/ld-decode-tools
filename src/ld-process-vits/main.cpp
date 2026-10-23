@@ -35,6 +35,7 @@
 #include "vitsmetrics.h"
 #include "tbc/metadataoptions.h"
 #include "tbc/commonoptions.h"
+#include "stackproject.h"
 #include "lddecodemetadata.h"
 #include "sourcevideo.h"
 #include "tbc/fieldpool.h"
@@ -76,6 +77,8 @@ int main(int argc, char *argv[])
     // Option to disable metadata back-up (-n)
     NoBackupOption showNoBackupOption;
     showNoBackupOption.addTo(parser);
+    LegacyBackupOption legacyOption;
+    legacyOption.addTo(parser);
 
     // Option to select the number of threads (-t)
     ThreadsOption threadsOption;
@@ -128,6 +131,17 @@ int main(int argc, char *argv[])
         return 0;
     }
 
+    // A session is its capture when it has one source on: the tool works on the capture itself (and keeps the map in its metadata as it is)
+    if (inputFilename.endsWith(".stack", Qt::CaseInsensitive)) {
+        QString captureFile, sessionError;
+        if (!StackProject::singleCapture(inputFilename, captureFile, sessionError)) {
+            qCritical().noquote() << sessionError;
+            return 2;
+        }
+        qInfo().noquote() << inputFilename << "is read as its capture" << captureFile;
+        inputFilename = captureFile;
+    }
+
     // Work out the metadata filenames
     QString inputMetadataFilename;
     if (!metadataOptions.selectInput(inputFilename, true, inputMetadataFilename)) return 1;
@@ -145,12 +159,16 @@ int main(int argc, char *argv[])
     if (!metadataOptions.selectOutput(inputMetadataFilename, metaData.getFormat(), outputMetadataFilename)) return 2;
 
     // If we're overwriting the input metadata file, back it up first
-    if (!NoBackupOption::backUp(inputMetadataFilename, outputMetadataFilename, noBackup, ".vbup")) return 1;
+    if (!NoBackupOption::backUp(inputMetadataFilename, outputMetadataFilename, noBackup, ".vbup", legacyOption.isSet(parser))) return 1;
 
     // Perform the processing
     qInfo() << "Beginning VITS processing...";
     FieldPool::Settings pool;
     pool.name = "VITS";
+    // Only the lines with the test signals are read (the first 22 lines of a field)
+    pool.firstLine = VITS_START_FIELD_LINE;
+    pool.lastLine = VITS_END_FIELD_LINE;
+    if (outputMetadataFilename == inputMetadataFilename) pool.tables = LdDecodeMetaData::VitsTable;
     pool.createWorker = [](QAtomicInt &abort, FieldPool &fieldPool) -> QThread * { return new VitsAnalyser(abort, fieldPool); };
     // Only the VITS metrics of a field change
     pool.storeField = [](LdDecodeMetaData &metadata, qint32 fieldNumber, const LdDecodeMetaData::Field &field) {

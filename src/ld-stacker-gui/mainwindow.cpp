@@ -706,8 +706,10 @@ void MainWindow::startSource(const StackSource &source)
     states[source.id].followMap = source.followMap;
     states[source.id].loaded = false;
     states[source.id].failed = false;
+    QByteArray mapJson;
+    if (const FrameMap *map = source.activeMap()) mapJson = map->toJsonBytes();
     QMetaObject::invokeMethod(backend, "addSource", Qt::QueuedConnection, Q_ARG(QString, source.id),
-                              Q_ARG(QString, source.reference()), Q_ARG(bool, project.stacking.reverseFields));
+                              Q_ARG(QString, source.reference()), Q_ARG(bool, project.stacking.reverseFields), Q_ARG(QByteArray, mapJson), Q_ARG(bool, source.followMap));
 }
 
 void MainWindow::removeSource(const QString &id)
@@ -983,7 +985,7 @@ QVector<qint32> MainWindow::sourcesToMap(bool followingOnly) const
     return indexes;
 }
 
-// The Stack button: if some sources that follow the map have none, ask whether to map them, and whether to keep a copy or to overwrite the capture
+// The Stack button: if some sources that follow the map have none, ask whether to map them
 bool MainWindow::confirmMappingBeforeStack()
 {
     const QVector<qint32> needing = sourcesToMap(true);
@@ -993,30 +995,25 @@ bool MainWindow::confirmMappingBeforeStack()
     QMessageBox box(this);
     box.setIcon(QMessageBox::Question);
     box.setWindowTitle(tr("Map the sources?"));
-    box.setText(needing.size() == 1 ? tr("This source has no mapped version:\n%1").arg(names.join("\n"))
-                                    : tr("These sources have no mapped version:\n%1").arg(names.join("\n")));
-    box.setInformativeText(tr("Mapping puts the frames in the order of the disc and pads the missing ones, so that the sources line up. A copy can be kept beside each capture (name_map), or the capture can be overwritten, which cannot be undone."));
-    QPushButton *copy = box.addButton(tr("Map, keep a copy"), QMessageBox::AcceptRole);
-    QPushButton *overwrite = box.addButton(tr("Map, overwrite"), QMessageBox::DestructiveRole);
+    box.setText(needing.size() == 1 ? tr("This source has no map:\n%1").arg(names.join("\n"))
+                                    : tr("These sources have no map:\n%1").arg(names.join("\n")));
+    box.setInformativeText(tr("Mapping puts the frames in the order of the disc and pads the missing ones, so that the sources line up. The map is kept in the session; it can also be kept in the metadata of each source (its .tbc.db, .tbc.json or LDX file), where every tool that reads the capture finds it. The captures themselves are not written again."));
+    QPushButton *map = box.addButton(tr("Map, in the session"), QMessageBox::AcceptRole);
+    QPushButton *mapAndSave = box.addButton(tr("Map, save in the sources"), QMessageBox::AcceptRole);
     QPushButton *without = box.addButton(tr("Stack without mapping"), QMessageBox::ActionRole);
     box.addButton(QMessageBox::Cancel);
-    box.setDefaultButton(copy);
+    box.setDefaultButton(map);
     box.exec();
     if (box.clickedButton() == without) return true;
-    if (box.clickedButton() != copy && box.clickedButton() != overwrite) return false;
-    const bool replace = box.clickedButton() == overwrite;
-    if (replace && QMessageBox::warning(this, tr("Overwrite the captures"), tr("The captures and their metadata are replaced by their mapping. This cannot be undone. Continue?"),
-                                        QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Cancel) != QMessageBox::Yes) {
-        return false;
-    }
+    if (box.clickedButton() != map && box.clickedButton() != mapAndSave) return false;
     // (the mapping goes on in the window, and the stack is turned on when it is done)
-    startMapping(needing, replace, true);
+    startMapping(needing, false, true, MapDialog::Map, QString(), box.clickedButton() == mapAndSave);
     return false;
 }
 
 // Map the sources with ld-discmap, in the background: a bar in the row of each source shows how it goes (and a window has the log of the tool). A capture that
 // is overwritten has to be let go of first (a file that is open cannot be replaced on Windows) and is read again afterwards.
-bool MainWindow::startMapping(const QVector<qint32> &indexes, bool overwrite, bool thenStack, MapDialog::Task task, const QString &inputOverride)
+bool MainWindow::startMapping(const QVector<qint32> &indexes, bool overwrite, bool thenStack, MapDialog::Task task, const QString &inputOverride, bool saveInSources)
 {
     if (mappingBusy || indexes.isEmpty()) return false;
     QVector<MapDialog::Job> jobs;
@@ -1034,7 +1031,7 @@ bool MainWindow::startMapping(const QVector<qint32> &indexes, bool overwrite, bo
     QStringList reload;
     if (overwrite || task == MapDialog::UpdateSnr) reload = ids;
     for (const MapDialog::Job &job: jobs) {
-        if (!MapDialog::isLdxJob(job)) continue;
+        if (task != MapDialog::UpdateSnr || !MapDialog::isLdxJob(job)) continue;
         QString path;
         qint32 track;
         LdxCapture::split(job.input, path, track);
@@ -1066,6 +1063,7 @@ bool MainWindow::startMapping(const QVector<qint32> &indexes, bool overwrite, bo
     mappingBusy = true;
     updateMappingControls();
     mapDialog = new MapDialog(jobs, overwrite, this, task);
+    mapDialog->setSaveInSources(saveInSources);
     mapDialog->setAttribute(Qt::WA_DeleteOnClose);
     connect(mapDialog, &MapDialog::jobStarted, this, [this](const QString &id) {
         if (!states.contains(id)) return;
@@ -1110,6 +1108,25 @@ void MainWindow::mappingFinished(const QStringList &ids, const QStringList &relo
     for (const QString &id: ids) {
         const qint32 index = project.indexOfSource(id);
         if (index < 0) continue;
+        // The source that was mapped has the map in the session now, and is read through it (the capture is not written)
+        if (const QByteArray bytes = mapDialog ? mapDialog->mapFor(id) : QByteArray(); !bytes.isEmpty()) {
+            StackSource &source = project.sources[index];
+            QString mapError;
+            if (FrameMap::fromJsonBytes(bytes, source.map, mapError)) {
+                // (a map kept in the metadata of the source is read from there: the session does not keep a second one that could go stale)
+                source.hasMap = !(mapDialog && mapDialog->savedIds().contains(id));
+                source.followMap = true;
+                states[id].followMap = true;
+                if (followBoxes.contains(id)) {
+                    const QSignalBlocker blocker(followBoxes.value(id));
+                    followBoxes.value(id)->setChecked(true);
+                }
+                switchSource(id, source.reference());
+            } else {
+                QMessageBox::warning(this, tr("Map the sources"), tr("The map of %1 cannot be used: %2").arg(sourceTitle(source), mapError));
+            }
+            continue;
+        }
         if (overwrite) {
             // (the capture is the mapping now, or as it was if the mapping failed: it is read again either way; a track of an LDX file that was replaced is
             // another track, which the mapping took the place of)
@@ -1217,20 +1234,15 @@ void MainWindow::mapSelectedSource()
     QMessageBox box(this);
     box.setIcon(QMessageBox::Question);
     box.setWindowTitle(tr("Map the source"));
-    box.setText(tr("%1 has no mapped version.").arg(sourceTitle(project.sources[index])));
-    box.setInformativeText(tr("A copy can be kept beside the capture (name_map), or the capture can be overwritten, which cannot be undone."));
-    QPushButton *copy = box.addButton(tr("Map, keep a copy"), QMessageBox::AcceptRole);
-    QPushButton *overwrite = box.addButton(tr("Map, overwrite"), QMessageBox::DestructiveRole);
+    box.setText(tr("%1 has no map.").arg(sourceTitle(project.sources[index])));
+    box.setInformativeText(tr("The frames are put in the order of the disc and the missing ones padded. The map is kept in the metadata of the source (its .tbc.db, .tbc.json or LDX file), where every tool that reads the capture finds it; the capture itself is not written again. A backup of a metadata file is kept (name.bup)."));
+    QPushButton *saveButton = box.addButton(tr("Map, save in the source"), QMessageBox::AcceptRole);
+    QPushButton *sessionButton = box.addButton(tr("Map, in the session only"), QMessageBox::AcceptRole);
     box.addButton(QMessageBox::Cancel);
-    box.setDefaultButton(copy);
+    box.setDefaultButton(saveButton);
     box.exec();
-    if (box.clickedButton() != copy && box.clickedButton() != overwrite) return;
-    const bool replace = box.clickedButton() == overwrite;
-    if (replace && QMessageBox::warning(this, tr("Overwrite the capture"), tr("The capture and its metadata are replaced by their mapping. This cannot be undone. Continue?"),
-                                        QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Cancel) != QMessageBox::Yes) {
-        return;
-    }
-    startMapping({ index }, replace, false);
+    if (box.clickedButton() != saveButton && box.clickedButton() != sessionButton) return;
+    startMapping({ index }, false, false, MapDialog::Map, QString(), box.clickedButton() == saveButton);
 }
 
 // The Follow map boxes can be changed with the stack off only (they change what is stacked)
@@ -1251,6 +1263,11 @@ void MainWindow::resolveFollowMap(const QString &id)
     const SourceState state = states.value(id);
     const QString reference = project.sources[index].reference();
     const bool ldx = LdxCapture::isLdxName(reference);
+    // A source with a map of its own: it is read through the map, or (the box off) as the capture, and loaded again if that is not what it is now
+    if (project.sources[index].hasMap || state.info.mapInSource) {
+        if (project.sources[index].followMap != state.info.throughMap) switchSource(id, reference);
+        return;
+    }
     QString target;
     if (state.followMap) {
         if (state.info.isMapped) return;

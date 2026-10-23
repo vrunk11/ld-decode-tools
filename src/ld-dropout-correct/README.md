@@ -32,8 +32,10 @@ ld-dropout-correct [options] inputs output
 - `-i, --intra`: Force intrafield correction (default interfield)
 - `-r, --reverse`: Reverse the field order to second/first (default first/second)
 - `-o, --overcorrect`: Over correct mode (use on heavily damaged single sources)
+- `--overcorrect-extension <samples>`: Over correct mode, with the dropouts extended by this many samples at each end (0 to 48; `-o` is 24)
+- `--max-distance <lines>`: Take no replacement from a line more than this many frame lines from the dropout (default: no limit)
+- `--highlight`: Fill the parts that were corrected with the white level, to see what was corrected (a check: the output is not for use)
 - `-t, --threads <number>`: Specify the number of concurrent threads (default is the number of logical CPUs)
-- `-l, --length <frames>`: Process only specified number of frames
 
 #### Additional Sources
 - The input files are the sources: give several TBC files before the output file (`ld-dropout-correct a.tbc b.tbc output.tbc`); the first is the one that is corrected, the others replace its dropouts where they have good video

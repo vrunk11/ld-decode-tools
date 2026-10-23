@@ -9,6 +9,7 @@
  ******************************************************************************/
 
 #include "mainwindow.h"
+#include "tbcsource.h"
 #include "ldxstream.h"
 #include <QApplication>
 #include <QDebug>
@@ -84,6 +85,9 @@ int main(int argc, char *argv[])
                                       QCoreApplication::translate("main", "Piped input: hold the producer back to the pace of the viewer, instead of overwriting old video. For video that arrives faster than it plays (a file, or a decoder that is not live); pausing then holds the input up"));
     parser.addOption(throttleOption);
 
+    QCommandLineOption ignoreMapOption("ignore-map", QCoreApplication::translate("main", "Read the capture as it is, though its metadata keep a map (the frames in the order of the disc, from ld-discmap)"));
+    parser.addOption(ignoreMapOption);
+
     // Positional argument to specify input video file
     parser.addPositionalArgument("input", QCoreApplication::translate("main", "Specify input TBC or CVBS file, or - for video piped in"));
 
@@ -96,6 +100,7 @@ int main(int argc, char *argv[])
     // The theme (View > Theme) is applied by MainWindow from the configuration;
     // --force-dark-theme overrides it for this session only
     a.setProperty("forceDarkTheme", parser.isSet("force-dark-theme"));
+    TbcSource::ignoreEmbeddedMap = parser.isSet(ignoreMapOption);
 
     // Get the arguments from the parser
     QString inputFileName;

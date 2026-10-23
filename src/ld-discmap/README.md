@@ -12,7 +12,8 @@ ld-discmap performs TBC and VBI alignment and correction. It maps frame numbers 
 
 ### Basic Syntax
 ```bash
-ld-discmap [options] <input.tbc> <output.tbc>
+ld-discmap [options] <input.tbc> <session.stack>
+ld-discmap --legacy [options] <input.tbc> <output.tbc>
 ```
 
 ## Options
@@ -25,7 +26,9 @@ ld-discmap [options] <input.tbc> <output.tbc>
 
 #### Input/Output
 - `input`: Input TBC file (required)
-- `output`: Output TBC file (required unless using --maponly)
+- `output`: the `.stack` session to put the map of the input in; with `--legacy`, the output TBC file (required unless using --maponly)
+- `--legacy`: write the mapped capture (a copy of the video, the audio and the metadata) as ld-discmap always did
+- `--map-file <file>`: write the map of the capture as JSON to this file
 
 #### Processing Options
 - `-r, --reverse`: Reverse the field order to second/first (default first/second)
@@ -43,22 +46,25 @@ ld-discmap [options] <input.tbc> <output.tbc>
 
 ```bash
 # Basic Frame Mapping
-ld-discmap input.tbc output.tbc
+ld-discmap input.tbc session.stack
 
 # Map Only (No Output)
-ld-discmap -m input.tbc output.tbc
+ld-discmap -m --map-file input.map.json input.tbc
 
 # Delete Unmappable Frames
-ld-discmap -u input.tbc output.tbc
+ld-discmap -u input.tbc session.stack
 
 # No Strict Pulldown Checking
-ld-discmap -s input.tbc output.tbc
+ld-discmap -s input.tbc session.stack
 
 # Reverse Field Order
-ld-discmap -r input.tbc output.tbc
+ld-discmap -r input.tbc session.stack
 
 # Skip Audio Processing
-ld-discmap -n input.tbc output.tbc
+ld-discmap -n input.tbc session.stack
+
+# A mapped copy of the capture, as ld-discmap always did
+ld-discmap --legacy input.tbc input_map.tbc
 ```
 
 ## Input/Output

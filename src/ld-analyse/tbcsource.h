@@ -42,6 +42,9 @@ class TbcSource : public QObject
 {
     Q_OBJECT
 public:
+    // Read the captures as they are, though their metadata keep a map (ld-analyse --ignore-map)
+    static inline bool ignoreEmbeddedMap = false;
+
     explicit TbcSource(QObject *parent = nullptr);
 
     struct ScanLineData {
@@ -303,6 +306,8 @@ private:
     SourceVideo chromaSourceVideo;
     SourceMode sourceMode;
     LdDecodeMetaData ldDecodeMetaData;
+    // A capture that keeps a map in its metadata is shown through it (the frames of the disc in order): the fields of the capture that each field of the view is
+    std::shared_ptr<const QVector<qint32>> viewTable;
     QString currentSourceFilename;
     QString currentMetadataFilename;
     QString lastIOError;

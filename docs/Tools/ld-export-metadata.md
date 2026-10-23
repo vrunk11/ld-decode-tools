@@ -6,6 +6,7 @@ This application reads an ld-decode metadata file (SQLite `.tbc.db` or JSON `.tb
 - LaserDisc navigation information, as Audacity labels
 - LaserDisc navigation information, as FFMETADATA1 (which FFmpeg can use to add chapter navigation to a video file)
 - Closed Captions, as SCC format (which tools like [ttconv](https://github.com/sandflow/ttconv) can read)
+  The times are counted from the start of the capture: PAL as `HH:MM:SS:FF` at 25 frames a second, NTSC and PAL-M as drop-frame timecode (`HH:MM:SS;FF`), which follows the real time at 30000/1001 frames a second
 
 Syntax:
 

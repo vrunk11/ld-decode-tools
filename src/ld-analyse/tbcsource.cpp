@@ -15,6 +15,7 @@
 #include "dropoutdrawing.h"
 #include <algorithm>
 #include "stackproject.h"
+#include "mappedmetadata.h"
 #include "ldxcapture.h"
 #include "ldxstream.h"
 #include "cvbs.h"
@@ -205,11 +206,20 @@ bool TbcSource::openForRendering(const RenderSettings &settings, const TbcSource
     }
 
     if (!ldDecodeMetaData.read(settings.metadataFilename)) return false;
+    viewTable.reset();
+    if (!ignoreEmbeddedMap && settings.chromaFilename.isEmpty()) {
+        QString mapError;
+        viewTable = MappedMetadata::applyEmbeddedMap(ldDecodeMetaData, settings.metadataFilename, settings.sourceFilename, mapError);
+        if (!mapError.isEmpty()) {
+            qWarning().noquote() << mapError;
+            return false;
+        }
+    }
     ldDecodeMetaData.setVideoParameters(settings.videoParameters);
 
     const LdDecodeMetaData::VideoParameters &videoParameters = ldDecodeMetaData.getVideoParameters();
     const qint32 fieldLength = videoParameters.fieldWidth * videoParameters.fieldHeight;
-    if (!sourceVideo.open(settings.sourceFilename, fieldLength)) return false;
+    if (!(viewTable ? sourceVideo.openMappedFields(settings.sourceFilename, fieldLength, -1, viewTable) : sourceVideo.open(settings.sourceFilename, fieldLength))) return false;
     if (!settings.chromaFilename.isEmpty() && !chromaSourceVideo.open(settings.chromaFilename, fieldLength)) {
         sourceVideo.close();
         return false;
@@ -1422,6 +1432,21 @@ bool TbcSource::startBackgroundLoad(QString sourceFilename)
         return false;
     }
 
+    // A capture that keeps a map in its metadata is shown in the order of the map (not for a Y/C pair: the map is of the luma)
+    viewTable.reset();
+    const bool hasChromaFile = !(isCvbs ? Cvbs::pairedDataFileName(sourceFilename) : TbcFiles::chromaFileName(sourceFilename)).isEmpty()
+                               && (isCvbs ? Cvbs::pairedDataFileName(sourceFilename) : TbcFiles::chromaFileName(sourceFilename)) != sourceFilename;
+    if (!ignoreEmbeddedMap && !hasChromaFile) {
+        QString mapError;
+        viewTable = MappedMetadata::applyEmbeddedMap(ldDecodeMetaData, metadataFileName, sourceFilename, mapError);
+        if (!mapError.isEmpty()) {
+            qWarning().noquote() << mapError;
+            lastIOError = "The map in the metadata cannot be used (--ignore-map reads the capture as it is)";
+            currentSourceFilename.clear();
+            return false;
+        }
+    }
+
     // Get the video parameters from the metadata
     LdDecodeMetaData::VideoParameters videoParameters = ldDecodeMetaData.getVideoParameters();
     snrParameters = videoParameters;
@@ -1429,7 +1454,8 @@ bool TbcSource::startBackgroundLoad(QString sourceFilename)
     // Open the new source video
     tbcDebugStream() << "TbcSource::startBackgroundLoad(): Loading TBC file...";
     emit busy("Loading video file...");
-    if (!sourceVideo.open(sourceFilename, videoParameters.fieldWidth * videoParameters.fieldHeight)) {
+    const qint32 mainFieldLength = videoParameters.fieldWidth * videoParameters.fieldHeight;
+    if (!(viewTable ? sourceVideo.openMappedFields(sourceFilename, mainFieldLength, -1, viewTable) : sourceVideo.open(sourceFilename, mainFieldLength))) {
         // Open failed
         qWarning() << "Open TBC file failed for filename" << sourceFilename;
         currentSourceFilename.clear();

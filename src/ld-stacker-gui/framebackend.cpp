@@ -13,6 +13,8 @@
 #include "dropoutdrawing.h"
 
 #include "stackedvideo.h"
+#include "mappedmetadata.h"
+#include "framemap.h"
 
 #include <QDateTime>
 #include <QFileInfo>
@@ -56,7 +58,7 @@ FrameBackend::FrameBackend(QObject *parent)
 
 // Read a source: its metadata, what they say of the video, and the file. It uses no member, so that several can be read at once, each in a thread of its own.
 // Null (and info.error says why) when the source cannot be used.
-std::shared_ptr<FrameBackend::Loaded> FrameBackend::loadSource(const QString &id, const QString &file, bool reverseFields, SourceInfo &info)
+std::shared_ptr<FrameBackend::Loaded> FrameBackend::loadSource(const QString &id, const QString &file, bool reverseFields, const QByteArray &mapJson, bool followMap, SourceInfo &info)
 {
     info = SourceInfo();
     info.id = id;
@@ -68,18 +70,61 @@ std::shared_ptr<FrameBackend::Loaded> FrameBackend::loadSource(const QString &id
 
     const QString metadataFile = LdDecodeMetaData::findMetadataFile(file);
     info.metadataFile = metadataFile;
-    if (metadataFile.isEmpty() || !loaded->metadata.read(metadataFile)) {
+
+    // A source that has a map is the capture seen through it: the metadata are those of the mapped copy, and the video is read through the map
+    FrameMap map;
+    bool throughMap = false;
+    if (!mapJson.isEmpty()) {
+        QString mapError;
+        if (FrameMap::fromJsonBytes(mapJson, map, mapError)) throughMap = true;
+        else qWarning().noquote() << "The map of" << file << "is not used:" << mapError;
+    }
+    if (throughMap) {
+        LdDecodeMetaData capture;
+        if (metadataFile.isEmpty() || !capture.read(metadataFile)) {
+            info.error = tr("Could not load the metadata of %1").arg(QFileInfo(file).fileName());
+            return nullptr;
+        }
+        if (!LdxCapture::isLdxName(file) && map.captureSize > 0 && QFileInfo(file).size() != map.captureSize) {
+            info.error = tr("The map of %1 was made for another capture (it is not of the same size)").arg(QFileInfo(file).fileName());
+            return nullptr;
+        }
+        QString buildError;
+        if (!MappedMetadata::build(capture, map, MappedMetadata::paddedAudioSamples(capture, metadataFile), loaded->metadata, buildError)) {
+            info.error = tr("The map of %1 cannot be used: %2").arg(QFileInfo(file).fileName(), buildError);
+            return nullptr;
+        }
+        loaded->viewTable = MappedMetadata::viewFields(capture, map, buildError);
+        if (!loaded->viewTable) {
+            info.error = tr("The map of %1 cannot be used: %2").arg(QFileInfo(file).fileName(), buildError);
+            return nullptr;
+        }
+    } else if (metadataFile.isEmpty() || !loaded->metadata.read(metadataFile)) {
         info.error = tr("Could not load the metadata of %1").arg(QFileInfo(file).fileName());
         return nullptr;
     }
 
+    // The metadata of the source keep a map (ld-discmap --save-map, or the Map button of the information panel): the source is read through it when it follows the map
+    if (!throughMap && loaded->metadata.hasDiscMap()) {
+        info.mapInSource = true;
+        if (followMap) {
+            QString mapError;
+            loaded->viewTable = MappedMetadata::applyEmbeddedMap(loaded->metadata, metadataFile, file, mapError);
+            if (!mapError.isEmpty()) {
+                info.error = tr("The map in the metadata of %1 cannot be used: %2").arg(QFileInfo(file).fileName(), mapError);
+                return nullptr;
+            }
+            throughMap = loaded->viewTable != nullptr;
+        }
+    }
+
     const LdDecodeMetaData::VideoParameters &videoParameters = loaded->metadata.getVideoParameters();
-    loaded->video.setLenient(true);
-    if (!loaded->video.open(file, videoParameters.fieldWidth * videoParameters.fieldHeight, videoParameters.fieldWidth)) {
+    if (!openHandle(*loaded, loaded->video)) {
         info.error = tr("Could not open %1").arg(QFileInfo(file).fileName());
         return nullptr;
     }
     loaded->metadata.setIsFirstFieldFirst(!reverseFields);
+    info.throughMap = throughMap;
     loaded->ok = true;
 
     info.ok = true;
@@ -159,10 +204,23 @@ std::shared_ptr<FrameBackend::Loaded> FrameBackend::loadSource(const QString &id
     return loaded;
 }
 
+// A handle on the video of a source: the capture, or the capture through its map
+bool FrameBackend::openHandle(const Loaded &source, SourceVideo &video)
+{
+    const LdDecodeMetaData::VideoParameters &parameters = const_cast<LdDecodeMetaData &>(source.metadata).getVideoParameters();
+    video.setLenient(true);
+    const qint32 length = parameters.fieldWidth * parameters.fieldHeight;
+    if (source.viewTable) return video.openMappedFields(source.file, length, parameters.fieldWidth, source.viewTable);
+    return video.open(source.file, length, parameters.fieldWidth);
+}
+
 // A source is asked for: it is read in the background (the thread of the backend goes on with the pictures, and several sources are read together)
-void FrameBackend::addSource(const QString &id, const QString &file, bool reverseFields)
+void FrameBackend::addSource(const QString &id, const QString &file, bool reverseFields, const QByteArray &mapJson, bool followMap)
 {
     currentReverse = reverseFields;
+    followOfSource.insert(id, followMap);
+    if (mapJson.isEmpty()) mapOfSource.remove(id);
+    else mapOfSource.insert(id, mapJson);
     startLoad(id, file);
 }
 
@@ -171,10 +229,12 @@ void FrameBackend::startLoad(const QString &id, const QString &file)
     const quint64 token = ++loadCounter;
     pendingLoads.insert(id, token);
     const bool reverse = currentReverse;
+    const QByteArray mapJson = mapOfSource.value(id);
+    const bool followMap = followOfSource.value(id, true);
     QPointer<FrameBackend> self(this);
-    QThreadPool::globalInstance()->start(QRunnable::create([self, id, file, reverse, token]() {
+    QThreadPool::globalInstance()->start(QRunnable::create([self, id, file, reverse, mapJson, followMap, token]() {
         SourceInfo info;
-        std::shared_ptr<Loaded> loaded = loadSource(id, file, reverse, info);
+        std::shared_ptr<Loaded> loaded = loadSource(id, file, reverse, mapJson, followMap, info);
         if (!self) return;
         QMetaObject::invokeMethod(self.data(), [self, id, file, reverse, token, info, loaded]() {
             if (self) self->finishLoad(id, file, reverse, token, loaded, info);
@@ -200,6 +260,8 @@ void FrameBackend::finishLoad(const QString &id, const QString &file, bool rever
 void FrameBackend::removeSource(const QString &id)
 {
     pendingLoads.remove(id);
+    mapOfSource.remove(id);
+    followOfSource.remove(id);
     // (the handles of the threads that measure the SNR are on the files too: a file that is open cannot be replaced on Windows)
     snrReaders.clear();
     snrReadersGeneration = 0;
@@ -615,8 +677,7 @@ void FrameBackend::openSnrReaders(const FrameRequest &request, qint32 threads, q
             if (found == sources.constEnd() || !(*found)->ok || !entry.enabled) continue;
             const LdDecodeMetaData::VideoParameters &videoParameters = (*found)->metadata.getVideoParameters();
             auto video = std::make_shared<SourceVideo>();
-            video->setLenient(true);
-            if (video->open((*found)->file, videoParameters.fieldWidth * videoParameters.fieldHeight, videoParameters.fieldWidth)) {
+            if (openHandle(**found, *video)) {
                 snrReaders[t].insert(entry.id, video);
             }
         }
@@ -764,8 +825,7 @@ void FrameBackend::computeSourceSnr(const QString &id, qint32 startFrame, quint6
         const LdDecodeMetaData::VideoParameters &videoParameters = source.metadata.getVideoParameters();
         for (qint32 t = 0; t < threads; t++) {
             auto video = std::make_shared<SourceVideo>();
-            video->setLenient(true);
-            if (!video->open(source.file, videoParameters.fieldWidth * videoParameters.fieldHeight, videoParameters.fieldWidth)) break;
+            if (!openHandle(source, *video)) break;
             sourceReaders.append(video);
         }
         sourceReadersGeneration = generation;

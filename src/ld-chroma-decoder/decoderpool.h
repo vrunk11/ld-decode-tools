@@ -89,8 +89,13 @@ public:
     // Returns true on success, false on failure.
     bool putOutputFrames(qint32 startFrameNumber, const QVector<OutputFrame> &outputFrames);
 
+    // The fields of the capture that the frames come from when the capture is read through a map (MappedMetadata::applyEmbeddedMap), null otherwise
+    void setViewTable(std::shared_ptr<const QVector<qint32>> table) { viewTable = table; }
+
 private:
     bool putOutputFrame(qint32 frameNumber, const OutputFrame &outputFrame);
+
+    std::shared_ptr<const QVector<qint32>> viewTable;
 
     // Default batch size, in frames
     static constexpr qint32 DEFAULT_BATCH_SIZE = 16;

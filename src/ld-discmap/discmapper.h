@@ -43,9 +43,13 @@ class DiscMapper
 public:
     DiscMapper();
 
+    // How many frames more than the capture holds between two frames a gap of the numbers may be and still be padded (see padDiscMap)
+    void setGapAllowance(qint32 frames) { gapAllowance = frames; }
+
     bool process(QFileInfo _inputFileInfo, QFileInfo _inputMetadataFileInfo,
                  QFileInfo _outputFileInfo, bool _reverse, bool _mapOnly, bool _noStrict,
-                 bool _deleteUnmappable, bool _noAudio);
+                 bool _deleteUnmappable, bool _noAudio,
+                 const QString &_mapFileName = QString(), const QString &_sessionFileName = QString(), bool _saveMap = false);
 
 private:
     QFileInfo inputFileInfo;
@@ -56,7 +60,14 @@ private:
     bool noStrict;
     bool deleteUnmappable;
     bool noAudio;
+    qint32 gapAllowance = 100;
+    QString mapFileName;        // where the map of the capture is written as JSON (none: not written)
+    QString sessionFileName;    // the stacking session the map is put in (none: not put in one)
+    bool saveMap = false;       // the map is kept in the metadata of the input
 
+    bool writeMapFile(DiscMap &discMap);
+    bool writeMapToSession(DiscMap &discMap);
+    bool saveMapInInput(DiscMap &discMap);
     void removeLeadInOut(DiscMap &discMap);
     void removeInvalidFramesByPhase(DiscMap &discMap);
     void correctVbiFrameNumbersUsingSequenceAnalysis(DiscMap &discMap);

@@ -3,7 +3,7 @@ add_executable(testsnrplot
     ../snrplot.cpp
 )
 
-target_include_directories(testsnrplot PRIVATE ..)
+target_include_directories(testsnrplot PRIVATE .. ../../gui-common)
 target_link_libraries(testsnrplot PRIVATE Qt::Core Qt::Gui Qt::Widgets)
 
 add_test(NAME testsnrplot COMMAND testsnrplot)

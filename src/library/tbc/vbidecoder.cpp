@@ -45,8 +45,13 @@ VbiDecoder::Vbi VbiDecoder::decodeFrame(qint32 vbi16_1, qint32 vbi17_1, qint32 v
     if (firstFieldVbi.userCode != "") vbi.userCode = firstFieldVbi.userCode;
     else vbi.userCode = secondFieldVbi.userCode;
 
-    if (firstFieldVbi.picNo != -1) vbi.picNo = firstFieldVbi.picNo;
-    else vbi.picNo = secondFieldVbi.picNo;
+    if (firstFieldVbi.picNo != -1) {
+        vbi.picNo = firstFieldVbi.picNo;
+        vbi.picNoUnconfirmed = firstFieldVbi.picNoUnconfirmed;
+    } else {
+        vbi.picNo = secondFieldVbi.picNo;
+        vbi.picNoUnconfirmed = secondFieldVbi.picNoUnconfirmed;
+    }
 
     if (firstFieldVbi.chNo != -1) vbi.chNo = firstFieldVbi.chNo;
     else vbi.chNo = secondFieldVbi.chNo;
@@ -144,21 +149,30 @@ VbiDecoder::Vbi VbiDecoder::decode(qint32 vbi16, qint32 vbi17, qint32 vbi18)
     // used to duplicate stop code signalling on early discs -- so the picture
     // number is 0-79999.
 
+    // (the number is carried twice: when the lines disagree the number of line 18 is the one that is kept, as it always was, and it is flagged)
+    qint32 picNo17 = -1, picNo18 = -1;
     if ((vbi17 & 0xF00000) == 0xF00000) {
-        if (decodeBCD(vbi17 & 0x07FFFF, vbi.picNo)) {
+        if (decodeBCD(vbi17 & 0x07FFFF, picNo17)) {
+            vbi.picNo = picNo17;
             vbi.type = VbiDecoder::VbiDiscTypes::cav;
 
             if (verboseDebug) tbcDebugStream() << "VbiDecoder::decode(): VBI Picture number is" << vbi.picNo;
+        } else {
+            picNo17 = -1;
         }
     }
 
     if ((vbi18 & 0xF00000) == 0xF00000) {
-        if (decodeBCD(vbi18 & 0x07FFFF, vbi.picNo)) {
+        if (decodeBCD(vbi18 & 0x07FFFF, picNo18)) {
+            vbi.picNo = picNo18;
             vbi.type = VbiDecoder::VbiDiscTypes::cav;
 
             if (verboseDebug) tbcDebugStream() << "VbiDecoder::decode(): VBI Picture number is" << vbi.picNo;
+        } else {
+            picNo18 = -1;
         }
     }
+    if (picNo17 != -1 || picNo18 != -1) vbi.picNoUnconfirmed = picNo17 == -1 || picNo18 == -1 || picNo17 != picNo18;
 
     // IEC 60857-1986 - 10.1.4 Picture stop code ----------------------------------------------------------------------
 

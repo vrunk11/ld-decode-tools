@@ -25,7 +25,6 @@
  ******************************************************************************/
 
 #include <getopt.h>
-#include <cassert>
 #include <cstring>
 
 #ifdef _WIN32
@@ -45,8 +44,8 @@ void doHelp(const std::string &app) {
               << "\n  If output_file is '-', stdout is used."
               << "\n  If log_file    is omitted, stderr is used."
               << "\n"
-              << "\n  source_file is expected to provide a 46.08MHz 8-bit unsigned stream."
-              << "\n  output_file be overwritten / created with a stream of QPSK symbols."
+              << "\n  source_file is expected to provide the stream of QPSK symbols that ld-ac3-demodulate writes."
+              << "\n  output_file be overwritten / created with the AC3 stream (the frames, one after the other)."
               << "\n  log_file be overwritten / created with any logging or error messages."
               << "\n  Options:"
               << "\n    -v (int)    Set the logging level. Must be 0-3, representing DEBUG, INFO, WARN and ERR."
@@ -73,7 +72,10 @@ int main(int argc, char *argv[]) {
             // could have stdin/stdout as defaults, with switches to change them
             case 'v':
                 Logger::GLOBAL_LOG_LEVEL = std::stoi(optarg);
-                assert(Logger::GLOBAL_LOG_LEVEL >= 0 && Logger::GLOBAL_LOG_LEVEL <= MAX_LOGLEVEL);
+                if (Logger::GLOBAL_LOG_LEVEL < 0 || Logger::GLOBAL_LOG_LEVEL > MAX_LOGLEVEL) {
+                    fprintf(stderr, "The logging level must be from 0 to %d\n", MAX_LOGLEVEL);
+                    return 2;
+                }
                 continue;
             case '?':
             case 'h':
@@ -107,7 +109,10 @@ int main(int argc, char *argv[]) {
         char fileBuffer[8196]; // 8K
         inputFile.rdbuf()->pubsetbuf(fileBuffer, sizeof fileBuffer);
         inputFile.open(posArgv[0], std::ifstream::binary);
-        assert(inputFile.good());
+        if (!inputFile.good()) {
+            fprintf(stderr, "Cannot open the input file: %s\n", posArgv[0]);
+            return 1;
+        }
         input = &inputFile;
     }
 
@@ -116,7 +121,10 @@ int main(int argc, char *argv[]) {
     if (std::strcmp(posArgv[1], "-") != 0) {
         fprintf(stderr, "using output file: %s\n", posArgv[1]);
         outputFile.open(posArgv[1], std::ifstream::binary);
-        assert(outputFile.good());
+        if (!outputFile.good()) {
+            fprintf(stderr, "Cannot open the output file: %s\n", posArgv[1]);
+            return 1;
+        }
         output = &outputFile;
     }
 
@@ -125,7 +133,10 @@ int main(int argc, char *argv[]) {
     if (posArgc > 2 && std::strcmp(posArgv[2], "-") != 0) {
         fprintf(stderr, "using logger file: %s\n", posArgv[2]);
         loggerFile.open(posArgv[2], std::ifstream::binary);
-        assert(loggerFile.good());
+        if (!loggerFile.good()) {
+            fprintf(stderr, "Cannot open the log file: %s\n", posArgv[2]);
+            return 1;
+        }
         Logger::LOG_STREAM = &loggerFile;
     }
 

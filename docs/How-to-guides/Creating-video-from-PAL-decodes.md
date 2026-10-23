@@ -126,9 +126,9 @@ NTSC options `ntsc1d`, `ntsc2d`, `ntsc3d`, `ntsc3dnoadapt`, `mono`
 ### Advanced Options
 
 
-`--chroma-nr <number> `     NTSC: Chroma noise reduction level in dB (default 0.0)
+`--chroma-nr <number> `     NTSC: Chroma noise reduction level in IRE (default 0.0)
 
-`--luma-nr <number>`        Luma noise reduction level in dB (default 1.0)
+`--luma-nr <number>`        Luma noise reduction level in IRE (default 0.0)
 
 `--chroma-gain <number>`    Gain factor applied to chroma components (default 1.0)
 

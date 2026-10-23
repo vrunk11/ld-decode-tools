@@ -42,6 +42,7 @@
 #include "tbc/metadataoptions.h"
 #include "tbc/pipedinputoptions.h"
 #include "tbc/commonoptions.h"
+#include "mappedmetadata.h"
 
 #include "comb.h"
 #include "monodecoder.h"
@@ -167,6 +168,9 @@ int main(int argc, char *argv[])
     // Option to reverse the field order (-r)
     ReverseOption setReverseOption;
     setReverseOption.addTo(parser);
+
+    IgnoreMapOption ignoreMapOption;
+    ignoreMapOption.addTo(parser);
 
     // Option to specify chroma gain
     QCommandLineOption chromaGainOption(QStringList() << "chroma-gain",
@@ -501,6 +505,7 @@ int main(int argc, char *argv[])
 
     // Work out the metadata filename
     LdDecodeMetaData metaData;
+    std::shared_ptr<const QVector<qint32>> viewTable;     // the fields of the capture each frame is made of, when it is read through its map
     if (ldxInput) {
         // The metadata the stream began with, or, if it sent none, the defaults of the video it holds
         LdxStream *ldxStream = LdxStream::instance();
@@ -546,6 +551,17 @@ int main(int argc, char *argv[])
         if (!metaData.read(inputMetadataFileName)) {
             qCritical() << "Unable to open ld-decode metadata file:" << inputMetadataFileName;
             return 1;
+        }
+
+        // A capture that keeps a map in its metadata is decoded in the order of the map (the frames of the disc, missing ones blank)
+        if (!ignoreMapOption.isSet(parser)) {
+            QString mapError;
+            viewTable = MappedMetadata::applyEmbeddedMap(metaData, inputMetadataFileName, inputFileName, mapError);
+            if (!mapError.isEmpty()) {
+                qCritical().noquote() << "Unable to use the map in the metadata:" << mapError << "(--ignore-map reads the capture as it is)";
+                return 1;
+            }
+            if (viewTable) qInfo() << "The capture is read through the map in its metadata (--ignore-map reads it as it is)";
         }
 
         // CVBS core metadata says how its samples are stored
@@ -663,6 +679,7 @@ int main(int argc, char *argv[])
     
     // Perform the processing
     DecoderPool decoderPool(*decoder, inputFileName, metaData, outputConfig, outputFileName, startFrame, length, maxThreads);
+    decoderPool.setViewTable(viewTable);
     decoderPool.setStreamOptions(streamOptions);
     if (!decoderPool.process()) {
         return 1;

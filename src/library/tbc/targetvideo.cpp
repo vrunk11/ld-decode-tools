@@ -64,6 +64,29 @@ void TargetVideo::setLdxVideo(qint32 fieldWidth, qint32 fieldHeight, double samp
 }
 
 void TargetVideo::setLdxAudio(double sampleRate, qint32 bits) { ldxAudioRate = sampleRate; ldxAudioBits = bits; }
+
+qint32 TargetVideo::addLdxTrack(const QString &kind, const QString &codec, qint32 depth, const QString &name, const QJsonObject &parameters)
+{
+    ExtraTrack track;
+    track.kind = kind;
+    track.codec = codec;
+    track.depth = depth;
+    track.name = name;
+    track.parameters = parameters;
+    ldxExtraTracks.append(track);
+    return static_cast<qint32>(ldxExtraTracks.size()) - 1;
+}
+
+bool TargetVideo::writeLdxTrack(qint32 index, qint64 timeNs, const QByteArray &data)
+{
+    if (!ldx || index < 0 || index >= ldxExtraTracks.size() || ldxExtraTracks[index].number == 0) return false;
+    return ldx->writer.writeBlock(ldxExtraTracks[index].number, timeNs, data);
+}
+
+qint64 TargetVideo::ldxTimeNs() const
+{
+    return ldx ? fieldTimeNs(ldx->fields, ldxSystem) : 0;
+}
 bool TargetVideo::isLdx() const { return ldx != nullptr; }
 
 bool TargetVideo::writeAudio(const QByteArray &samples)
@@ -80,6 +103,9 @@ void TargetVideo::setLdxStream(const QByteArray &) {}
 void TargetVideo::setLdxAudio(double, qint32) {}
 bool TargetVideo::isLdx() const { return false; }
 bool TargetVideo::writeAudio(const QByteArray &) { return false; }
+qint32 TargetVideo::addLdxTrack(const QString &, const QString &, qint32, const QString &, const QJsonObject &) { return -1; }
+bool TargetVideo::writeLdxTrack(qint32, qint64, const QByteArray &) { return false; }
+qint64 TargetVideo::ldxTimeNs() const { return 0; }
 
 #endif
 
@@ -145,6 +171,17 @@ bool TargetVideo::open(const QString &fileName, VideoSystem system, Cvbs::Sample
             audio.parameters["track"] = static_cast<int>(video.number);
             ldx->writer.addTrack(audio);
             ldx->audio = audio.number;
+        }
+        for (ExtraTrack &extra : ldxExtraTracks) {
+            Ldx::Track track;
+            track.kind = Ldx::kindFromName(extra.kind);
+            track.codec = Ldx::codecFromName(extra.codec);
+            track.depth = extra.depth;
+            track.name = extra.name;
+            track.parameters = extra.parameters;
+            track.parameters["track"] = static_cast<int>(video.number);
+            ldx->writer.addTrack(track);
+            extra.number = track.number;
         }
         if (!ldxHistory.isEmpty()) ldx->writer.setHistory(ldxHistory);
         QString error;

@@ -10,6 +10,7 @@
 
 #include <QCoreApplication>
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <vector>
@@ -60,6 +61,24 @@ int main(int argc, char *argv[])
             CHECK(!(frames[i - 1].isPullDown() && !frames[i].isPullDown()));
         }
     }
+
+    // The quality of a frame with 43 dB, no dropout, a number in order and full sync confidence: the parts add up to 100.3 of 1004 (and the dropouts to 100 000)
+    CHECK(std::fabs(frameQualityPercent(43.0, 100.0, 100.0, 0, 1000000) - (100.0 + 100.0 + 100.0 + 100000.0) / 1004.0) < 1e-9);
+    // Half of the amplitude (6.02 dB less) is half of the share of the black PSNR (it was 1.2 % with (dB/20)^10)
+    {
+        const double full = frameQualityPercent(43.0, 100.0, 100.0, 0, 1000000);
+        const double less = frameQualityPercent(43.0 - 20.0 * std::log10(2.0), 100.0, 100.0, 0, 1000000);
+        CHECK(std::fabs((full - less) - 50.0 / 1004.0) < 1e-9);
+    }
+    // 5 % of the samples in dropouts cost 5 % of the quality that dropouts decide (1000 of 1004 parts), whatever the size of the frame
+    {
+        const double full = frameQualityPercent(43.0, 100.0, 100.0, 0, 1000000);
+        CHECK(std::fabs((full - frameQualityPercent(43.0, 100.0, 100.0, 50000, 1000000)) - 5.0 * 1000.0 / 1004.0) < 1e-9);
+        CHECK(std::fabs((full - frameQualityPercent(43.0, 100.0, 100.0, 100, 2000)) - 5.0 * 1000.0 / 1004.0) < 1e-9);
+    }
+    // More dropouts than samples does not go under zero; a black PSNR over the reference does not go over
+    CHECK(frameQualityPercent(43.0, 100.0, 100.0, 5000, 1000) == frameQualityPercent(43.0, 100.0, 100.0, 1000, 1000));
+    CHECK(frameQualityPercent(60.0, 100.0, 100.0, 0, 1000) == frameQualityPercent(43.0, 100.0, 100.0, 0, 1000));
 
     std::printf("testframe: all checks passed\n");
     return 0;

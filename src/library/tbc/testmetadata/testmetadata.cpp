@@ -200,6 +200,38 @@ void testFieldAccessors() {
     CHECK(metaData.getField(2).pad && metaData.getField(2).fieldPhaseID == 3 && !metaData.getField(1).pad);
 }
 
+// Field numbers that are not there, and a metadata with no first field: no reading outside the vector, no stop, no scan of the whole file
+void testBadFieldNumbers() {
+    std::cerr << "Testing field numbers that are not there\n";
+
+    LdDecodeMetaData metaData;
+    metaData.initialiseDefault(PAL);
+    metaData.ensureFields(20);
+    for (qint32 n = 1; n <= 20; n++) {
+        LdDecodeMetaData::Field field = metaData.getField(n);
+        field.isFirstField = false;             // none of them is a first field
+        metaData.updateField(field, n);
+    }
+
+    // A field outside the file is an empty field, and what is written to it goes nowhere
+    CHECK(metaData.getField(0).syncConf == 0);
+    CHECK(metaData.getField(21).seqNo == 0);
+    CHECK(metaData.getField(-5).seqNo == 0);
+    LdDecodeMetaData::Field some;
+    some.syncConf = 88;
+    metaData.updateField(some, 999);
+    CHECK(metaData.getField(1000).syncConf == 0);
+    CHECK(metaData.getNumberOfFields() == 20);
+
+    // No first field near: the fields of the frame are -1, for each frame, and the answer comes at once
+    for (qint32 frame = 1; frame <= 10; frame++) {
+        CHECK(metaData.getFirstFieldNumber(frame) == -1);
+        CHECK(metaData.getSecondFieldNumber(frame) == -1);
+    }
+    CHECK(metaData.getFirstFieldNumber(11) == -1);
+    CHECK(metaData.getFirstFieldNumber(0) == -1);
+}
+
 int main(int argc, char *argv[])
 {
     // Initialise Qt
@@ -237,6 +269,7 @@ int main(int argc, char *argv[])
         testVideoSystem();
         testFieldProvider();
         testFrameRateAndTimecodes();
+        testBadFieldNumbers();
         testFieldAccessors();
         return 0;
     }

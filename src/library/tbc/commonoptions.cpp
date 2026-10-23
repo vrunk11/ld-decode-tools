@@ -53,6 +53,17 @@ void ReverseOption::addTo(QCommandLineParser &parser)
     parser.addOption(option);
 }
 
+IgnoreMapOption::IgnoreMapOption()
+    : option("ignore-map",
+             QCoreApplication::translate("main", "Read the capture as it is, though its metadata keep a map (the frames in the order of the disc, from ld-discmap)"))
+{
+}
+
+void IgnoreMapOption::addTo(QCommandLineParser &parser)
+{
+    parser.addOption(option);
+}
+
 NoBackupOption::NoBackupOption()
     : option(QStringList() << "n" << "nobackup",
              QCoreApplication::translate("main", "Do not create a backup of the input metadata"))
@@ -64,15 +75,29 @@ void NoBackupOption::addTo(QCommandLineParser &parser)
     parser.addOption(option);
 }
 
-bool NoBackupOption::backUp(const QString &inputMetadataFileName, const QString &outputMetadataFileName, bool noBackup, const QString &suffix)
+bool NoBackupOption::backUp(const QString &inputMetadataFileName, const QString &outputMetadataFileName, bool noBackup, const QString &suffix, bool legacy)
 {
     // If we're overwriting the input metadata file, back it up first
     if (inputMetadataFileName == outputMetadataFileName && !noBackup) {
-        qInfo().nospace().noquote() << "Backing up metadata to " << inputMetadataFileName << suffix;
-        if (!QFile::copy(inputMetadataFileName, inputMetadataFileName + suffix)) {
+        // (one suffix for every tool, and the backup of the last run is replaced; legacy: the suffix of the tool, and a backup that is there stops it)
+        const QString backupName = inputMetadataFileName + (legacy ? suffix : QStringLiteral(".bup"));
+        qInfo().nospace().noquote() << "Backing up metadata to " << backupName;
+        if (!legacy && QFile::exists(backupName)) QFile::remove(backupName);
+        if (!QFile::copy(inputMetadataFileName, backupName)) {
             qCritical() << "Unable to back-up input metadata file - back-up already exists?";
             return false;
         }
     }
     return true;
+}
+
+LegacyBackupOption::LegacyBackupOption()
+    : option("legacy",
+             QCoreApplication::translate("main", "Keep the backup of the metadata as the tools always did: the suffix of the tool (.bup for ld-process-vbi, .vbup for ld-process-vits), and an existing backup stops the run (without it the backup is always name.bup and replaces the last one)"))
+{
+}
+
+void LegacyBackupOption::addTo(QCommandLineParser &parser)
+{
+    parser.addOption(option);
 }

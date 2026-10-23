@@ -23,11 +23,13 @@
 ************************************************************************/
 
 #include "stackingpool.h"
+#include <QSet>
 #include "vbidecoder.h"
 #include "discnumbering.h"
 #include "stackframe.h"
 #include "tbc/logging.h"
 #include "ldxcapture.h"
+#include "vitsmetrics.h"
 
 StackingPool::StackingPool(QString _outputFilename, QString _outputMetadataFilename,
                              qint32 _maxThreads, QVector<LdDecodeMetaData *> &_ldDecodeMetaData, QVector<SourceVideo *> &_sourceVideos,
@@ -44,14 +46,75 @@ void StackingPool::setOffsets(const QVector<qint32> &sourceOffsets)
     useOffsets = true;
 }
 
+// The frame of a source that goes with a frame of the output (the frames of the output are those of the first source), 0 if it has none
+qint32 StackingPool::ownFrameOf(qint32 outputFrame, qint32 sourceNo)
+{
+    const qint32 frames = ldDecodeMetaData[sourceNo]->getNumberOfFrames();
+    qint32 own = 0;
+    if (sourceNo == 0) own = outputFrame;
+    else if (useOffsets) own = sourceFrameFor(outputFrame, sourceNo, -1);
+    else {
+        const qint32 vbiFrame = convertSequentialFrameNumberToVbi(outputFrame, 0);
+        if (ranges.contains(vbiFrame, sourceNo)) own = convertVbiFrameNumberToSequential(vbiFrame, sourceNo);
+    }
+    return own >= 1 && own <= frames ? own : 0;
+}
+
+// Where the frames of the output are in the streams that are copied: for each source whose streams are, the frame of its capture that goes with each frame
+// of the output. The streams keep the times they have in their source, and this says how to find the part that goes with a frame of the video.
+void StackingPool::computeStreamAlignments()
+{
+    streamAlignments.clear();
+    QSet<qint32> done;
+    const qint32 frames = ldDecodeMetaData[0]->getNumberOfFrames();
+    for (const StreamCopy::Candidate &candidate : copiedStreams) {
+        if (done.contains(candidate.source)) continue;
+        done.insert(candidate.source);
+        QVector<qint32> captureFrame(frames, 0);
+        for (qint32 n = 1; n <= frames; n++) {
+            const qint32 own = ownFrameOf(n, candidate.source);
+            const QVector<qint32> &toCapture = candidate.source < captureFrames.size() ? captureFrames[candidate.source] : QVector<qint32>();
+            captureFrame[n - 1] = own == 0 ? 0 : (toCapture.isEmpty() ? own : (own <= toCapture.size() ? toCapture[own - 1] : 0));
+        }
+        streamAlignments.insert(candidate.source, StreamCopy::alignmentOf(captureFrame));
+    }
+}
+
+// What the history of the output says this tool did
+QString StackingPool::processDetail() const
+{
+    QString detail = "stacking of " + QString::number(sourceVideos.size()) + " source(s)";
+    if (audio) detail += "; the analogue audio of the first source is written with the video, from the fields it gives";
+    const QString copied = StreamCopy::historyDetail(copiedStreams, copiedSources, streamAlignments);
+    if (!copied.isEmpty()) detail += "; " + copied;
+    return detail;
+}
+
 bool StackingPool::process()
 {
     qInfo() << "Performing final sanity checks...";
+    // Get the VBI frame range for all sources (not needed when the sources are lined up by offsets): the frame of each source that goes with a frame of the
+    // output is needed to say where the copied streams are
+    qInfo() << "Scanning source videos for VBI frame number ranges...";
+    if (!useOffsets && !setMinAndMaxVbiFrames()) {
+        qInfo() << "It was not possible to determine the VBI frame number range for the source video - cannot continue!";
+        return false;
+    }
+    computeStreamAlignments();
+
     // Open the target video (a CVBS output keeps the input's sample encoding)
     const LdDecodeMetaData::VideoParameters &outputParameters = ldDecodeMetaData[0]->getVideoParameters();
     targetVideo.setLdxVideo(outputParameters.fieldWidth, outputParameters.fieldHeight, outputParameters.sampleRate, QString(),
-                            historyWith(LdxCapture::historyEntry("process", "stacking of " + QString::number(sourceVideos.size()) + " sources")));
+                            historyWith(LdxCapture::historyEntry("process", processDetail())));
     targetVideo.setLdxCvbs(ldxCvbs);
+    if (audio) targetVideo.setLdxAudio(44100, 16);       // (the audio of the first source goes into the track of an LDX output)
+    if (!copiedStreams.isEmpty()) {
+        QString copyError;
+        if (!streamCopy.prepare(copiedStreams, targetVideo, copyError, streamAlignments)) {
+            qCritical().noquote() << "The streams cannot be copied:" << copyError;
+            return false;
+        }
+    }
     if (ldxStream) targetVideo.setLdxStream(ldDecodeMetaData[0]->parametersJson());
     if (!targetVideo.open(outputFilename, ldDecodeMetaData[0]->getVideoParameters().system,
                           ldDecodeMetaData[0]->getCvbsFileMetadata().sampleEncoding)) {
@@ -75,13 +138,6 @@ bool StackingPool::process()
             targetVideo.close();
             return false;
         }
-    }
-
-    qInfo() << "Scanning source videos for VBI frame number ranges...";
-    // Get the VBI frame range for all sources (not needed when the sources are lined up by offsets)
-    if (!useOffsets && !setMinAndMaxVbiFrames()) {
-        qInfo() << "It was not possible to determine the VBI frame number range for the source video - cannot continue!";
-        return false;
     }
 
     // Show some information for the user
@@ -122,6 +178,11 @@ bool StackingPool::process()
     if(integrityCheck)
     {
         qInfo() << "Stacking found " << skippedFrame << "corrupted frame";
+    }
+    if (!streamCopy.isEmpty() && !streamCopy.finish(targetVideo)) {
+        qCritical() << "Writing the copied streams to the output failed";
+        targetVideo.close();
+        return false;
     }
     // Close the target video (an LDX output is finished before its metadata are added to it)
     if (!targetVideo.close()) return false;
@@ -317,10 +378,29 @@ bool StackingPool::setOutputFrame(qint32 frameNumber,
         ldDecodeMetaData[0]->updateFieldDropOuts(outputFrame.firstTargetFieldDropOuts, outputFrame.firstFieldSeqNo);
         ldDecodeMetaData[0]->updateFieldDropOuts(outputFrame.secondTargetFieldDropOuts, outputFrame.secondFieldSeqNo);
 
+        // The SNR of the fields is that of the stack, not of the first source: measured on the fields that are written, as ld-process-vits would
+        {
+            const LdDecodeMetaData::VideoParameters videoParameters = ldDecodeMetaData[0]->getVideoParameters();
+            LdDecodeMetaData::Field measured;
+            measured.vitsMetrics = ldDecodeMetaData[0]->getFieldVitsMetrics(outputFrame.firstFieldSeqNo);
+            computeVitsMetrics(outputFrame.firstTargetFieldData, 1, videoParameters, measured);
+            ldDecodeMetaData[0]->updateFieldVitsMetrics(measured.vitsMetrics, outputFrame.firstFieldSeqNo);
+            measured.vitsMetrics = ldDecodeMetaData[0]->getFieldVitsMetrics(outputFrame.secondFieldSeqNo);
+            computeVitsMetrics(outputFrame.secondTargetFieldData, 1, videoParameters, measured);
+            ldDecodeMetaData[0]->updateFieldVitsMetrics(measured.vitsMetrics, outputFrame.secondFieldSeqNo);
+        }
+
         // In a stream the metadata of the two fields are final now, and go with them
         if (ldxStream) {
             replaceFieldMetaData<1>(outputFrameNumber);
             replaceFieldMetaData<2>(outputFrameNumber);
+        }
+
+        // The blocks of the other streams that come before this frame
+        if (!streamCopy.isEmpty() && !streamCopy.writeUpTo(targetVideo, targetVideo.ldxTimeNs())) {
+            qCritical() << "Writing the copied streams to the output failed";
+            targetVideo.close();
+            return false;
         }
 
         // Save the frame data to the output file (with the fields in the correct order)
@@ -341,6 +421,23 @@ bool StackingPool::setOutputFrame(qint32 frameNumber,
             qCritical() << "Writing fields to the output TBC file failed";
             targetVideo.close();
             return false;
+        }
+
+        // (the blocks of the other streams up to the time of the audio, which is stamped with the time of the next field)
+        if (!streamCopy.isEmpty() && !streamCopy.writeUpTo(targetVideo, targetVideo.ldxTimeNs())) {
+            qCritical() << "Writing the copied streams to the output failed";
+            targetVideo.close();
+            return false;
+        }
+        // The audio of the two fields of the frame, in an LDX output
+        if (audio && targetVideo.isLdx()) {
+            QByteArray samples = audio->audioOf(outputFrame.firstFieldSeqNo);
+            samples.append(audio->audioOf(outputFrame.secondFieldSeqNo));
+            if (!samples.isEmpty() && !targetVideo.writeAudio(samples)) {
+                qCritical() << "Writing the audio to the output failed";
+                targetVideo.close();
+                return false;
+            }
         }
 
         // Show debug
@@ -535,6 +632,7 @@ void StackingPool::replaceFieldMetaData(qint32 frameNumber)
             potentialField.seqNo = currentField.seqNo;
             potentialField.fieldPhaseID = currentField.fieldPhaseID;
             potentialField.dropOuts = currentField.dropOuts;
+            potentialField.vitsMetrics = currentField.vitsMetrics;
             ldDecodeMetaData[0]->updateField(potentialField, fieldNumber);
             break;
         }

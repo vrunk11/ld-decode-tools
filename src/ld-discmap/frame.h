@@ -51,6 +51,8 @@ public:
     bool isPadded() const;
     bool isClvOffset() const;
     bool isUnmappable() const;
+    bool isNumberCorrected() const;
+    bool isNumberUnconfirmed() const;
     qint32 firstField() const;
     qint32 secondField() const;
     qint32 firstFieldPhase() const;
@@ -67,6 +69,8 @@ public:
     void isPadded(bool value);
     void isClvOffset(bool value);
     void isUnmappable(bool value);
+    void isNumberCorrected(bool value);
+    void isNumberUnconfirmed(bool value);
     void firstField(qint32 value);
     void secondField(qint32 value);
     void firstFieldPhase(qint32 value);
@@ -86,11 +90,19 @@ private:
     bool m_isPadded;
     bool m_isClvOffset;
     bool m_isUnmappable = false;    // it had no number and could not be given one: it is kept, with a number that is made up, and marked as a dropout
+    bool m_isNumberCorrected = false;   // its number is not the one the VBI gave: the sequence of the numbers around it replaced it
+    bool m_isNumberUnconfirmed = false; // the VBI number was read from one line only, or the two lines disagreed
     qint32 m_firstField;
     qint32 m_secondField;
     qint32 m_firstFieldPhase;
     qint32 m_secondFieldPhase;
 };
+
+// The quality of a frame (0 to 100), by which a duplicate is chosen among several: the mean of the black PSNR (as a share of the
+// 43 dB that is the most expected, in amplitude), the penalty for a number that goes back, the sync confidence (0 to 100) and the share
+// of the frame that is not dropout (this one counts 1000 times: it decides almost alone). blackPsnr is the mean of the two fields, in dB,
+// dropOutLength the samples in dropouts of both fields, samplesInFrame the samples of both fields.
+double frameQualityPercent(double blackPsnr, double penaltyPercent, double syncConfPercent, qint64 dropOutLength, qint64 samplesInFrame);
 
 // Custom streaming operator for debug
 QDebug operator<<(QDebug dbg, const Frame &frame);

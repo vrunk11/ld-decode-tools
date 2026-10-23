@@ -34,6 +34,7 @@
 #include "vbilinedecoder.h"
 #include "tbc/metadataoptions.h"
 #include "tbc/commonoptions.h"
+#include "stackproject.h"
 #include "tbc/fieldpool.h"
 #include "vbilinedecoder.h"
 
@@ -73,6 +74,8 @@ int main(int argc, char *argv[])
     // Option to disable metadata back-up (-n)
     NoBackupOption showNoBackupOption;
     showNoBackupOption.addTo(parser);
+    LegacyBackupOption legacyOption;
+    legacyOption.addTo(parser);
 
     // Option to select the number of threads (-t)
     ThreadsOption threadsOption;
@@ -127,6 +130,17 @@ int main(int argc, char *argv[])
         return 0;
     }
 
+    // A session is its capture when it has one source on: the tool works on the capture itself (and keeps the map in its metadata as it is)
+    if (inputFilename.endsWith(".stack", Qt::CaseInsensitive)) {
+        QString captureFile, sessionError;
+        if (!StackProject::singleCapture(inputFilename, captureFile, sessionError)) {
+            qCritical().noquote() << sessionError;
+            return 2;
+        }
+        qInfo().noquote() << inputFilename << "is read as its capture" << captureFile;
+        inputFilename = captureFile;
+    }
+
     // Work out the metadata filenames
     QString inputMetadataFilename;
     if (!metadataOptions.selectInput(inputFilename, true, inputMetadataFilename)) return 1;
@@ -144,7 +158,7 @@ int main(int argc, char *argv[])
     if (!metadataOptions.selectOutput(inputMetadataFilename, metaData.getFormat(), outputMetadataFilename)) return 2;
 
     // If we're overwriting the input metadata file, back it up first
-    if (!NoBackupOption::backUp(inputMetadataFilename, outputMetadataFilename, noBackup, ".bup")) return 1;
+    if (!NoBackupOption::backUp(inputMetadataFilename, outputMetadataFilename, noBackup, ".bup", legacyOption.isSet(parser))) return 1;
 
     // Perform the processing
     qInfo() << "Beginning VBI processing...";
@@ -152,6 +166,10 @@ int main(int argc, char *argv[])
     pool.name = "VBI";
     pool.firstLine = VbiLineDecoder::startFieldLine;
     pool.lastLine = VbiLineDecoder::endFieldLine;
+    // (written alone only over the file that was read: another file gets everything)
+    if (outputMetadataFilename == inputMetadataFilename) {
+        pool.tables = LdDecodeMetaData::FieldTable | LdDecodeMetaData::VbiTable | LdDecodeMetaData::VitcTable | LdDecodeMetaData::ClosedCaptionTable;
+    }
     pool.createWorker = [](QAtomicInt &abort, FieldPool &fieldPool) -> QThread * { return new VbiLineDecoder(abort, fieldPool); };
     // Only the VBI, NTSC, VITC and closed caption data of a field change
     pool.storeField = [](LdDecodeMetaData &metadata, qint32 fieldNumber, const LdDecodeMetaData::Field &field) {

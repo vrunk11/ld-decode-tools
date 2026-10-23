@@ -35,6 +35,7 @@ void assertSame(const VbiDecoder::Vbi &actual, const VbiDecoder::Vbi &expected)
     assert(actual.type == expected.type);
     assert(actual.userCode == expected.userCode);
     assert(actual.picNo == expected.picNo);
+    assert(actual.picNoUnconfirmed == expected.picNoUnconfirmed);
     assert(actual.chNo == expected.chNo);
     assert(actual.clvHr == expected.clvHr);
     assert(actual.clvMin == expected.clvMin);
@@ -107,6 +108,7 @@ void testDecode()
         Vbi expected;
         expected.type = VbiDiscTypes::cav;
         expected.picNo = 12345;
+        expected.picNoUnconfirmed = true;       // (carried on two lines, read from one)
 
         // Regular
         assertSame(decoder.decode(0, 0xF12345, 0), expected);
@@ -115,6 +117,20 @@ void testDecode()
         // Early stopcode signalling
         assertSame(decoder.decode(0, 0xF92345, 0), expected);
         assertSame(decoder.decode(0, 0, 0xF92345), expected);
+    }
+
+    {
+        // Both lines carry the number and agree: it is confirmed
+        Vbi expected;
+        expected.type = VbiDiscTypes::cav;
+        expected.picNo = 12345;
+        assertSame(decoder.decode(0, 0xF12345, 0xF12345), expected);
+        assertSame(decoder.decode(0, 0xF12345, 0xF92345), expected);       // (the early stop code bit is not part of the number)
+
+        // They disagree: line 18 is kept, as it always was, and the number is not confirmed
+        expected.picNo = 12399;
+        expected.picNoUnconfirmed = true;
+        assertSame(decoder.decode(0, 0xF12345, 0xF12399), expected);
     }
 
     {
@@ -132,6 +148,7 @@ void testDecode()
         Vbi expected;
         expected.type = VbiDiscTypes::cav;
         expected.picNo = 14212;
+        expected.picNoUnconfirmed = true;
 
         assertSame(decoder.decode(0, 0xF95FDF, 0xF94212), expected);
     }

@@ -723,24 +723,26 @@ void LdDecodeMetaData::Field::read(SqliteReader &reader, int captureId)
 }
 
 // Write Field to SQLite
-void LdDecodeMetaData::Field::write(SqliteWriter &writer, int captureId) const
+void LdDecodeMetaData::Field::write(SqliteWriter &writer, int captureId, unsigned tables) const
 {
     // Convert seqNo (1-indexed) to fieldId (0-indexed)
     int fieldId = seqNo - 1;
     
     // Write main field record with NTSC data embedded
-    writer.writeField(captureId, fieldId, audioSamples, decodeFaults, diskLoc,
-                     efmTValues, fieldPhaseID, fileLoc, isFirstField, medianBurstIRE,
-                     pad, syncConf, ntsc.isFmCodeDataValid, ntsc.fmCodeData,
-                     ntsc.fieldFlag, ntsc.isVideoIdDataValid, ntsc.videoIdData,
-                     ntsc.whiteFlag);
+    if (tables & FieldTable) {
+        writer.writeField(captureId, fieldId, audioSamples, decodeFaults, diskLoc,
+                         efmTValues, fieldPhaseID, fileLoc, isFirstField, medianBurstIRE,
+                         pad, syncConf, ntsc.isFmCodeDataValid, ntsc.fmCodeData,
+                         ntsc.fieldFlag, ntsc.isVideoIdDataValid, ntsc.videoIdData,
+                         ntsc.whiteFlag);
+    }
 
     // Write optional field data
-    vitsMetrics.write(writer, captureId, fieldId);
-    vbi.write(writer, captureId, fieldId);
-    vitc.write(writer, captureId, fieldId);
-    closedCaption.write(writer, captureId, fieldId);
-    dropOuts.write(writer, captureId, fieldId);
+    if (tables & VitsTable) vitsMetrics.write(writer, captureId, fieldId);
+    if (tables & VbiTable) vbi.write(writer, captureId, fieldId);
+    if (tables & VitcTable) vitc.write(writer, captureId, fieldId);
+    if (tables & ClosedCaptionTable) closedCaption.write(writer, captureId, fieldId);
+    if (tables & DropOutsTable) dropOuts.write(writer, captureId, fieldId);
 }
 
 LdDecodeMetaData::LdDecodeMetaData()
@@ -759,6 +761,7 @@ void LdDecodeMetaData::clear()
     // Reset the parameters to their defaults
     videoParameters = VideoParameters();
     pcmAudioParameters = PcmAudioParameters();
+    clearDiscMap();
 
     fields.clear();
     cvbsFileMetadata.reset();
@@ -837,7 +840,7 @@ bool LdDecodeMetaData::read(QString fileName)
 }
 
 // Write all metadata, choosing the format from the file name or the input
-bool LdDecodeMetaData::write(QString fileName) const
+bool LdDecodeMetaData::write(QString fileName, unsigned tables) const
 {
     // The metadata of a capture is kept in its LDX file: the new ones are added to it, and are the current ones from then on
     if (LdxCapture::isLdxName(fileName)) {
@@ -874,7 +877,7 @@ bool LdDecodeMetaData::write(QString fileName) const
     if (fileName.endsWith(".json", Qt::CaseInsensitive)) outputFormat = MetadataFormat::Json;
     else if (fileName.endsWith(".db", Qt::CaseInsensitive)) outputFormat = MetadataFormat::Sqlite;
 
-    return (outputFormat == MetadataFormat::Json) ? writeJson(fileName) : writeSqlite(fileName);
+    return (outputFormat == MetadataFormat::Json) ? writeJson(fileName) : writeSqlite(fileName, tables);
 }
 
 LdDecodeMetaData::MetadataFormat LdDecodeMetaData::getFormat() const
@@ -929,6 +932,83 @@ QString LdDecodeMetaData::findMetadataFile(const QString &tbcFileName)
         }
     }
     return sqliteFileName;
+}
+
+void LdDecodeMetaData::adoptView(const LdDecodeMetaData &view)
+{
+    videoParameters = view.videoParameters;
+    pcmAudioParameters = view.pcmAudioParameters;
+    fields = view.fields;
+    isFirstFieldFirst = true;
+    clearDiscMap();
+    generatePcmAudioMap();
+}
+
+bool LdDecodeMetaData::saveDiscMap(const QString &videoFileName, const FrameMap *map, QString &error)
+{
+    const QString metadataFile = findMetadataFile(videoFileName);
+    const bool isLdx = LdxCapture::isLdxName(metadataFile);
+    if (!isLdx && !QFileInfo::exists(metadataFile)) {
+        error = QObject::tr("The metadata of %1 are not there").arg(videoFileName);
+        return false;
+    }
+
+    // A SQLite file: one table, in place
+    if (!isLdx && metadataFile.endsWith(".db", Qt::CaseInsensitive) && !Cvbs::isDataFileName(videoFileName)) {
+        try {
+            int captureId = 1;
+            {
+                SqliteReader reader(metadataFile);
+                QString system, decoder, gitBranch, gitCommit, notes;
+                double sampleRate;
+                int activeStart, activeEnd, width, height, numberOfFields, burstStart, burstEnd, white, black, blanking;
+                bool isMapped, locked, wide;
+                if (!reader.readCaptureMetadata(captureId, system, decoder, gitBranch, gitCommit, sampleRate, activeStart, activeEnd, width, height,
+                                                numberOfFields, burstStart, burstEnd, isMapped, locked, wide, white, black, blanking, notes)) {
+                    error = QObject::tr("The capture in %1 could not be read").arg(metadataFile);
+                    return false;
+                }
+            }
+            QFile::remove(metadataFile + ".bup");
+            QFile::copy(metadataFile, metadataFile + ".bup");
+            SqliteWriter writer(metadataFile);
+            if (!writer.beginTransaction()) {
+                error = QObject::tr("The metadata %1 could not be written").arg(metadataFile);
+                return false;
+            }
+            if (!writer.writeDiscMap(captureId, map ? map->toJsonBytes() : QByteArray())) {
+                writer.rollbackTransaction();
+                error = QObject::tr("The map could not be written in %1").arg(metadataFile);
+                return false;
+            }
+            if (!writer.commitTransaction()) {
+                error = QObject::tr("The metadata %1 could not be written").arg(metadataFile);
+                return false;
+            }
+        } catch (SqliteWriter::Error &sqliteError) {
+            error = QString::fromUtf8(sqliteError.what());
+            return false;
+        }
+        return true;
+    }
+
+    // JSON, an LDX file, a CVBS capture: the metadata are read and written again with the map
+    LdDecodeMetaData metadata;
+    if (!metadata.read(metadataFile)) {
+        error = QObject::tr("The metadata of %1 could not be read").arg(videoFileName);
+        return false;
+    }
+    if (map) metadata.setDiscMap(*map);
+    else metadata.clearDiscMap();
+    if (!isLdx && QFileInfo::exists(metadataFile)) {
+        QFile::remove(metadataFile + ".bup");
+        QFile::copy(metadataFile, metadataFile + ".bup");
+    }
+    if (!metadata.write(metadataFile)) {
+        error = QObject::tr("The metadata of %1 could not be written").arg(videoFileName);
+        return false;
+    }
+    return true;
 }
 
 QString LdDecodeMetaData::metadataFileName(const QString &tbcFileName, MetadataFormat _format)
@@ -1108,11 +1188,21 @@ bool LdDecodeMetaData::readCvbsCore(QString fileName)
                                        : dataFileName;
     if (QFileInfo::exists(burstFileName)) {
         for (Field &field: fields) field.fieldPhaseID = -1;
-        if (!Cvbs::measureFieldPhaseIDs(burstFileName, fileMetadata.system, fileMetadata.sampleEncoding, isYc,
-                                        numberOfFrames, [this](qint32 fieldIndex, qint32 phaseID) {
-                                            fields[fieldIndex].fieldPhaseID = phaseID;
-                                        })) {
-            qWarning().noquote() << "Could not measure the field phases of" << burstFileName;
+        // What was measured before is kept beside the file (<file>.phases) while the file is as it was
+        QVector<qint32> measured;
+        if (Cvbs::readPhaseCache(burstFileName, fields.size(), measured)) {
+            for (qint32 i = 0; i < fields.size(); i++) fields[i].fieldPhaseID = measured[i];
+        } else {
+            if (!Cvbs::measureFieldPhaseIDs(burstFileName, fileMetadata.system, fileMetadata.sampleEncoding, isYc,
+                                            numberOfFrames, [this](qint32 fieldIndex, qint32 phaseID) {
+                                                fields[fieldIndex].fieldPhaseID = phaseID;
+                                            })) {
+                qWarning().noquote() << "Could not measure the field phases of" << burstFileName;
+            } else {
+                measured.resize(fields.size());
+                for (qint32 i = 0; i < fields.size(); i++) measured[i] = fields[i].fieldPhaseID;
+                Cvbs::writePhaseCache(burstFileName, measured);
+            }
         }
 
         // NTSC fields with no measurable burst follow the colour sequence (1 to 4, a
@@ -1215,6 +1305,12 @@ bool LdDecodeMetaData::readJson(QString fileName)
         std::string member;
         while (reader.readMember(member)) {
             if (member == "fields") readFields(reader);
+            else if (member == "ldxMap") {
+                FrameMap map;
+                QString mapError;
+                if (map.read(reader, mapError)) setDiscMap(map);
+                else qWarning().noquote() << "The map in" << fileName << "is not used:" << mapError;
+            }
             else if (member == "pcmAudioParameters") pcmAudioParameters.read(reader);
             else if (member == "videoParameters") videoParameters.read(reader);
             else reader.discard();
@@ -1265,6 +1361,10 @@ bool LdDecodeMetaData::writeJson(QString fileName) const
     // Keep members in alphabetical order
     writer.writeMember("fields");
     writeFields(writer);
+    if (discMapPresent) {
+        writer.writeMember("ldxMap");
+        discMap.write(writer);
+    }
     if (pcmAudioParameters.isValid) {
         writer.writeMember("pcmAudioParameters");
         pcmAudioParameters.write(writer);
@@ -1357,6 +1457,7 @@ bool LdDecodeMetaData::readSqlite(QString fileName)
         videoParameters.sampleRate = videoSampleRate;
         videoParameters.isMapped = isMapped;
         videoParameters.tapeFormat = captureNotes;
+        if (!decoder.isEmpty()) videoParameters.decoder = decoder;
         videoParameters.gitBranch = gitBranch;
         videoParameters.gitCommit = gitCommit;
         videoParameters.isValid = true;
@@ -1365,6 +1466,13 @@ bool LdDecodeMetaData::readSqlite(QString fileName)
         int bits;
         bool isSigned, isLittleEndian;
         double audioSampleRate;
+        QByteArray mapJson;
+        if (reader.readDiscMap(captureId, mapJson)) {
+            FrameMap map;
+            QString mapError;
+            if (FrameMap::fromJsonBytes(mapJson, map, mapError)) setDiscMap(map);
+            else qWarning().noquote() << "The map in" << fileName << "is not used:" << mapError;
+        }
         if (reader.readPcmAudioParameters(captureId, bits, isSigned, isLittleEndian, audioSampleRate)) {
             pcmAudioParameters.bits = bits;
             pcmAudioParameters.isSigned = isSigned;
@@ -1391,7 +1499,7 @@ bool LdDecodeMetaData::readSqlite(QString fileName)
 }
 
 // Write all metadata out to an SQLite file
-bool LdDecodeMetaData::writeSqlite(QString fileName) const
+bool LdDecodeMetaData::writeSqlite(QString fileName, unsigned tables) const
 {
     // Check if we're updating an existing file or creating a new one
     bool isUpdate = QFileInfo::exists(fileName);
@@ -1444,11 +1552,17 @@ bool LdDecodeMetaData::writeSqlite(QString fileName) const
             return false;
         }
 
+        // A tool that changes some of the tables of the fields only, on a file that exists, writes those tables and nothing else
+        const bool partial = isUpdate && tables != AllTables;
+        const QString decoderName = videoParameters.decoder.isEmpty() ? QString("ld-decode") : videoParameters.decoder;
+
         // Write or update capture metadata
         QString systemName = getVideoSystemDescription();
-        if (isUpdate) {
+        if (partial) {
+            // (the capture itself is not changed)
+        } else if (isUpdate) {
             // Update existing capture metadata
-            if (!writer.updateCaptureMetadata(captureId, systemName, "ld-decode", // TODO: make decoder configurable
+            if (!writer.updateCaptureMetadata(captureId, systemName, decoderName,
                                             videoParameters.gitBranch, videoParameters.gitCommit,
                                             videoParameters.sampleRate, videoParameters.activeVideoStart, 
                                             videoParameters.activeVideoEnd, videoParameters.fieldWidth,
@@ -1463,7 +1577,7 @@ bool LdDecodeMetaData::writeSqlite(QString fileName) const
         } else {
             // Create new capture metadata
             captureId = writer.writeCaptureMetadata(
-                systemName, "ld-decode", // TODO: make decoder configurable
+                systemName, decoderName,
                 videoParameters.gitBranch, videoParameters.gitCommit,
                 videoParameters.sampleRate, videoParameters.activeVideoStart, 
                 videoParameters.activeVideoEnd, videoParameters.fieldWidth,
@@ -1479,8 +1593,14 @@ bool LdDecodeMetaData::writeSqlite(QString fileName) const
             }
         }
 
+        // The map of the capture (taken away from the file if the metadata have none)
+        if (!partial && !writer.writeDiscMap(captureId, discMapPresent ? discMap.toJsonBytes() : QByteArray())) {
+            writer.rollbackTransaction();
+            return false;
+        }
+
         // Write PCM audio parameters if they exist
-        if (pcmAudioParameters.isValid) {
+        if (!partial && pcmAudioParameters.isValid) {
             if (!writer.writePcmAudioParameters(captureId, pcmAudioParameters.bits,
                                               pcmAudioParameters.isSigned,
                                               pcmAudioParameters.isLittleEndian,
@@ -1490,8 +1610,23 @@ bool LdDecodeMetaData::writeSqlite(QString fileName) const
             }
         }
 
+        // The rows of the tables that are written again are taken away first, so that a row the metadata no longer have (a dropout that was
+        // corrected, a VBI that was cleared) does not stay in the file
+        if (isUpdate) {
+            const struct { unsigned table; const char *name; } rowTables[] = {
+                { VitsTable, "vits_metrics" }, { VbiTable, "vbi" }, { VitcTable, "vitc" },
+                { ClosedCaptionTable, "closed_caption" }, { DropOutsTable, "drop_outs" }
+            };
+            for (const auto &entry : rowTables) {
+                if ((tables & entry.table) && !writer.deleteFieldRows(captureId, entry.name)) {
+                    writer.rollbackTransaction();
+                    return false;
+                }
+            }
+        }
+
         // Write all fields
-        writeFields(writer, captureId);
+        writeFields(writer, captureId, tables);
 
         if (!writer.commitTransaction()) {
             qCritical() << "Failed to commit transaction";
@@ -1552,17 +1687,14 @@ void LdDecodeMetaData::readFields(SqliteReader &reader, int captureId)
         ccMap[ccQuery.value(0).toInt()] = { ccQuery.value(1).toInt(), ccQuery.value(2).toInt() };
     }
 
-    // Populate dropouts map: the rows of a field come together (by field, then by start). The dropouts of a field are kept in the reverse of the order of
-    // the rows, which is what they have always been in when read from SQLite.
+    // Populate dropouts map: the rows of a field come together (by field, then by start), and the dropouts of a field are kept in that order, the
+    // order of the file, as they are when read from JSON
     {
         int currentField = 0;
         bool haveField = false;
         QVector<qint32> startx, endx, fieldLine;
         const auto finishField = [&]() {
             if (!haveField) return;
-            std::reverse(startx.begin(), startx.end());
-            std::reverse(endx.begin(), endx.end());
-            std::reverse(fieldLine.begin(), fieldLine.end());
             dropoutsMap.insert(currentField, DropOuts(startx, endx, fieldLine));
             startx = QVector<qint32>();
             endx = QVector<qint32>();
@@ -1687,10 +1819,10 @@ void LdDecodeMetaData::readFields(SqliteReader &reader, int captureId)
 }
 
 // Write array of Fields to SQLite
-void LdDecodeMetaData::writeFields(SqliteWriter &writer, int captureId) const
+void LdDecodeMetaData::writeFields(SqliteWriter &writer, int captureId, unsigned tables) const
 {
     for (const Field &field : fields) {
-        field.write(writer, captureId);
+        field.write(writer, captureId, tables);
     }
 }
 
@@ -1829,12 +1961,16 @@ const LdDecodeMetaData::Field &LdDecodeMetaData::getField(qint32 sequentialField
     return fieldAt(sequentialFieldNumber, __func__);
 }
 
-// The field of a sequential field number (from 1). One that is not there is said, and the field is looked for all the same, as the accessors always did
+// The field of a sequential field number (from 1). One that is not there is said, and an empty field is given (what is written
+// to it is lost): the vector is never indexed out of its bounds
 LdDecodeMetaData::Field &LdDecodeMetaData::fieldAt(qint32 sequentialFieldNumber, const char *caller)
 {
     const qint32 fieldNumber = sequentialFieldNumber - 1;
     if (fieldNumber < 0 || fieldNumber >= getNumberOfFields()) {
         qCritical() << "LdDecodeMetaData::" << caller << "(): Requested field number" << sequentialFieldNumber << "out of bounds!";
+        static thread_local Field missing;
+        missing = Field();
+        return missing;
     }
 
     return fields[fieldNumber];
@@ -2059,13 +2195,20 @@ qint32 LdDecodeMetaData::getFieldNumber(qint32 frameNumber, qint32 field)
     // If the field number pointed to by firstFieldNumber doesn't have
     // isFirstField set, move forward field by field until the current
     // field does
-    while (!getField(firstFieldNumber).isFirstField) {
+    // (the search is for a few fields only: a capture starts on a second field, or has a skip, and the next first field is near;
+    // a metadata that does not have one there is broken, and is said once, not for each of the frames)
+    const qint32 maxSearch = 8;
+    qint32 searched = 0;
+    while (firstFieldNumber >= 1 && firstFieldNumber <= getNumberOfFields() && !getField(firstFieldNumber).isFirstField) {
         firstFieldNumber++;
         secondFieldNumber++;
 
-        // Give up if we reach the end of the available fields
-        if (firstFieldNumber > getNumberOfFields() || secondFieldNumber > getNumberOfFields()) {
-            qCritical() << "Attempting to get field number failed - no isFirstField in metadata before end of file";
+        // Give up if we reach the end of the available fields, or search for too long
+        if (firstFieldNumber > getNumberOfFields() || secondFieldNumber > getNumberOfFields() || ++searched >= maxSearch) {
+            if (!isFirstFieldSearchReported) {
+                qCritical() << "Attempting to get field number failed - no isFirstField in the metadata near field" << (frameNumber * 2 - 1) << "(said once)";
+                isFirstFieldSearchReported = true;
+            }
             firstFieldNumber = -1;
             secondFieldNumber = -1;
             break;
@@ -2087,7 +2230,7 @@ qint32 LdDecodeMetaData::getFieldNumber(qint32 frameNumber, qint32 field)
     }
 
     // Test for a buggy TBC file...
-    if (getField(secondFieldNumber).isFirstField) {
+    if (secondFieldNumber >= 1 && getField(secondFieldNumber).isFirstField) {
         qCritical() << "LdDecodeMetaData::getFieldNumber(): Both of the determined fields have isFirstField set - the TBC source video is probably broken...";
     }
 

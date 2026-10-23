@@ -88,6 +88,28 @@ int main(int argc, char *argv[])
                                        QCoreApplication::translate("main", "Do not process analogue audio"));
     parser.addOption(setNoAudioOption);
 
+    // How wide a gap of the numbers is padded (--gap-allowance)
+    QCommandLineOption setGapAllowanceOption("gap-allowance",
+                                       QCoreApplication::translate("main", "A gap in the numbers is padded only up to the frames of the capture between the two frames plus this many (a number that was misread makes a wide gap that the capture does not account for; default 100)"),
+                                       QCoreApplication::translate("main", "frames"), "100");
+    parser.addOption(setGapAllowanceOption);
+
+    // Keep the map in the metadata of the capture (--save-map)
+    QCommandLineOption setSaveMapOption("save-map",
+                                       QCoreApplication::translate("main", "Keep the map in the metadata of the input (the .tbc.db, the .tbc.json, or the LDX file): the tools that read the capture then read it in the order of the disc. Alone, with the input only, nothing else is written"));
+    parser.addOption(setSaveMapOption);
+
+    // The old way: write the mapped capture (a copy of the video, the audio and the metadata) instead of the map
+    QCommandLineOption setLegacyOption("legacy",
+                                       QCoreApplication::translate("main", "Write the mapped capture (a copy of the video, the audio and the metadata) as ld-discmap always did, instead of putting the map in a .stack session"));
+    parser.addOption(setLegacyOption);
+
+    // The map of the capture, as JSON (--map-file)
+    QCommandLineOption setMapFileOption("map-file",
+                                       QCoreApplication::translate("main", "Write the map of the capture (the frames in the order of the disc, and where each number comes from) as JSON to this file"),
+                                       QCoreApplication::translate("main", "file"));
+    parser.addOption(setMapFileOption);
+
     // Metadata format to use when both input.db and input.json exist: --meta
     MetadataOptions metadataOptions(MetadataOptions::FormatOnly);
     metadataOptions.addTo(parser);
@@ -96,7 +118,7 @@ int main(int argc, char *argv[])
     parser.addPositionalArgument("input", QCoreApplication::translate("main", "Specify input TBC file"));
 
     // Positional argument to specify output TBC file
-    parser.addPositionalArgument("output", QCoreApplication::translate("main", "Specify output TBC file"));
+    parser.addPositionalArgument("output", QCoreApplication::translate("main", "Specify the .stack session to put the map of the input in (with --legacy: the output TBC file)"));
 
     // Process the command line options and arguments given by the user
     parser.process(a);
@@ -108,9 +130,13 @@ int main(int argc, char *argv[])
     // Get the options from the parser
     bool reverse = setReverseOption.isSet(parser);
     bool mapOnly = parser.isSet(setMapOnlyOption);
+    const bool saveMap = parser.isSet(setSaveMapOption);
+    // (--save-map with the input alone is a mapping with nothing else written)
+    if (saveMap && !mapOnly && parser.positionalArguments().count() == 1) mapOnly = true;
     bool noStrict = parser.isSet(setNoStrictOption);
     bool deleteUnmappable = parser.isSet(setDeleteUnmappableOption);
     bool noAudio = parser.isSet(setNoAudioOption);
+    const bool legacy = parser.isSet(setLegacyOption);
 
     // Process the command line options
     QString inputFilename;
@@ -162,6 +188,21 @@ int main(int argc, char *argv[])
         }
     }
 
+    // An output that is a stacking session (.stack) is not a capture: the map of the input is put into the session (the source is added to it if it is not there)
+    // (--legacy: the output is a capture, whatever its name)
+    QString sessionFilename;
+    if (!mapOnly && !legacy && outputFilename.endsWith(".stack", Qt::CaseInsensitive)) {
+        sessionFilename = outputFilename;
+        mapOnly = true;
+        outputFilename = "";
+    }
+
+    // Without --legacy the output is a session: a capture is not written without being asked for
+    if (!mapOnly && !legacy && sessionFilename.isEmpty()) {
+        qCritical("The output must be a .stack session, to put the map of the capture in (the mapped capture is not written any more unless --legacy is given)");
+        return 2;
+    }
+
     // Put the input and output file names into QFileInfo for portability
     QFileInfo inputFileInfo(inputFilename);
     QFileInfo outputFileInfo(outputFilename);
@@ -193,8 +234,16 @@ int main(int argc, char *argv[])
 
     // Perform disc mapping
     DiscMapper discMapper;
+    bool allowanceOk = false;
+    const qint32 gapAllowance = parser.value(setGapAllowanceOption).toInt(&allowanceOk);
+    if (!allowanceOk || gapAllowance < 0) {
+        qCritical("The gap allowance must be a number of frames, 0 or more");
+        return 2;
+    }
+    discMapper.setGapAllowance(gapAllowance);
     if (!discMapper.process(inputFileInfo, inputMetadataFileInfo, outputFileInfo, reverse,
-                            mapOnly, noStrict, deleteUnmappable, noAudio)) return 1;
+                            mapOnly, noStrict, deleteUnmappable, noAudio,
+                            parser.value(setMapFileOption), sessionFilename, saveMap)) return 1;
 
     // Quit with success
     return 0;

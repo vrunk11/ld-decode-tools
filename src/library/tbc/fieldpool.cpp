@@ -78,7 +78,7 @@ bool FieldPool::process()
 
     // Write the metadata file
     qInfo() << "Writing metadata file...";
-    if (!ldDecodeMetaData.write(outputMetadataFilename)) {
+    if (!ldDecodeMetaData.write(outputMetadataFilename, settings.tables)) {
         qCritical().noquote() << "The metadata could not be written to" << outputMetadataFilename;
         sourceVideo.close();
         return false;

@@ -135,7 +135,8 @@ static void testModes()
     std::cerr << "Testing StackerCore::stackField in every mode\n";
 
     // The results of the code as it was before it was changed: one number for each mode (mean, median, smart mean, smart neighbour, neighbour)
-    const quint64 expected[5] = { 8674266558336975877ull, 2541962126510689597ull, 15763113360523792581ull, 8211931175348854089ull, 9716157817551807533ull };
+    // (the number of the smart neighbour mode is that of the code after the centre was made signed: the centres under the threshold, 3840, give another mean)
+    const quint64 expected[5] = { 8674266558336975877ull, 2541962126510689597ull, 15763113360523792581ull, 14941868726732689349ull, 9716157817551807533ull };
     bool print = false;
     for (qint32 mode = 0; mode < 5; mode++) {
         const quint64 got = digestOfMode(mode);
@@ -170,6 +171,10 @@ static void testSimple()
     core.stackField(1, fields, parameters, fieldMetadata, available, true, false, output, dropOuts, 0, 15 * 256, false);
     CHECK(output[0] == 2336);
     core.stackField(1, fields, parameters, fieldMetadata, available, true, false, output, dropOuts, 2, 15 * 256, false);
+    CHECK(output[0] == 1005);
+    // the smart neighbour mode with a centre under the threshold (the sync tips of a capture are): the mean of the samples near it, as for any other centre. It was the centre itself,
+    // because the centre was unsigned and centre - threshold wrapped round (the results of the code before are those of the other modes, which did not change)
+    core.stackField(1, fields, parameters, fieldMetadata, available, true, false, output, dropOuts, 3, 15 * 256, false);
     CHECK(output[0] == 1005);
 
     // The automatic mode goes by the number of sources

@@ -38,12 +38,12 @@ Another important note is around VBI frame number rewriting.  If a disc contains
 
 All sources must be successfully disc mapped before any other multi-source tool can be used:
 
-    ld-discmap dragonslair_ds1.tbc dragonslair_ds1_mapped.tbc
-    ld-discmap dragonslair_ds2.tbc dragonslair_ds2_mapped.tbc
-    ld-discmap dragonslair_ds3.tbc dragonslair_ds3_mapped.tbc
-    ld-discmap dragonslair_ds4.tbc dragonslair_ds4_mapped.tbc
+    ld-discmap dragonslair_ds1.tbc dragonslair.stack
+    ld-discmap dragonslair_ds2.tbc dragonslair.stack
+    ld-discmap dragonslair_ds3.tbc dragonslair.stack
+    ld-discmap dragonslair_ds4.tbc dragonslair.stack
 
-As disc-mapping is **highly automated guess-work**; it is important to check and verify each mapped copy using ld-analyse to ensure that the resulting TBC looks correct before continuing with the process - especially if ld-discmap reports a suspected problem with a disc.
+Each run puts the map of the capture in the session `dragonslair.stack`; the captures are not written again. (ld-discmap --legacy writes a mapped copy of a capture instead, as it always did.) As disc-mapping is **highly automated guess-work**; it is important to check and verify each mapped source by opening the session in ld-analyse or ld-stacker-gui to ensure that the result looks correct before continuing with the process - especially if ld-discmap reports a suspected problem with a disc.
 
 ## Troublesome discs
 
@@ -71,11 +71,7 @@ If no sources are available for a pixel the tool will attempt to use differentia
 
 Stacking of the example files in this wiki would be performed with a command such as:
 
-    ld-disc-stacker dragonslair_ds1_mapped.tbc \
-    dragonslair_ds2_mapped.tbc \
-    dragonslair_ds3_mapped.tbc \
-    dragonslair_ds4_mapped.tbc \
-    dragonslair_stacked.tbc
+    ld-disc-stacker dragonslair.stack dragonslair_stacked.tbc
 
 ## Dropout pass-through
 
@@ -87,7 +83,7 @@ Differential dropout detection (diffDOD) works by looking at the difference betw
 
 The process becomes more accurate as the number of sources increase.  With only 3 sources, 2 frames should match with 1 in error, with 4 sources 3 should match with 1 in error.  If multiple sources have dropouts in the same place (or dropouts that overlap in the same place) this will produce false-positives.
 
-Since all disc sources must be compared against all other disc sources for the differential comparison to work, ld-diffdod will rewrite the dropout metadata for all sources in a single process.
+Since all disc sources must be compared against all other disc sources for the differential comparison to work, ld-disc-stacker makes the comparison itself, as it stacks the same field of every source; the metadata of the sources are not changed, and the dropouts that the stack is left with are those of its own metadata.
 
 If you do not require diffDOD use the --no-diffdod option to turn it off.
 

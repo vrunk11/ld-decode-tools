@@ -73,6 +73,10 @@ private:
         qint32 distance;
     };
 
+    // What the options say (set for each frame from the pool): how far a replacement line can be from the dropout (0: no limit), and whether to fill the corrected parts with white
+    qint32 maxDistance = 0;
+    bool highlight = false;
+
     // Statistics
     struct Statistics {
         qint32 sameSourceConcealment;
@@ -92,7 +96,7 @@ private:
                       QVector<SourceVideo::Data> &thisFieldData, const QVector<SourceVideo::Data> &otherFieldData,
                       bool thisFieldIsFirst, bool intraField, const QVector<qint32> &availableSourcesForFrame,
                       const QVector<double> &sourceFrameQuality, Statistics &statistics);
-    QVector<DropOutLocation> populateDropoutsVector(LdDecodeMetaData::Field field, bool overCorrect);
+    QVector<DropOutLocation> populateDropoutsVector(LdDecodeMetaData::Field field, qint32 overCorrectDots);
     QVector<DropOutLocation> setDropOutLocations(QVector<DropOutLocation> dropOuts);
     Replacement findReplacementLine(const QVector<QVector<DropOutLocation>> &thisFieldDropouts,
                                     const QVector<QVector<DropOutLocation>> &otherFieldDropouts,

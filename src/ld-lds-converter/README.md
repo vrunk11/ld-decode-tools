@@ -136,80 +136,14 @@ for file in *_10bit.lds; do
 done
 ```
 
-## Sample Rate Reference
-
-### Common Rates
-- **40 MHz**: NTSC (DomesDay Duplicator, modern)
-- **28 MHz**: PAL (some setups)
-- **20 MHz**: NTSC (older captures)
-- **14 MHz**: PAL (older captures)
-- **Custom**: Tool-dependent rates
-
-### Standard Associations
-- **NTSC**: Typically 40 MHz or 20 MHz
-- **PAL**: Typically 28 MHz or 14 MHz
-- **PAL-M**: Typically 40 MHz or 20 MHz
-
-## Metadata Best Practices
-
-### Essential Fields
-1. **Sample Rate**: Always required for raw→LDS
-2. **Standard**: PAL/NTSC/PAL-M identification
-3. **Device**: Capture device used
-4. **Date**: When captured
-
-### Recommended Fields
-- **Side**: Disc side (1 or 2)
-- **Title**: Disc title
-- **Notes**: Quality notes, issues, settings
-- **Serial**: Disc serial/catalog number
-
-### Metadata Format
-
-Use with:
-```bash
-ld-lds-converter --raw-to-lds \
-    input.raw output.lds
-```
-
 ## Troubleshooting
 
-### Issues
+**The output is not what the next tool expects:**
+- Check the direction: no option (or `-u`) unpacks 10-bit to 16-bit, `-p` packs 16-bit to 10-bit.
+- `-r` is only for FlaCCL: it writes a RIFF WAV header.
 
-**Invalid LDS file:**
-- Check magic number/version
-- Verify file isn't corrupted
-- Ensure complete file (not truncated)
+**Nothing is written:**
+- Without `-i` the input is read from stdin, and without `-o` the output goes to stdout.
+- Check that there is room on the disk and that the output can be written.
 
-**Missing metadata:**
-- Required for raw→LDS: sample rate
-- Use --set-metadata to add
-- Or provide --metadata-file
-
-**Wrong sample rate:**
-- Specify correct rate with --sample-rate
-- Check with original capture documentation
-- Standard rates: 40 MHz (NTSC), 28 MHz (PAL)
-
-**Conversion errors:**
-- Verify input file format is correct
-- Check sufficient disk space
-- Ensure write permissions
-
-**Metadata encoding issues:**
-- Use UTF-8 encoding for metadata files
-- Use `ld-export-metadata` to verify metadata format
-- Ensure SQLite metadata database is not corrupted
-
-## Format Comparison
-
-| Feature | LDS | LDF | Raw |
-|---------|-----|-----|-----|
-| Metadata | Yes | Yes | No |
-| Compression | No | Yes (FLAC) | No |
-| Size | Large | Medium | Large |
-| Interchange | Good | ld-decode specific | Universal |
-| Complexity | Low | Medium | Minimal |
-
-
-## Input/Output
+The tool converts samples only: it has no metadata and no sample-rate option (the sample rate of a capture is not stored in a `.lds` file).

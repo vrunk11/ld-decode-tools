@@ -24,7 +24,9 @@
 
 #include "discmapper.h"
 
+#include <QDir>
 #include <QSet>
+#include "stackproject.h"
 #include <limits>
 #include "tbc/logging.h"
 #include "cvbsaudio.h"
@@ -39,7 +41,7 @@ DiscMapper::DiscMapper()
 // Method to perform disc mapping process
 bool DiscMapper::process(QFileInfo _inputFileInfo, QFileInfo _inputMetadataFileInfo,
                          QFileInfo _outputFileInfo, bool _reverse, bool _mapOnly, bool _noStrict,
-                         bool _deleteUnmappable, bool _noAudio)
+                         bool _deleteUnmappable, bool _noAudio, const QString &_mapFileName, const QString &_sessionFileName, bool _saveMap)
 {
     inputFileInfo = _inputFileInfo;
     inputMetadataFileInfo = _inputMetadataFileInfo;
@@ -49,6 +51,9 @@ bool DiscMapper::process(QFileInfo _inputFileInfo, QFileInfo _inputMetadataFileI
     noStrict = _noStrict;
     deleteUnmappable = _deleteUnmappable;
     noAudio = _noAudio;
+    mapFileName = _mapFileName;
+    sessionFileName = _sessionFileName;
+    saveMap = _saveMap;
 
     // Some info for the user...
     qInfo() << "LaserDisc mapping tool";
@@ -143,6 +148,11 @@ bool DiscMapper::process(QFileInfo _inputFileInfo, QFileInfo _inputMetadataFileI
     // All done
     qInfo() << "Disc mapping process completed";
 
+    // The map of the capture, for the tools that read a capture through a map
+    if (!mapFileName.isEmpty() && !writeMapFile(discMap)) return false;
+    if (!sessionFileName.isEmpty() && !writeMapToSession(discMap)) return false;
+    if (saveMap && !saveMapInInput(discMap)) return false;
+
     if (mapOnly) {
         qInfo() << "--maponly selected.  No output file will be written.";
         return true;
@@ -153,8 +163,105 @@ bool DiscMapper::process(QFileInfo _inputFileInfo, QFileInfo _inputMetadataFileI
     }
 
     qInfo() << "Writing output video and metadata information...";
-    saveDiscMap(discMap);
+    if (!saveDiscMap(discMap)) return false;
 
+    return true;
+}
+
+// Method to write the map of the capture (the frames in the order of the disc, and where each number comes from) as JSON
+bool DiscMapper::writeMapFile(DiscMap &discMap)
+{
+    qint64 fields = 0;
+    SourceVideo probe;
+    if (probe.open(inputFileInfo.filePath(), discMap.getVideoFieldLength())) {
+        fields = probe.getNumberOfAvailableFields();
+        probe.close();
+    }
+    FrameMap map = discMap.toFrameMap(fields, inputFileInfo.size());
+    map.madeBy = "ld-discmap";
+
+    QFile file(mapFileName);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        qCritical().noquote() << "Cannot write the map to" << mapFileName;
+        return false;
+    }
+    file.write(map.toJsonBytes());
+    file.write("\n");
+    file.close();
+
+    const QVector<qint32> counts = map.basisCounts();
+    qInfo().noquote() << "The map of" << map.frameCount() << "frames is in" << mapFileName << "- measured" << counts[0] << ", unconfirmed" << counts[1]
+                      << ", from the sequence" << counts[2] << ", from the pulldown" << counts[3] << ", guessed" << counts[4] << ", padded" << counts[5];
+    return true;
+}
+
+// Method to put the map of the capture into a stacking session: the source is the capture, found by its file, or added
+bool DiscMapper::writeMapToSession(DiscMap &discMap)
+{
+    qint64 fields = 0;
+    SourceVideo probe;
+    if (probe.open(inputFileInfo.filePath(), discMap.getVideoFieldLength())) {
+        fields = probe.getNumberOfAvailableFields();
+        probe.close();
+    }
+    FrameMap map = discMap.toFrameMap(fields, inputFileInfo.size());
+    map.madeBy = "ld-discmap";
+
+    StackProject project;
+    QString error;
+    if (QFileInfo::exists(sessionFileName) && !project.load(sessionFileName, error)) {
+        qCritical().noquote() << "Cannot read the session" << sessionFileName << ":" << error;
+        return false;
+    }
+
+    const QString capturePath = QDir::cleanPath(inputFileInfo.absoluteFilePath());
+    qint32 index = -1;
+    for (qint32 i = 0; i < project.sources.size(); i++) {
+        if (QDir::cleanPath(QFileInfo(project.sources[i].reference()).absoluteFilePath()) == capturePath) index = i;
+    }
+    if (index < 0) {
+        StackSource source;
+        source.id = project.newSourceId();
+        source.file = capturePath;
+        project.sources.append(source);
+        index = static_cast<qint32>(project.sources.size()) - 1;
+        qInfo().noquote() << "The capture is added to the session as" << source.id;
+    }
+    project.sources[index].map = map;
+    project.sources[index].hasMap = true;
+    project.sources[index].followMap = true;
+
+    if (!project.save(sessionFileName, error)) {
+        qCritical().noquote() << "Cannot write the session" << sessionFileName << ":" << error;
+        return false;
+    }
+    const QVector<qint32> counts = map.basisCounts();
+    qInfo().noquote() << "The map of" << map.frameCount() << "frames is in the session" << sessionFileName << "- measured" << counts[0] << ", unconfirmed" << counts[1]
+                      << ", from the sequence" << counts[2] << ", from the pulldown" << counts[3] << ", guessed" << counts[4] << ", padded" << counts[5];
+    return true;
+}
+
+// Method to keep the map in the metadata of the capture it was made from
+bool DiscMapper::saveMapInInput(DiscMap &discMap)
+{
+    qint64 fields = 0;
+    SourceVideo probe;
+    if (probe.open(inputFileInfo.filePath(), discMap.getVideoFieldLength())) {
+        fields = probe.getNumberOfAvailableFields();
+        probe.close();
+    }
+    FrameMap map = discMap.toFrameMap(fields, inputFileInfo.size());
+    map.madeBy = "ld-discmap";
+
+    QString error;
+    if (!LdDecodeMetaData::saveDiscMap(inputFileInfo.filePath(), &map, error)) {
+        qCritical().noquote() << "Cannot keep the map in the metadata of the input:" << error;
+        return false;
+    }
+    const QVector<qint32> counts = map.basisCounts();
+    qInfo().noquote() << "The map of" << map.frameCount() << "frames is kept in the metadata of" << inputFileInfo.filePath() << "- measured" << counts[0]
+                      << ", unconfirmed" << counts[1] << ", from the sequence" << counts[2] << ", from the pulldown" << counts[3] << ", guessed" << counts[4]
+                      << ", padded" << counts[5];
     return true;
 }
 
@@ -295,6 +402,7 @@ void DiscMapper::correctVbiFrameNumbersUsingSequenceAnalysis(DiscMap &discMap)
                                                 "- Phase" << discMap.getFirstFieldPhase(frameNumber + i + 1) << "/" <<
                                                 discMap.getSecondFieldPhase(frameNumber + i + 1);
                                     discMap.setVbiFrameNumber(frameNumber + i + 1, startOfSequence + expectedIncrement);
+                                    discMap.setNumberCorrected(frameNumber + i + 1);
                                     if (!discMap.isPulldown(frameNumber + i + 1)) expectedIncrement++;
                                     corrections++;
                                 } else {
@@ -514,6 +622,7 @@ void DiscMapper::padDiscMap(DiscMap &discMap)
     qint32 numberOfGaps = 0;
     qint32 totalMissingFrames = 0;
     qint32 clvOffsetFrames = 0;
+    qint32 refusedGaps = 0;
     QVector<qint32> startFrame;
     QVector<qint32> paddingLength;
     for (qint32 frameNumber = 0; frameNumber < discMap.numberOfFrames() - 1; frameNumber++) {
@@ -571,6 +680,19 @@ void DiscMapper::padDiscMap(DiscMap &discMap)
                         }
 
                         const qint32 missingFrames = discMap.vbiFrameNumber(frameNumber + 1) - discMap.vbiFrameNumber(frameNumber) - 1;
+
+                        // A gap is padded only when the capture can account for it: each frame the capture holds between the two frames (pictures that the
+                        // mapping could not place) is one missing picture, and a fixed allowance covers the player mistracking forward over pictures that the
+                        // capture never recorded. A number that was misread fails this on both counts: the gap is wide and the capture holds next to nothing there.
+                        const qint32 inCapture = qMax(0, discMap.seqFrameNumber(frameNumber + 1) - discMap.seqFrameNumber(frameNumber) - 1);
+                        if (missingFrames > inCapture + gapAllowance) {
+                            refusedGaps++;
+                            qInfo() << "Warning: the numbers jump from" << discMap.vbiFrameNumber(frameNumber) << "to" << discMap.vbiFrameNumber(frameNumber + 1)
+                                    << "(" << missingFrames << "frames) with" << inCapture << "frames of the capture between them:"
+                                    << "more than the allowance of" << gapAllowance << "- the gap is not padded (a misread number?)";
+                            continue;
+                        }
+
                         // (two frames with the same number are not a gap: nothing is missing)
                         if (missingFrames > 0) {
                             numberOfGaps++;
@@ -610,6 +732,7 @@ void DiscMapper::padDiscMap(DiscMap &discMap)
 
 
     if (clvOffsetFrames > 0) qInfo() << "There were" << clvOffsetFrames << "CLV timecode offsets in the disc map";
+    if (refusedGaps > 0) qInfo() << refusedGaps << "gaps were not padded: the capture does not account for them (see --gap-allowance)";
     qInfo() << "After padding the disc map contains" << discMap.numberOfFrames() << "frames";
 }
 

@@ -39,6 +39,9 @@
 #include "sourcevideo.h"
 #include "stackingpool.h"
 #include "stackproject.h"
+#include "mappedmetadata.h"
+#include "fieldaudio.h"
+#include "streamcopy.h"
 #include "ldxstream.h"
 #include "ldxcapture.h"
 
@@ -128,6 +131,25 @@ int main(int argc, char *argv[])
                                          "main", "Disable mapping requirement"));
     parser.addOption(noMapOption);
 
+    // Leave out what a map did not measure
+    IgnoreMapOption ignoreMapOption;
+    ignoreMapOption.addTo(parser);
+
+    // The analogue audio of the first source is written with the video in an LDX output
+    // Which other streams of the sources are copied into an LDX output
+    QCommandLineOption copyStreamsOption("copy-streams",
+                                         QCoreApplication::translate("main", "The other streams of the sources (EFM, AC3, RF, 24-bit audio) to copy as they are into an LDX output, with their own times: none, default (the EFM, AC3 and 24-bit audio of the first source), or a list such as 1:efm,1:ac3,2:#5 (the number of the source from 1, then efm, ac3, rf, audio, all or #track)"),
+                                         QCoreApplication::translate("main", "streams"), "default");
+    parser.addOption(copyStreamsOption);
+
+    QCommandLineOption noAudioOption("no-audio", QCoreApplication::translate("main", "Do not write the analogue audio of the first source with the video (an LDX output has it by default)"));
+    parser.addOption(noAudioOption);
+
+
+    QCommandLineOption measuredOnlyOption("measured-only",
+                                          QCoreApplication::translate("main", "For the sources read through a map (a session made by ld-discmap): leave out the frames whose number was not read from their own VBI (read from one line only, replaced by the sequence of the numbers, or guessed)"));
+    parser.addOption(measuredOnlyOption);
+
     // Option to passthrough dropouts present in every source
     QCommandLineOption passthroughOption(QStringList() << "passthrough",
                                         QCoreApplication::translate(
@@ -187,6 +209,7 @@ int main(int argc, char *argv[])
     bool verbose = parser.isSet(verboseOption);
     bool noDiffDod = parser.isSet(noDiffDodOption);
     bool noMap = parser.isSet(noMapOption);
+    const bool measuredOnly = parser.isSet(measuredOnlyOption);
     bool passThrough = parser.isSet(passthroughOption);
     bool integrityCheck = parser.isSet(integrityOption);
 
@@ -230,7 +253,12 @@ int main(int argc, char *argv[])
     // word. (With 2 inputs or more and the output, a .stack file is a source like another: it is read as the
     // stack of its own sources, which are stacked with the others.)
     bool fromSession = false;
+    QStringList enabledIds;
     QVector<qint32> offsets;
+    QVector<FrameMap> inputMaps;        // for each input: the map the session has for the source (empty: none, the capture is read as it is)
+    QVector<bool> inputHasMap;
+    QVector<bool> inputIgnoreMap;       // the sources that the session says to read as the capture is (Follow map off)
+    QString sessionCopyStreams;         // the streams to copy that the session chose, as --copy-streams says them (empty: the session did not choose)
     if (!positionalArguments.isEmpty() && StackProject::isSession(positionalArguments.at(0))
         && positionalArguments.count() <= 2) {
         StackProject session;
@@ -245,6 +273,10 @@ int main(int argc, char *argv[])
             if (!source.enabled) continue;
             sessionArguments.append(source.resolvedReference());
             offsets.append(source.offset);
+            inputHasMap.append(source.activeMap() != nullptr);
+            inputIgnoreMap.append(!source.followMap);
+            enabledIds.append(source.id);
+            inputMaps.append(source.activeMap() ? *source.activeMap() : FrameMap());
         }
         if (sessionArguments.count() < 2) {
             qCritical("The session needs at least 2 sources that are on");
@@ -258,6 +290,14 @@ int main(int argc, char *argv[])
         }
         sessionArguments.append(sessionOutput);
         positionalArguments = sessionArguments;
+        if (session.stacking.copyStreamsSet) {
+            QStringList items;
+            for (const auto &entry: session.stacking.copyStreams) {
+                const qint32 at = enabledIds.indexOf(entry.first);
+                if (at >= 0) items << QStringLiteral("%1:#%2").arg(at + 1).arg(entry.second);
+            }
+            sessionCopyStreams = items.isEmpty() ? QStringLiteral("none") : items.join(QLatin1Char(','));
+        }
         fromSession = true;
 
         if (!parser.isSet(modeOption)) mode = session.stacking.mode;
@@ -344,6 +384,10 @@ int main(int argc, char *argv[])
     tbcDebugStream() << "main(): Opening source video metadata files..";
     QVector<LdDecodeMetaData *> ldDecodeMetaData;
     ldDecodeMetaData.resize(totalNumberOfInputFiles);
+    QVector<LdDecodeMetaData *> captureMetadata(totalNumberOfInputFiles, nullptr);      // (of the captures that are read through a map)
+    QVector<std::shared_ptr<const QVector<qint32>>> viewTables(totalNumberOfInputFiles);      // for an input that keeps a map in its metadata
+    QVector<FieldAudio::Range> audioRanges0;       // the analogue audio of each field of the first input, when it is read through a map in its metadata
+    QVector<QVector<qint32>> captureFrames(totalNumberOfInputFiles);       // for an input that is read through a map: the frame of the capture each of its frames is
     for (qint32 i = 0; i < totalNumberOfInputFiles; i++) {
         // Create an object for the source video
         ldDecodeMetaData[i] = new LdDecodeMetaData;
@@ -365,9 +409,37 @@ int main(int argc, char *argv[])
                           "and the mapping: pack the capture with its whole metadata (ld-container pack) or use a file");
                 return 1;
             }
+        } else if (i < inputHasMap.size() && inputHasMap[i]) {
+            // The capture seen through its map in the session: the metadata of the mapped copy, without the copy
+            LdDecodeMetaData *capture = new LdDecodeMetaData;
+            if (!capture->read(metadataFilename)) {
+                qCritical() << "Unable to open TBC metadata file - cannot continue";
+                return 1;
+            }
+            QString mapError;
+            if (!MappedMetadata::build(*capture, inputMaps[i], MappedMetadata::paddedAudioSamples(*capture, metadataFilename), *ldDecodeMetaData[i], mapError, measuredOnly)) {
+                qCritical().noquote() << "The map of" << inputFilenames[i] << "cannot be used:" << mapError;
+                return 1;
+            }
+            if (inputMaps[i].captureSize > 0 && QFileInfo(inputFilenames[i]).size() != inputMaps[i].captureSize) {
+                qCritical().noquote() << "The map of" << inputFilenames[i] << "was made for another capture (it is not of the same size)";
+                return 1;
+            }
+            captureMetadata[i] = capture;
+            for (qint32 place = 1; place <= inputMaps[i].frameCount(); place++) captureFrames[i].append(inputMaps[i].frameAt(place).captureFrame);
+            qInfo().noquote() << "Input #" << i << "is read through its map of" << inputMaps[i].frameCount() << "frames";
         } else if (!ldDecodeMetaData[i]->read(metadataFilename)) {
             qCritical() << "Unable to open TBC metadata file - cannot continue";
             return 1;
+        }
+        if (!(i == 0 && ldxInput) && !(i < inputHasMap.size() && inputHasMap[i]) && !(i < inputIgnoreMap.size() && inputIgnoreMap[i]) && !ignoreMapOption.isSet(parser)) {
+            QString mapError;
+            viewTables[i] = MappedMetadata::applyEmbeddedMap(*ldDecodeMetaData[i], metadataFilename, inputFilenames[i], mapError, measuredOnly, i == 0 ? &audioRanges0 : nullptr, &captureFrames[i]);
+            if (!mapError.isEmpty()) {
+                qCritical().noquote() << "Unable to use the map in the metadata of input" << i << ":" << mapError << "(--ignore-map reads the capture as it is)";
+                return 1;
+            }
+            if (viewTables[i]) qInfo().nospace() << "Input #" << i << " is read through the map in its metadata (--ignore-map reads it as it is)";
         }
     }
 
@@ -412,7 +484,11 @@ int main(int argc, char *argv[])
                     " - input filename is " << inputFilenames[i];
 
         // Open the source TBC
-        if (!sourceVideos[i]->open(inputFilenames[i], videoParameters.fieldWidth * videoParameters.fieldHeight)) {
+        const bool throughMap = i < inputHasMap.size() && inputHasMap[i];
+        const qint32 fieldLength = videoParameters.fieldWidth * videoParameters.fieldHeight;
+        if (!(throughMap ? sourceVideos[i]->openMapped(inputFilenames[i], fieldLength, -1, inputMaps[i], *captureMetadata[i])
+                         : (viewTables[i] ? sourceVideos[i]->openMappedFields(inputFilenames[i], fieldLength, -1, viewTables[i])
+                                          : sourceVideos[i]->open(inputFilenames[i], fieldLength)))) {
             // Could not open source video file
             qInfo() << "Unable to open input source" << i;
             qInfo() << "Please verify that the specified source video files exist with the correct file permissions";
@@ -463,6 +539,41 @@ int main(int argc, char *argv[])
                                 ldDecodeMetaData, sourceVideos, mode, smartThreshold, reverse, noDiffDod, passThrough, integrityCheck, verbose);
     if (fromSession) stackingPool.setOffsets(offsets);
     stackingPool.setLdx(ldxOutput, LdxCapture::historyOf(inputFilenames[0]), TargetVideo::sourceIsCvbs(inputFilenames[0]));
+    // The other streams of the sources (EFM, AC3, 24-bit audio...) are copied as they are into an LDX file output, and the history says so
+    if (ldxOutput || LdxCapture::isLdxName(outputFilename)) {
+        QStringList sourceNames;
+        for (qint32 i = 0; i < totalNumberOfInputFiles; i++) sourceNames << inputFilenames[i];
+        const QVector<StreamCopy::Candidate> available = StreamCopy::candidates(sourceNames);
+        QVector<StreamCopy::Candidate> chosen;
+        QString copyError;
+        if (!StreamCopy::parseChoice(parser.isSet(copyStreamsOption) || sessionCopyStreams.isEmpty() ? parser.value(copyStreamsOption) : sessionCopyStreams, available, chosen, copyError)) {
+            qCritical().noquote() << "--copy-streams:" << copyError;
+            return 2;
+        }
+        stackingPool.setCopiedStreams(chosen, sourceNames);
+        stackingPool.setCaptureFrames(captureFrames);
+        for (const StreamCopy::Candidate &candidate : chosen) qInfo().noquote() << "Copying the stream" << candidate.description() << "of source" << (candidate.source + 1);
+    } else if (parser.isSet(copyStreamsOption)) {
+        qWarning() << "--copy-streams: only an LDX output (a file, or the stream "-") takes the other streams of the sources";
+    }
+
+    // The analogue audio of the first source (the reference) goes with the video in an LDX output: the audio of the fields of the capture, or of the capture
+    // seen through its map
+    if (!parser.isSet(noAudioOption) && !ldxInput && !TargetVideo::sourceIsCvbs(inputFilenames[0])) {
+        QVector<FieldAudio::Range> ranges;
+        if (inputHasMap.size() > 0 && inputHasMap[0]) {
+            QString viewError;
+            const auto table = MappedMetadata::viewFields(*captureMetadata[0], inputMaps[0], viewError);
+            if (table) ranges = FieldAudio::rangesOfView(*captureMetadata[0], *table, MappedMetadata::paddedAudioSamples(*captureMetadata[0], QString()));
+        } else if (viewTables[0]) {
+            ranges = audioRanges0;
+        } else {
+            ranges = FieldAudio::rangesOf(*ldDecodeMetaData[0]);
+        }
+        auto fieldAudio = std::make_shared<FieldAudio>();
+        if (fieldAudio->open(inputFilenames[0], ranges)) stackingPool.setAudio(fieldAudio);
+        else if (ldxOutput) qInfo() << "The first source has no analogue audio to write with the video";
+    }
     if (!stackingPool.process()) result = 1;
 
     // Close open source video files

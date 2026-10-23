@@ -129,7 +129,7 @@ private:
     // Mapping (ld-discmap): the Stack button asks for the sources that follow the map and have none; the Map button of the panel does one source
     QVector<qint32> sourcesToMap(bool followingOnly) const;
     bool confirmMappingBeforeStack();
-    bool startMapping(const QVector<qint32> &indexes, bool overwrite, bool thenStack, MapDialog::Task task = MapDialog::Map, const QString &inputOverride = QString());
+    bool startMapping(const QVector<qint32> &indexes, bool overwrite, bool thenStack, MapDialog::Task task = MapDialog::Map, const QString &inputOverride = QString(), bool saveInSources = false);
     void mappingFinished(const QStringList &ids, const QStringList &reload, bool overwrite, bool thenStack, bool success);
     void updateMapBar(const QString &id);
     void updateMappingControls();

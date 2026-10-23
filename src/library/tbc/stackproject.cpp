@@ -14,6 +14,7 @@
 #include "lddecodemetadata.h"
 #include "tbcfiles.h"
 
+#include <QDebug>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -42,6 +43,24 @@ QString fromStored(const QString &path, const QDir &base)
 }
 
 } // namespace
+
+bool StackProject::singleCapture(const QString &sessionName, QString &captureFile, QString &error)
+{
+    StackProject session;
+    if (!session.load(sessionName, error)) return false;
+    QStringList captures;
+    for (const StackSource &source: session.sources) {
+        if (source.enabled) captures << source.reference();
+    }
+    if (captures.size() == 1) {
+        captureFile = captures.first();
+        return true;
+    }
+    error = captures.isEmpty() ? QObject::tr("No source is on in %1").arg(sessionName)
+                               : QObject::tr("%1 has %2 sources on, and the metadata that are written are those of a capture: give the captures one by one (%3)")
+                                     .arg(sessionName).arg(captures.size()).arg(captures.join(QStringLiteral(", ")));
+    return false;
+}
 
 QString StackProject::newSourceId() const
 {
@@ -107,6 +126,11 @@ bool StackProject::load(const QString &fileName, QString &error)
         source.enabled = object.value("enabled").toBool(true);
         source.offset = object.value("offset").toInt(0);
         source.followMap = object.value("followMap").toBool(true);
+        if (object.contains("map")) {
+            QString mapError;
+            if (FrameMap::fromJson(object.value("map").toObject(), source.map, mapError)) source.hasMap = true;
+            else qWarning().noquote() << "The map of the source" << source.id << "in" << fileName << "is not used:" << mapError;
+        }
         loaded.sources.append(source);
     }
 
@@ -124,6 +148,13 @@ bool StackProject::load(const QString &fileName, QString &error)
     loaded.stacking.passthrough = stacking.value("passthrough").toBool(false);
     loaded.stacking.integrity = stacking.value("integrity").toBool(false);
     loaded.stacking.reverseFields = stacking.value("reverseFields").toBool(false);
+    if (stacking.contains("copyStreams")) {
+        loaded.stacking.copyStreamsSet = true;
+        for (const QJsonValue &value: stacking.value("copyStreams").toArray()) {
+            const QJsonObject entry = value.toObject();
+            loaded.stacking.copyStreams.append({ entry.value("source").toString(), entry.value("track").toInt(0) });
+        }
+    }
 
     const QJsonObject output = root.value("output").toObject();
     loaded.outputFile = fromStored(output.value("file").toString(), base);
@@ -171,6 +202,7 @@ bool StackProject::save(const QString &fileName, QString &error) const
         object["enabled"] = source.enabled;
         object["offset"] = source.offset;
         if (!source.followMap) object["followMap"] = false;
+        if (source.hasMap) object["map"] = source.map.toJson();
         sourceArray.append(object);
     }
 
@@ -182,6 +214,11 @@ bool StackProject::save(const QString &fileName, QString &error) const
     stackingObject["passthrough"] = stacking.passthrough;
     stackingObject["integrity"] = stacking.integrity;
     stackingObject["reverseFields"] = stacking.reverseFields;
+    if (stacking.copyStreamsSet) {
+        QJsonArray streams;
+        for (const auto &entry: stacking.copyStreams) streams.append(QJsonObject{ { "source", entry.first }, { "track", entry.second } });
+        stackingObject["copyStreams"] = streams;
+    }
 
     QJsonObject outputObject;
     outputObject["file"] = toStored(outputFile, base);
@@ -245,6 +282,8 @@ QString StackSource::resolvedReference() const
 {
     const QString name = reference();
     const bool ldx = LdxCapture::isLdxName(name);
+    // A source with a map of its own is the capture seen through it: no mapped copy beside it is looked for
+    if (hasMap && followMap) return name;
     if (!followMap) {
         // The capture the mapping was made from, when this is a mapping
         const QString original = ldx ? LdxCapture::originalOfMapped(name) : TbcFiles::originalFileName(name);
@@ -279,7 +318,7 @@ static QString captureStamp(const QString &reference)
 
 QString StackSource::measureKey() const
 {
-    return QStringLiteral("source|") + captureStamp(resolvedReference());
+    return QStringLiteral("source|") + captureStamp(resolvedReference()) + (activeMap() ? QStringLiteral("|map:") + QString::number(qHash(activeMap()->toJsonBytes())) : QString());
 }
 
 QString StackProject::stackMeasureKey(bool withResidual) const
@@ -288,6 +327,7 @@ QString StackProject::stackMeasureKey(bool withResidual) const
     for (const StackSource &source: sources) {
         if (!source.enabled) continue;
         key += QStringLiteral("|%1@%2").arg(captureStamp(source.resolvedReference())).arg(source.offset);
+        if (source.activeMap()) key += QStringLiteral("|map:") + QString::number(qHash(source.activeMap()->toJsonBytes()));
     }
     key += QStringLiteral("|%1,%2,%3,%4,%5").arg(stacking.mode).arg(stacking.smartThreshold).arg(stacking.diffDod).arg(stacking.passthrough).arg(stacking.reverseFields);
     return key;

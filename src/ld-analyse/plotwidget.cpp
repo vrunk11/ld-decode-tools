@@ -386,35 +386,81 @@ void PlotSeries::setVisible(bool visible)
 void PlotSeries::updatePath(const QRectF &plotRect, const QRectF &dataRect)
 {
     if (m_data.isEmpty() || !m_plotWidget) return;
-    
+
+    // A curve of many points (a capture has one per frame, 100 000 and more) is drawn with at most four points
+    // for each column of pixels: the first, the lowest, the highest and the last of the points that fall in it.
+    // The look is the same, and a repaint does not cost the length of the capture. The data stay whole.
     QPainterPath path;
-    
+
     if (m_style == Bars) {
-        // Draw vertical bars from x-axis (y=0) to each data point
+        // Draw vertical bars from x-axis (y=0) to each data point; in a column, the two furthest bars say it all
+        bool haveColumn = false;
+        qint64 column = 0;
+        QPointF low, high, lowBase, highBase;
+
+        auto flushColumn = [&]() {
+            if (!haveColumn) return;
+            path.moveTo(lowBase);
+            path.lineTo(low);
+            if (high != low) {
+                path.moveTo(highBase);
+                path.lineTo(high);
+            }
+        };
+
         for (const QPointF &dataPoint : m_data) {
-            QPointF scenePoint = m_plotWidget->mapFromData(dataPoint);
-            QPointF basePoint = m_plotWidget->mapFromData(QPointF(dataPoint.x(), 0.0));
-            
-            // Draw vertical line from base (y=0) to the data point
-            path.moveTo(basePoint);
-            path.lineTo(scenePoint);
-        }
-    } else {
-        // Default Lines style: connect points with continuous line
-        bool firstPoint = true;
-        
-        for (const QPointF &dataPoint : m_data) {
-            QPointF scenePoint = m_plotWidget->mapFromData(dataPoint);
-            
-            if (firstPoint) {
-                path.moveTo(scenePoint);
-                firstPoint = false;
+            const QPointF scenePoint = m_plotWidget->mapFromData(dataPoint);
+            const QPointF basePoint = m_plotWidget->mapFromData(QPointF(dataPoint.x(), 0.0));
+            const qint64 thisColumn = static_cast<qint64>(std::floor(scenePoint.x()));
+
+            if (!haveColumn || thisColumn != column) {
+                flushColumn();
+                haveColumn = true;
+                column = thisColumn;
+                low = high = scenePoint;
+                lowBase = highBase = basePoint;
             } else {
-                path.lineTo(scenePoint);
+                if (scenePoint.y() < low.y()) { low = scenePoint; lowBase = basePoint; }
+                if (scenePoint.y() > high.y()) { high = scenePoint; highBase = basePoint; }
             }
         }
+        flushColumn();
+    } else {
+        // Default Lines style: connect points with continuous line
+        bool haveColumn = false;
+        qint64 column = 0;
+        QPointF first, low, high, last;
+
+        auto flushColumn = [&](bool start) {
+            if (!haveColumn) return;
+            auto to = [&](const QPointF &point) { if (start) { path.moveTo(point); start = false; } else path.lineTo(point); };
+            to(first);
+            // The lowest and the highest, in the order in which they came
+            if (low.x() <= high.x()) { if (low != first) to(low); if (high != low && high != first) to(high); }
+            else { if (high != first) to(high); if (low != high && low != first) to(low); }
+            if (last != first) to(last);
+        };
+
+        bool firstColumn = true;
+        for (const QPointF &dataPoint : m_data) {
+            const QPointF scenePoint = m_plotWidget->mapFromData(dataPoint);
+            const qint64 thisColumn = static_cast<qint64>(std::floor(scenePoint.x()));
+
+            if (!haveColumn || thisColumn != column) {
+                flushColumn(firstColumn);
+                if (haveColumn) firstColumn = false;
+                haveColumn = true;
+                column = thisColumn;
+                first = low = high = last = scenePoint;
+            } else {
+                if (scenePoint.y() < low.y()) low = scenePoint;
+                if (scenePoint.y() > high.y()) high = scenePoint;
+                last = scenePoint;
+            }
+        }
+        flushColumn(firstColumn);
     }
-    
+
     setPath(path);
 }
 

@@ -19,6 +19,7 @@
 #include <QString>
 #include <QVector>
 #include <QWidget>
+#include "snrcolors.h"
 
 // One curve of the plot: a value per frame (index 0 is frame 1), NaN for a frame without one
 struct SnrCurve {
@@ -111,8 +112,8 @@ public:
     // The height of the plot, apart from the row of boxes (the plot goes away when neither the white SNR nor the black PSNR is ticked)
     void setPlotFixedHeight(qint32 height);
 
-    static QColor whiteColor() { return QColor("#378ADD"); }
-    static QColor blackColor() { return QColor("#E8833A"); }
+    static QColor whiteColor() { return snrWhiteColor(); }
+    static QColor blackColor() { return snrBlackColor(); }
 
 signals:
     void frameRequested(qint32 frame);

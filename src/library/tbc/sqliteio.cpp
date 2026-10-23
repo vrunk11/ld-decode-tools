@@ -294,6 +294,19 @@ bool SqliteReader::readCaptureMetadata(int &captureId, QString &system, QString 
     return true;
 }
 
+bool SqliteReader::readDiscMap(int captureId, QByteArray &json)
+{
+    QSqlQuery exists(db);
+    if (!exists.exec("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'disc_map'") || !exists.next()) return false;
+
+    QSqlQuery query(db);
+    query.prepare("SELECT map FROM disc_map WHERE capture_id = ?");
+    query.addBindValue(captureId);
+    if (!query.exec() || !query.next()) return false;
+    json = query.value(0).toByteArray();
+    return !json.isEmpty();
+}
+
 bool SqliteReader::readPcmAudioParameters(int captureId, int &bits, bool &isSigned,
                                         bool &isLittleEndian, double &sampleRate)
 {
@@ -632,6 +645,35 @@ bool SqliteWriter::updateCaptureMetadata(int captureId, const QString &system, c
     return true;
 }
 
+bool SqliteWriter::writeDiscMap(int captureId, const QByteArray &json)
+{
+    QSqlQuery exists(db);
+    const bool haveTable = exists.exec("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'disc_map'") && exists.next();
+    if (json.isEmpty()) {
+        if (!haveTable) return true;
+        QSqlQuery remove(db);
+        remove.prepare("DELETE FROM disc_map WHERE capture_id = ?");
+        remove.addBindValue(captureId);
+        return remove.exec();
+    }
+    if (!haveTable) {
+        QSqlQuery create(db);
+        if (!create.exec("CREATE TABLE disc_map (capture_id INTEGER PRIMARY KEY, map TEXT NOT NULL)")) {
+            tbcDebugStream() << "Failed to create the table of the map:" << create.lastError().text();
+            return false;
+        }
+    }
+    QSqlQuery query(db);
+    query.prepare("INSERT OR REPLACE INTO disc_map (capture_id, map) VALUES (?, ?)");
+    query.addBindValue(captureId);
+    query.addBindValue(QString::fromUtf8(json));
+    if (!query.exec()) {
+        tbcDebugStream() << "Failed to write the map:" << query.lastError().text();
+        return false;
+    }
+    return true;
+}
+
 bool SqliteWriter::writePcmAudioParameters(int captureId, int bits, bool isSigned,
                                          bool isLittleEndian, double sampleRate)
 {
@@ -653,38 +695,60 @@ bool SqliteWriter::writePcmAudioParameters(int captureId, int bits, bool isSigne
     return true;
 }
 
+// A statement prepared the first time it is asked for, and kept
+QSqlQuery &SqliteWriter::prepared(QSqlQuery &query, const char *sql)
+{
+    if (query.lastQuery().isEmpty()) {
+        query = QSqlQuery(db);
+        query.prepare(sql);
+    }
+    return query;
+}
+
+bool SqliteWriter::deleteFieldRows(int captureId, const QString &table)
+{
+    QSqlQuery query(db);
+    query.prepare("DELETE FROM " + table + " WHERE capture_id = ?");
+    query.addBindValue(captureId);
+    if (!query.exec()) {
+        tbcDebugStream() << "Failed to delete the rows of" << table << ":" << query.lastError().text();
+        return false;
+    }
+    return true;
+}
+
 bool SqliteWriter::writeField(int captureId, int fieldId, int audioSamples, int decodeFaults,
                             double diskLoc, int efmTValues, int fieldPhaseId, int fileLoc,
                             bool isFirstField, double medianBurstIre, bool pad, int syncConf,
                             bool ntscIsFmCodeDataValid, int ntscFmCodeData, bool ntscFieldFlag,
                             bool ntscIsVideoIdDataValid, int ntscVideoIdData, bool ntscWhiteFlag)
 {
-    QSqlQuery query(db);
-    query.prepare("INSERT OR REPLACE INTO field_record (capture_id, field_id, audio_samples, decode_faults, "
+    QSqlQuery &query = prepared(fieldQuery, "INSERT OR REPLACE INTO field_record (capture_id, field_id, audio_samples, decode_faults, "
                  "disk_loc, efm_t_values, field_phase_id, file_loc, is_first_field, "
                  "median_burst_ire, pad, sync_conf, ntsc_is_fm_code_data_valid, "
                  "ntsc_fm_code_data, ntsc_field_flag, ntsc_is_video_id_data_valid, "
                  "ntsc_video_id_data, ntsc_white_flag) "
                  "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+    int bindIndex = 0;      // (a statement that is used again keeps what was bound: each value is bound by its place)
 
-    query.addBindValue(captureId);
-    query.addBindValue(fieldId);
-    query.addBindValue(audioSamples);
-    query.addBindValue(decodeFaults);
-    query.addBindValue(diskLoc);
-    query.addBindValue(efmTValues);
-    query.addBindValue(fieldPhaseId);
-    query.addBindValue(fileLoc);
-    query.addBindValue(isFirstField ? 1 : 0);
-    query.addBindValue(medianBurstIre);
-    query.addBindValue(pad ? 1 : 0);
-    query.addBindValue(syncConf);
-    query.addBindValue(ntscIsFmCodeDataValid ? 1 : 0);
-    query.addBindValue(ntscFmCodeData);
-    query.addBindValue(ntscFieldFlag ? 1 : 0);
-    query.addBindValue(ntscIsVideoIdDataValid ? 1 : 0);
-    query.addBindValue(ntscVideoIdData);
-    query.addBindValue(ntscWhiteFlag ? 1 : 0);
+    query.bindValue(bindIndex++, captureId);
+    query.bindValue(bindIndex++, fieldId);
+    query.bindValue(bindIndex++, audioSamples);
+    query.bindValue(bindIndex++, decodeFaults);
+    query.bindValue(bindIndex++, diskLoc);
+    query.bindValue(bindIndex++, efmTValues);
+    query.bindValue(bindIndex++, fieldPhaseId);
+    query.bindValue(bindIndex++, fileLoc);
+    query.bindValue(bindIndex++, isFirstField ? 1 : 0);
+    query.bindValue(bindIndex++, medianBurstIre);
+    query.bindValue(bindIndex++, pad ? 1 : 0);
+    query.bindValue(bindIndex++, syncConf);
+    query.bindValue(bindIndex++, ntscIsFmCodeDataValid ? 1 : 0);
+    query.bindValue(bindIndex++, ntscFmCodeData);
+    query.bindValue(bindIndex++, ntscFieldFlag ? 1 : 0);
+    query.bindValue(bindIndex++, ntscIsVideoIdDataValid ? 1 : 0);
+    query.bindValue(bindIndex++, ntscVideoIdData);
+    query.bindValue(bindIndex++, ntscWhiteFlag ? 1 : 0);
 
     if (!query.exec()) {
         tbcDebugStream() << "Failed to insert field record:" << query.lastError().text();
@@ -696,13 +760,13 @@ bool SqliteWriter::writeField(int captureId, int fieldId, int audioSamples, int 
 
 bool SqliteWriter::writeFieldVitsMetrics(int captureId, int fieldId, double wSnr, double bPsnr)
 {
-    QSqlQuery query(db);
-    query.prepare("INSERT OR REPLACE INTO vits_metrics (capture_id, field_id, w_snr, b_psnr) VALUES (?, ?, ?, ?)");
+    QSqlQuery &query = prepared(vitsQuery, "INSERT OR REPLACE INTO vits_metrics (capture_id, field_id, w_snr, b_psnr) VALUES (?, ?, ?, ?)");
+    int bindIndex = 0;      // (a statement that is used again keeps what was bound: each value is bound by its place)
 
-    query.addBindValue(captureId);
-    query.addBindValue(fieldId);
-    query.addBindValue(wSnr);
-    query.addBindValue(bPsnr);
+    query.bindValue(bindIndex++, captureId);
+    query.bindValue(bindIndex++, fieldId);
+    query.bindValue(bindIndex++, wSnr);
+    query.bindValue(bindIndex++, bPsnr);
 
     if (!query.exec()) {
         tbcDebugStream() << "Failed to insert VITS metrics:" << query.lastError().text();
@@ -714,14 +778,14 @@ bool SqliteWriter::writeFieldVitsMetrics(int captureId, int fieldId, double wSnr
 
 bool SqliteWriter::writeFieldVbi(int captureId, int fieldId, int vbi0, int vbi1, int vbi2)
 {
-    QSqlQuery query(db);
-    query.prepare("INSERT OR REPLACE INTO vbi (capture_id, field_id, vbi0, vbi1, vbi2) VALUES (?, ?, ?, ?, ?)");
+    QSqlQuery &query = prepared(vbiQuery, "INSERT OR REPLACE INTO vbi (capture_id, field_id, vbi0, vbi1, vbi2) VALUES (?, ?, ?, ?, ?)");
+    int bindIndex = 0;      // (a statement that is used again keeps what was bound: each value is bound by its place)
 
-    query.addBindValue(captureId);
-    query.addBindValue(fieldId);
-    query.addBindValue(vbi0);
-    query.addBindValue(vbi1);
-    query.addBindValue(vbi2);
+    query.bindValue(bindIndex++, captureId);
+    query.bindValue(bindIndex++, fieldId);
+    query.bindValue(bindIndex++, vbi0);
+    query.bindValue(bindIndex++, vbi1);
+    query.bindValue(bindIndex++, vbi2);
 
     if (!query.exec()) {
         tbcDebugStream() << "Failed to insert VBI:" << query.lastError().text();
@@ -733,14 +797,14 @@ bool SqliteWriter::writeFieldVbi(int captureId, int fieldId, int vbi0, int vbi1,
 
 bool SqliteWriter::writeFieldVitc(int captureId, int fieldId, const int vitcData[8])
 {
-    QSqlQuery query(db);
-    query.prepare("INSERT OR REPLACE INTO vitc (capture_id, field_id, vitc0, vitc1, vitc2, vitc3, "
+    QSqlQuery &query = prepared(vitcQuery, "INSERT OR REPLACE INTO vitc (capture_id, field_id, vitc0, vitc1, vitc2, vitc3, "
                  "vitc4, vitc5, vitc6, vitc7) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+    int bindIndex = 0;      // (a statement that is used again keeps what was bound: each value is bound by its place)
 
-    query.addBindValue(captureId);
-    query.addBindValue(fieldId);
+    query.bindValue(bindIndex++, captureId);
+    query.bindValue(bindIndex++, fieldId);
     for (int i = 0; i < 8; i++) {
-        query.addBindValue(vitcData[i]);
+        query.bindValue(bindIndex++, vitcData[i]);
     }
 
     if (!query.exec()) {
@@ -753,13 +817,13 @@ bool SqliteWriter::writeFieldVitc(int captureId, int fieldId, const int vitcData
 
 bool SqliteWriter::writeFieldClosedCaption(int captureId, int fieldId, int data0, int data1)
 {
-    QSqlQuery query(db);
-    query.prepare("INSERT OR REPLACE INTO closed_caption (capture_id, field_id, data0, data1) VALUES (?, ?, ?, ?)");
+    QSqlQuery &query = prepared(closedCaptionQuery, "INSERT OR REPLACE INTO closed_caption (capture_id, field_id, data0, data1) VALUES (?, ?, ?, ?)");
+    int bindIndex = 0;      // (a statement that is used again keeps what was bound: each value is bound by its place)
 
-    query.addBindValue(captureId);
-    query.addBindValue(fieldId);
-    query.addBindValue(data0);
-    query.addBindValue(data1);
+    query.bindValue(bindIndex++, captureId);
+    query.bindValue(bindIndex++, fieldId);
+    query.bindValue(bindIndex++, data0);
+    query.bindValue(bindIndex++, data1);
 
     if (!query.exec()) {
         tbcDebugStream() << "Failed to insert closed caption:" << query.lastError().text();
@@ -771,14 +835,14 @@ bool SqliteWriter::writeFieldClosedCaption(int captureId, int fieldId, int data0
 
 bool SqliteWriter::writeFieldDropouts(int captureId, int fieldId, int startx, int endx, int fieldLine)
 {
-    QSqlQuery query(db);
-    query.prepare("INSERT OR REPLACE INTO drop_outs (capture_id, field_id, startx, endx, field_line) VALUES (?, ?, ?, ?, ?)");
+    QSqlQuery &query = prepared(dropoutsQuery, "INSERT OR REPLACE INTO drop_outs (capture_id, field_id, startx, endx, field_line) VALUES (?, ?, ?, ?, ?)");
+    int bindIndex = 0;      // (a statement that is used again keeps what was bound: each value is bound by its place)
 
-    query.addBindValue(captureId);
-    query.addBindValue(fieldId);
-    query.addBindValue(startx);
-    query.addBindValue(endx);
-    query.addBindValue(fieldLine);
+    query.bindValue(bindIndex++, captureId);
+    query.bindValue(bindIndex++, fieldId);
+    query.bindValue(bindIndex++, startx);
+    query.bindValue(bindIndex++, endx);
+    query.bindValue(bindIndex++, fieldLine);
 
     if (!query.exec()) {
         tbcDebugStream() << "Failed to insert dropout:" << query.lastError().text();

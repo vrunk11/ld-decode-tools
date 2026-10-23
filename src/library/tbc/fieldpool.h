@@ -31,6 +31,8 @@ public:
         QString name;                   // "VBI", "VITS": in the messages
         qint32 firstLine = -1;          // the lines of the field that the workers read (all of the field if firstLine is -1)
         qint32 lastLine = -1;
+        // The tables of the fields that the tool changes (LdDecodeMetaData::Tables): written alone when the metadata are written over the file they were read from
+        unsigned tables = LdDecodeMetaData::AllTables;
         // A worker: it runs until the pool has no field left, or until abort is set
         std::function<QThread *(QAtomicInt &abort, FieldPool &pool)> createWorker;
         // Store what a worker found for a field in the metadata

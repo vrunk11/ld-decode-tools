@@ -9,6 +9,8 @@ Syntax:
 
 `ld-chroma-decoder [options] <input TBC file name> [output file name]`
 
+A capture whose metadata keep a map (ld-discmap `--save-map`) is decoded in the order of the map: the frames of the disc, the missing ones blank. `--ignore-map` decodes the capture as it is.
+
 The input can also be a `.stack` stacking session: the stack of its sources is made as the frames are decoded, with the same result as stacking to a file with ld-disc-stacker and decoding that. The sources are lined up by the numbers of the disc that their VBI gives (then by their offsets), the stack goes from the earliest frame of any source to the latest of any, and a frame that no source has is a padded one. A source that has a mapping beside it (name_map, or the track of an LDX file that is its mapping) is read from the mapping unless its `followMap` is off in the session, one that has none as it is. The metadata is that of the first source that has each frame (without dropouts or VITS measurements).
 
 > [!NOTE]
@@ -223,6 +225,10 @@ Options:
   -r, --reverse                               Reverse the field order to
                                               second/first (default
                                               first/second)
+  --ignore-map                                Read the capture as it is,
+                                              though its metadata keep a
+                                              map (the frames in the order
+                                              of the disc, from ld-discmap)
   --chroma-gain <number>                      Gain factor applied to chroma
                                               components (default 1.0)
   --chroma-phase <number>                     Phase rotation applied to chroma

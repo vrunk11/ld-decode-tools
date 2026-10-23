@@ -36,6 +36,7 @@
 #include "vbidecoder.h"
 
 #include "frame.h"
+#include "framemap.h"
 
 class DiscMap
 {
@@ -61,6 +62,7 @@ public:
     qint32 limitToAvailableFields(qint32 availableFields);
     bool isUnmappable(qint32 frameNumber) const;
     void setUnmappable(qint32 frameNumber);
+    void setNumberCorrected(qint32 frameNumber);
     qint32 seqFrameNumber(qint32 frameNumber) const;
     bool isPulldown(qint32 frameNumber) const;
     qint32 numberOfPulldowns() const;
@@ -99,6 +101,10 @@ public:
     // The metadata of the mapped video (the same that saveTargetMetadata writes), for an output that sends them with the fields
     bool buildTargetMetadata(LdDecodeMetaData &targetMetadata);
 
+    // The map of the capture: the frames in the order of the disc, with where each number comes from (see FrameMap). captureFields and captureSize say
+    // which capture it was made for.
+    FrameMap toFrameMap(qint64 captureFields, qint64 captureSize) const;
+
 private:
     // Miscellaneous
     QFileInfo m_metadataFileInfo;
@@ -119,9 +125,6 @@ private:
     LdDecodeMetaData *ldDecodeMetaData;
 
     bool isNtscAmendment2ClvFrameNumber(qint32 frameNumber);
-    qint32 convertFrameToVbi(qint32 frameNumber);
-    qint32 convertFrameToClvPicNo(qint32 frameNumber);
-    qint32 convertFrameToClvTimeCode(qint32 frameNumber);
 };
 
 // Custom streaming operator for debug

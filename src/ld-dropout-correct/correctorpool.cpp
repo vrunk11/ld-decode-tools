@@ -28,24 +28,54 @@
 #include "discnumbering.h"
 #include "tbc/logging.h"
 #include "ldxcapture.h"
+#include "vitsmetrics.h"
 
 CorrectorPool::CorrectorPool(QString _outputFilename, QString _outputMetadataFilename,
                              qint32 _maxThreads, QVector<LdDecodeMetaData *> &_ldDecodeMetaData, QVector<SourceVideo *> &_sourceVideos,
-                             bool _reverse, bool _intraField, bool _overCorrect, QObject *parent)
+                             bool _reverse, bool _intraField, qint32 _overCorrectDots, qint32 _maxDistance, bool _highlight, QObject *parent)
     : QObject(parent), outputFilename(_outputFilename), outputMetadataFilename(_outputMetadataFilename),
-      maxThreads(_maxThreads), reverse(_reverse), intraField(_intraField), overCorrect(_overCorrect),
+      maxThreads(_maxThreads), reverse(_reverse), intraField(_intraField), overCorrectDots(_overCorrectDots), maxDistance(_maxDistance), highlight(_highlight),
       abort(false), ldDecodeMetaData(_ldDecodeMetaData), sourceVideos(_sourceVideos)
 {
+}
+
+// What the history of the output says this tool did
+QString CorrectorPool::processDetail() const
+{
+    QString detail = "dropout correction of " + QString::number(sourceVideos.size()) + " source(s)";
+    if (audio) detail += "; the analogue audio of the first source is written with the video, from the fields it gives";
+    const QString copied = StreamCopy::historyDetail(copiedStreams, copiedSources, streamAlignments);
+    if (!copied.isEmpty()) detail += "; " + copied;
+    return detail;
 }
 
 bool CorrectorPool::process()
 {
     qInfo() << "Performing final sanity checks...";
+    // The streams of the first source are copied with the times they have there: the frames of the output are its frames. (The streams of the other sources, which only
+    // give pictures to correct with, are not aligned to anything.)
+    streamAlignments.clear();
+    for (const StreamCopy::Candidate &candidate : copiedStreams) {
+        if (candidate.source != 0 || streamAlignments.contains(0)) continue;
+        const qint32 frames = ldDecodeMetaData[0]->getNumberOfFrames();
+        QVector<qint32> captureFrame(frames, 0);
+        for (qint32 n = 1; n <= frames; n++) captureFrame[n - 1] = captureFrames.isEmpty() ? n : (n <= captureFrames.size() ? captureFrames[n - 1] : 0);
+        streamAlignments.insert(0, StreamCopy::alignmentOf(captureFrame));
+    }
+
     // Open the target video (a CVBS output keeps the input's sample encoding)
     const LdDecodeMetaData::VideoParameters &outputParameters = ldDecodeMetaData[0]->getVideoParameters();
     targetVideo.setLdxVideo(outputParameters.fieldWidth, outputParameters.fieldHeight, outputParameters.sampleRate, QString(),
-                            historyWith(LdxCapture::historyEntry("process", "dropout correction of " + QString::number(sourceVideos.size()) + " source(s)")));
+                            historyWith(LdxCapture::historyEntry("process", processDetail())));
     targetVideo.setLdxCvbs(ldxCvbs);
+    if (audio) targetVideo.setLdxAudio(44100, 16);       // (the audio of the first source goes into the track of an LDX output)
+    if (!copiedStreams.isEmpty()) {
+        QString copyError;
+        if (!streamCopy.prepare(copiedStreams, targetVideo, copyError, streamAlignments)) {
+            qCritical().noquote() << "The streams cannot be copied:" << copyError;
+            return false;
+        }
+    }
     if (ldxStream) targetVideo.setLdxStream(ldDecodeMetaData[0]->parametersJson());
     if (!targetVideo.open(outputFilename, ldDecodeMetaData[0]->getVideoParameters().system,
                           ldDecodeMetaData[0]->getCvbsFileMetadata().sampleEncoding)) {
@@ -118,6 +148,11 @@ bool CorrectorPool::process()
     qInfo() << "Dropout correction complete -" << lastFrameNumber << "frames in" << totalSecs << "seconds (" <<
                lastFrameNumber / totalSecs << "FPS )";
 
+    if (!streamCopy.isEmpty() && !streamCopy.finish(targetVideo)) {
+        qCritical() << "Writing the copied streams to the output failed";
+        targetVideo.close();
+        return false;
+    }
     // Close the target video (an LDX output is finished before its metadata are added to it)
     if (!targetVideo.close()) return false;
 
@@ -138,7 +173,7 @@ bool CorrectorPool::getInputFrame(qint32& frameNumber,
                                   QVector<qint32>& firstFieldNumber, QVector<SourceVideo::Data>& firstFieldVideoData, QVector<LdDecodeMetaData::Field>& firstFieldMetadata,
                                   QVector<qint32>& secondFieldNumber, QVector<SourceVideo::Data>& secondFieldVideoData, QVector<LdDecodeMetaData::Field>& secondFieldMetadata,
                                   QVector<LdDecodeMetaData::VideoParameters>& videoParameters,
-                                  bool& _reverse, bool& _intraField, bool& _overCorrect,
+                                  bool& _reverse, bool& _intraField, qint32& _overCorrectDots, qint32& _maxDistance, bool& _highlight,
                                   QVector<qint32>& availableSourcesForFrame, QVector<double>& sourceFrameQuality)
 {
     QMutexLocker locker(&inputMutex);
@@ -236,7 +271,9 @@ bool CorrectorPool::getInputFrame(qint32& frameNumber,
     // Set the other miscellaneous parameters
     _reverse = reverse;
     _intraField = intraField;
-    _overCorrect = overCorrect;
+    _overCorrectDots = overCorrectDots;
+    _maxDistance = maxDistance;
+    _highlight = highlight;
 
     return true;
 }
@@ -276,6 +313,25 @@ bool CorrectorPool::setOutputFrame(qint32 frameNumber,
     while (pendingOutputFrames.contains(outputFrameNumber)) {
         const OutputFrame &outputFrame = pendingOutputFrames.value(outputFrameNumber);
 
+        // The SNR of the fields is that of the corrected video: measured on the fields that are written, as ld-process-vits would
+        {
+            const LdDecodeMetaData::VideoParameters &videoParameters = ldDecodeMetaData[0]->getVideoParameters();
+            LdDecodeMetaData::Field measured;
+            measured.vitsMetrics = ldDecodeMetaData[0]->getFieldVitsMetrics(outputFrame.firstFieldSeqNo);
+            computeVitsMetrics(outputFrame.firstTargetFieldData, 1, videoParameters, measured);
+            ldDecodeMetaData[0]->updateFieldVitsMetrics(measured.vitsMetrics, outputFrame.firstFieldSeqNo);
+            measured.vitsMetrics = ldDecodeMetaData[0]->getFieldVitsMetrics(outputFrame.secondFieldSeqNo);
+            computeVitsMetrics(outputFrame.secondTargetFieldData, 1, videoParameters, measured);
+            ldDecodeMetaData[0]->updateFieldVitsMetrics(measured.vitsMetrics, outputFrame.secondFieldSeqNo);
+        }
+
+        // The blocks of the other streams that come before this frame
+        if (!streamCopy.isEmpty() && !streamCopy.writeUpTo(targetVideo, targetVideo.ldxTimeNs())) {
+            qCritical() << "Writing the copied streams to the output failed";
+            targetVideo.close();
+            return false;
+        }
+
         // Save the frame data to the output file (with the fields in the correct order)
         bool writeFail = false;
         if (outputFrame.firstFieldSeqNo < outputFrame.secondFieldSeqNo) {
@@ -294,6 +350,23 @@ bool CorrectorPool::setOutputFrame(qint32 frameNumber,
             qCritical() << "Writing fields to the output TBC file failed";
             targetVideo.close();
             return false;
+        }
+
+        // (the blocks of the other streams up to the time of the audio, which is stamped with the time of the next field)
+        if (!streamCopy.isEmpty() && !streamCopy.writeUpTo(targetVideo, targetVideo.ldxTimeNs())) {
+            qCritical() << "Writing the copied streams to the output failed";
+            targetVideo.close();
+            return false;
+        }
+        // The audio of the two fields of the frame, in an LDX output
+        if (audio && targetVideo.isLdx()) {
+            QByteArray samples = audio->audioOf(outputFrame.firstFieldSeqNo);
+            samples.append(audio->audioOf(outputFrame.secondFieldSeqNo));
+            if (!samples.isEmpty() && !targetVideo.writeAudio(samples)) {
+                qCritical() << "Writing the audio to the output failed";
+                targetVideo.close();
+                return false;
+            }
         }
 
         // Show debug

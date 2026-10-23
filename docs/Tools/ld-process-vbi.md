@@ -32,6 +32,13 @@ Options:
                                        (default same as input)
   -n, --nobackup                       Do not create a backup of the input
                                        metadata
+  --legacy                             Keep the backup of the metadata as the
+                                       tools always did: the suffix of the tool
+                                       (.bup for ld-process-vbi, .vbup for
+                                       ld-process-vits), and an existing backup
+                                       stops the run (without it the backup is
+                                       always name.bup and replaces the last
+                                       one)
   -t, --threads <number>               Specify the number of concurrent threads
                                        (default is the number of logical CPUs)
 
@@ -52,3 +59,7 @@ ld-container pack capture.tbc -o - | ld-process-vbi - | ld-process-vits - | ld-a
 ```
 
 A stream without metadata gets the defaults of its video system. The history of the stream records the tool. See the specification of the container format (section 15).
+
+The input can be a `.stack` session that has one source on: the tool works on the capture of that source and writes its metadata (the capture is not changed by the session or its map). A session with several sources on is refused, with the list of the captures to give one by one.
+
+The backup of the metadata (when they are updated in place) is always `name.bup`, and the backup of the last run is replaced. `--legacy` keeps the older behaviour: the suffix of the tool (`.bup` for ld-process-vbi, `.vbup` for ld-process-vits) and a run that stops when the backup is there.

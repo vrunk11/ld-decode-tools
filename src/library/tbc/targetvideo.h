@@ -52,6 +52,13 @@ public:
     bool writeAudio(const QByteArray &samples);
     bool isLdx() const;
 
+    // Another stream of the output LDX file, copied from a source (see StreamCopy): its track is declared before open() and its blocks are written with the time they
+    // have in the source. kind and codec are the names of the specification (efm, ac3, rf, pcm; raw, flac). Returns the number to write to, or -1 (not an LDX output).
+    qint32 addLdxTrack(const QString &kind, const QString &codec, qint32 depth, const QString &name, const QJsonObject &parameters);
+    bool writeLdxTrack(qint32 index, qint64 timeNs, const QByteArray &data);
+    // The time of the next field of the output, in nanoseconds: the blocks of the other streams that come before it can be written
+    qint64 ldxTimeNs() const;
+
     // Open the output; "-" is stdout. The video system and sample encoding
     // matter only for CVBS output.
     bool open(const QString &fileName, VideoSystem system,
@@ -84,6 +91,8 @@ private:
     qint32 ldxFieldWidth = 0, ldxFieldHeight = 0;
     double ldxSampleRate = 0;
     QString ldxName;
+    struct ExtraTrack { QString kind, codec, name; qint32 depth = 0; QJsonObject parameters; quint32 number = 0; };
+    QVector<ExtraTrack> ldxExtraTracks;
     double ldxAudioRate = 0;
     qint32 ldxAudioBits = 16;
     VideoSystem ldxSystem = PAL;

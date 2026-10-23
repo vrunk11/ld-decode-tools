@@ -12,6 +12,7 @@
 #include "ui_snranalysisdialog.h"
 
 #include <QPen>
+#include "snrcolors.h"
 #include <QTimer>
 #include <algorithm>
 #include <algorithm>
@@ -37,13 +38,8 @@ SnrAnalysisDialog::SnrAnalysisDialog(Kind _kind, QWidget *parent) :
 
     // Set up series and marker
     series = plot->addSeries(kind == Black ? "Black SNR" : "White SNR");
-    if (kind == Black) {
-        // Theme-aware color: white in dark mode, black in light mode
-        QColor dataColor = PlotWidget::isDarkTheme() ? Qt::white : Qt::black;
-        series->setPen(QPen(dataColor, 2));
-    } else {
-        series->setPen(QPen(Qt::black, 1));
-    }
+    // The colours of ld-stacker-gui, so that a curve is the same curve in both (and they read on a light and on a dark background)
+    series->setPen(QPen(kind == Black ? snrBlackColor() : snrWhiteColor(), 2));
     
     trendSeries = plot->addSeries("Trend line");
     trendSeries->setPen(QPen(Qt::red, 2));
@@ -128,8 +124,7 @@ void SnrAnalysisDialog::finishUpdate(qint32 _currentFrameNumber)
     plot->setAxisRange(Qt::Horizontal, 0, numberOfFrames);
     plot->setAxisRange(Qt::Vertical, minSnr, maxY);
 
-    // Set the series data (the white one changes color to dark gray)
-    if (kind == White) series->setPen(QPen(Qt::darkGray, 1));
+    // Set the series data
     series->setData(snrPoints);
 
     // Generate and set the trend line

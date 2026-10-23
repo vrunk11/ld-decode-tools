@@ -107,36 +107,9 @@ Different LaserDisc standards and manufacturers use different VITS line configur
 - **Analysis**: Step heights, non-linearity
 - **Use**: Assess signal linearity
 
-## Output Format
+## Output
 
-### Text Summary
-```
-VITS Analysis Results
-=====================
-Line: 17
-Frames analyzed: 1000
-
-Multiburst Analysis:
-  0.5 MHz: 95.2 IRE (100%)
-  1.0 MHz: 94.8 IRE (99.6%)
-  2.0 MHz: 92.1 IRE (96.7%)
-  3.0 MHz: 87.3 IRE (91.7%)
-  4.2 MHz: 78.6 IRE (82.5%)
-  5.8 MHz: 65.2 IRE (68.4%)
-
-White Flag:
-  Average amplitude: 100.2 IRE
-  Std deviation: 1.2 IRE
-```
-
-### CSV Format
-```csv
-Frame,Line,Freq_MHz,Amplitude_IRE,Normalized
-1,17,0.5,95.2,1.000
-1,17,1.0,94.8,0.996
-1,17,2.0,92.1,0.967
-...
-```
+The tool prints no report and writes no CSV: it puts the white SNR and the black PSNR of each field in the metadata of the capture (the `vitsMetrics` of each field). Look at them in `ld-analyse` (the SNR graphs), or export them with `ld-export-metadata --vits-csv <file>`.
 
 ## Technical Details
 
@@ -176,36 +149,14 @@ Frame,Line,Freq_MHz,Amplitude_IRE,Normalized
 
 ## Integration Examples
 
-### Python Analysis
-```python
-import pandas as pd
-import matplotlib.pyplot as plt
-
-# Load VITS measurements
-with open('vits.sqlite', 'r') as f:
-    data = pd.read_csv(f)
-
-# Plot frequency response
-freqs = [b['frequency'] for b in data['multiburst']]
-amps = [b['normalized'] * 100 for b in data['multiburst']]
-
-plt.plot(freqs, amps, 'o-')
-plt.xlabel('Frequency (MHz)')
-plt.ylabel('Response (%)')
-plt.title('Frequency Response from VITS')
-plt.grid(True)
-plt.savefig('frequency_response.png')
-```
-
 ### Compare Multiple Captures
 ```bash
-# Analyze capture 1
-ld-process-vits --multiburst --output cap1.csv --format csv capture1.tbc
+ld-process-vits capture1.tbc
+ld-process-vits capture2.tbc
 
-# Analyze capture 2
-ld-process-vits --multiburst --output cap2.csv --format csv capture2.tbc
-
-# Compare in spreadsheet or with tools
+# Compare the SNR of both in ld-analyse, or export each
+ld-export-metadata --vits-csv cap1.csv capture1.tbc
+ld-export-metadata --vits-csv cap2.csv capture2.tbc
 ```
 
 ## Limitations
@@ -221,13 +172,12 @@ ld-process-vits --multiburst --output cap2.csv --format csv capture2.tbc
 
 **No VITS detected:**
 - Not all LaserDiscs include VITS lines
-- Try different line numbers with --vits-lines
 - Inspect TBC visually with ld-analyse
 - Check disc documentation for VITS presence
 
 **Inconsistent measurements:**
 - Normal for varying signal quality across disc
-- Use --statistics to see trends
+- Look at the SNR graphs in ld-analyse to see the trends
 - Consider analyzing larger frame ranges
 
 **Invalid/missing data:**

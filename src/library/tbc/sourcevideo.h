@@ -36,6 +36,8 @@
 
 class StackedVideo;
 class LdxCapture;
+class FrameMap;
+class LdDecodeMetaData;
 
 class SourceVideo
 {
@@ -64,6 +66,14 @@ public:
     // the buffer), and the stream may end sooner than the metadata says.
     bool open(QString filename, qint32 _fieldLength, qint32 _fieldLineLength = -1);
     void close(void);
+
+    // A capture seen through its map (see FrameMap): the fields are those of the mapped copy that ld-discmap writes of it, without the copy being written. The
+    // capture is opened by filename as open() does, capture is its metadata (read with any field order: the map says it), and the fields of the view are
+    // in the order the copy has them (the first field and then the second one, or the earlier one first, as the copy keeps the order of the capture).
+    // A padded frame is two blank fields. Returns false if the map asks for a frame the capture has no two fields for.
+    bool openMapped(QString filename, qint32 _fieldLength, qint32 _fieldLineLength, const FrameMap &map, LdDecodeMetaData &capture);
+    // The same, with the table of the fields of the view already worked out (MappedMetadata::viewFields), for readers that share it
+    bool openMappedFields(QString filename, qint32 _fieldLength, qint32 _fieldLineLength, std::shared_ptr<const QVector<qint32>> table);
 
     // How a stream is read: TBC fields (the default) or CVBS frames, and the buffer
     // size. Call before open().
@@ -125,6 +135,10 @@ private:
 
     // A stacking session (.stack)
     std::unique_ptr<StackedVideo> stacked;
+
+    // A capture seen through its map: the capture, and for each field of the view the field of the capture it is (0: a blank field)
+    std::unique_ptr<SourceVideo> mappedBase;
+    std::shared_ptr<const QVector<qint32>> mappedFields;
 
     // A capture kept in an LDX file (a track of it)
     std::unique_ptr<LdxCapture> ldx;

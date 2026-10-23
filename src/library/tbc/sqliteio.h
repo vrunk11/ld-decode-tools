@@ -59,6 +59,8 @@ public:
     // Read PCM audio parameters
     bool readPcmAudioParameters(int captureId, int &bits, bool &isSigned,
                               bool &isLittleEndian, double &sampleRate);
+    // The map of the capture (a FrameMap as JSON), when the file has one: it is in the table disc_map, which only a file with a map has
+    bool readDiscMap(int captureId, QByteArray &json);
 
     // Read field metadata
     bool readFields(int captureId, QSqlQuery &fieldsQuery);
@@ -124,6 +126,9 @@ public:
                              bool isMapped, bool isSubcarrierLocked, bool isWidescreen,
                              int white16bIre, int black16bIre, int blanking16bIre, const QString &captureNotes);
 
+    // Write the map of the capture (the table disc_map is made when it is first needed); empty json takes the map away
+    bool writeDiscMap(int captureId, const QByteArray &json);
+
     // Write PCM audio parameters
     bool writePcmAudioParameters(int captureId, int bits, bool isSigned,
                                bool isLittleEndian, double sampleRate);
@@ -142,6 +147,10 @@ public:
     bool writeFieldClosedCaption(int captureId, int fieldId, int data0, int data1);
     bool writeFieldDropouts(int captureId, int fieldId, int startx, int endx, int fieldLine);
 
+    // Take away the rows of one of the tables of the fields (field_record, vits_metrics, vbi, vitc, closed_caption, drop_outs) for a capture, before
+    // its rows are written again: a row that the new metadata no longer have does not stay
+    bool deleteFieldRows(int captureId, const QString &table);
+
     // Transaction support
     bool beginTransaction();
     bool commitTransaction();
@@ -150,6 +159,10 @@ public:
 private:
     QSqlDatabase db;
     QString connectionName;
+
+    // The statements, prepared once for the writer (a row is written by binding and executing, not by preparing again)
+    QSqlQuery fieldQuery, vitsQuery, vbiQuery, vitcQuery, closedCaptionQuery, dropoutsQuery;
+    QSqlQuery &prepared(QSqlQuery &query, const char *sql);
 };
 
 #endif // SQLITEIO_H

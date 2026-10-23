@@ -33,6 +33,9 @@
 #include "tbc/logging.h"
 #include "tbc/metadataoptions.h"
 #include "tbc/commonoptions.h"
+#include "mappedmetadata.h"
+#include "fieldaudio.h"
+#include "streamcopy.h"
 #include "tbc/sourcefilechecks.h"
 #include "correctorpool.h"
 #include "ldxstream.h"
@@ -78,10 +81,41 @@ int main(int argc, char *argv[])
     ReverseOption setReverseOption;
     setReverseOption.addTo(parser);
 
+    IgnoreMapOption ignoreMapOption;
+    ignoreMapOption.addTo(parser);
+
+    // The analogue audio of the first source is written with the video in an LDX output
+    // Which other streams of the sources are copied into an LDX output
+    QCommandLineOption copyStreamsOption("copy-streams",
+                                         QCoreApplication::translate("main", "The other streams of the sources (EFM, AC3, RF, 24-bit audio) to copy as they are into an LDX output, with their own times: none, default (the EFM, AC3 and 24-bit audio of the first source), or a list such as 1:efm,1:ac3,2:#5 (the number of the source from 1, then efm, ac3, rf, audio, all or #track)"),
+                                         QCoreApplication::translate("main", "streams"), "default");
+    parser.addOption(copyStreamsOption);
+
+    QCommandLineOption noAudioOption("no-audio", QCoreApplication::translate("main", "Do not write the analogue audio of the first source with the video (an LDX output has it by default)"));
+    parser.addOption(noAudioOption);
+
+
     // Option to select over correct mode (-o)
     QCommandLineOption setOverCorrectOption(QStringList() << "o" << "overcorrect",
                                        QCoreApplication::translate("main", "Over correct mode (use on heavily damaged single sources)"));
     parser.addOption(setOverCorrectOption);
+
+    // How far the dropouts are extended in over correct mode
+    QCommandLineOption overCorrectExtensionOption("overcorrect-extension",
+                                       QCoreApplication::translate("main", "Over correct mode, with the dropouts extended by this many samples at each end (0 to 48; -o is 24)"),
+                                       QCoreApplication::translate("main", "samples"));
+    parser.addOption(overCorrectExtensionOption);
+
+    // How far from a dropout a replacement line can be
+    QCommandLineOption maxDistanceOption("max-distance",
+                                       QCoreApplication::translate("main", "Take no replacement from a line more than this many frame lines from the dropout (default: no limit)"),
+                                       QCoreApplication::translate("main", "lines"));
+    parser.addOption(maxDistanceOption);
+
+    // To see what was corrected
+    QCommandLineOption highlightOption("highlight",
+                                       QCoreApplication::translate("main", "Fill the parts that were corrected with the white level, to see what was corrected (a check: the output is not for use)"));
+    parser.addOption(highlightOption);
 
     // Force intra-field correction only
     QCommandLineOption setIntrafieldOption(QStringList() << "i" << "intra",
@@ -110,7 +144,25 @@ int main(int argc, char *argv[])
     // Get the options from the parser
     bool reverse = setReverseOption.isSet(parser);
     bool intraField = parser.isSet(setIntrafieldOption);
-    bool overCorrect = parser.isSet(setOverCorrectOption);
+    qint32 overCorrectDots = parser.isSet(setOverCorrectOption) ? 24 : 0;
+    if (parser.isSet(overCorrectExtensionOption)) {
+        bool ok = false;
+        overCorrectDots = parser.value(overCorrectExtensionOption).toInt(&ok);
+        if (!ok || overCorrectDots < 0 || overCorrectDots > 48) {
+            qCritical() << "Specified over correction must be a number of samples from 0 to 48";
+            return 2;
+        }
+    }
+    qint32 maxDistance = 0;
+    if (parser.isSet(maxDistanceOption)) {
+        bool ok = false;
+        maxDistance = parser.value(maxDistanceOption).toInt(&ok);
+        if (!ok || maxDistance < 1) {
+            qCritical() << "Specified maximum distance must be a number of lines greater than zero";
+            return 2;
+        }
+    }
+    const bool highlight = parser.isSet(highlightOption);
 
     // Get the arguments from the parser
     qint32 maxThreads;
@@ -179,6 +231,9 @@ int main(int argc, char *argv[])
     tbcDebugStream() << "main(): Opening source video metadata files..";
     QVector<LdDecodeMetaData *> ldDecodeMetaData;
     ldDecodeMetaData.resize(totalNumberOfInputFiles);
+    QVector<std::shared_ptr<const QVector<qint32>>> viewTables(totalNumberOfInputFiles);      // for an input that keeps a map: the fields of the capture each field of the view is
+    QVector<FieldAudio::Range> audioRanges0;       // the analogue audio of each field of the first input, when it is read through a map in its metadata
+    QVector<qint32> captureFrames0;       // for the first input, when it is read through a map: the frame of the capture each of its frames is
     for (qint32 i = 0; i < totalNumberOfInputFiles; i++) {
         // Create an object for the source video
         ldDecodeMetaData[i] = new LdDecodeMetaData;
@@ -204,6 +259,15 @@ int main(int argc, char *argv[])
             qCritical() << "Unable to open TBC metadata file - cannot continue";
             return 1;
         }
+        if (!(i == 0 && ldxInput) && !ignoreMapOption.isSet(parser)) {
+            QString mapError;
+            viewTables[i] = MappedMetadata::applyEmbeddedMap(*ldDecodeMetaData[i], metadataFilename, inputFilenames[i], mapError, false, i == 0 ? &audioRanges0 : nullptr, i == 0 ? &captureFrames0 : nullptr);
+            if (!mapError.isEmpty()) {
+                qCritical().noquote() << "Unable to use the map in the metadata of input" << i << ":" << mapError << "(--ignore-map reads the capture as it is)";
+                return 1;
+            }
+            if (viewTables[i]) qInfo().nospace() << "Input #" << i << " is read through the map in its metadata (--ignore-map reads it as it is)";
+        }
     }
 
     // Metadata filename for output TBC, in the same format as the first input
@@ -227,8 +291,14 @@ int main(int argc, char *argv[])
     }
 
     // Overcorrection if required
-    if (overCorrect) {
-        qInfo() << "Using over correction mode - dropout lengths will be extended to compensate for slow ramping start and end points";
+    if (overCorrectDots > 0) {
+        qInfo() << "Using over correction mode - dropout lengths will be extended by" << overCorrectDots << "samples at each end to compensate for slow ramping start and end points";
+    }
+    if (maxDistance > 0) {
+        qInfo() << "A replacement will be taken from no more than" << maxDistance << "frame lines from the dropout";
+    }
+    if (highlight) {
+        qInfo() << "Highlighting the corrections - the parts that are corrected are filled with the white level, so the output is for checking only";
     }
 
     // Show and open input source TBC files
@@ -247,7 +317,8 @@ int main(int argc, char *argv[])
                     " - input filename is " << inputFilenames[i];
 
         // Open the source TBC
-        if (!sourceVideos[i]->open(inputFilenames[i], videoParameters.fieldWidth * videoParameters.fieldHeight)) {
+        const qint32 fieldLength = videoParameters.fieldWidth * videoParameters.fieldHeight;
+        if (!(viewTables[i] ? sourceVideos[i]->openMappedFields(inputFilenames[i], fieldLength, -1, viewTables[i]) : sourceVideos[i]->open(inputFilenames[i], fieldLength))) {
             // Could not open source video file
             qInfo() << "Unable to open input source" << i;
             qInfo() << "Please verify that the specified source video files exist with the correct file permissions";
@@ -290,8 +361,33 @@ int main(int argc, char *argv[])
     qint32 result = 0;
     CorrectorPool correctorPool(outputFilename, outputMetadataFilename, maxThreads,
                                 ldDecodeMetaData, sourceVideos,
-                                reverse, intraField, overCorrect);
+                                reverse, intraField, overCorrectDots, maxDistance, highlight);
     correctorPool.setLdx(ldxOutput, LdxCapture::historyOf(inputFilenames[0]), TargetVideo::sourceIsCvbs(inputFilenames[0]));
+    // The other streams of the sources (EFM, AC3, 24-bit audio...) are copied as they are into an LDX file output, and the history says so
+    if (ldxOutput || LdxCapture::isLdxName(outputFilename)) {
+        QStringList sourceNames;
+        for (qint32 i = 0; i < totalNumberOfInputFiles; i++) sourceNames << inputFilenames[i];
+        const QVector<StreamCopy::Candidate> available = StreamCopy::candidates(sourceNames);
+        QVector<StreamCopy::Candidate> chosen;
+        QString copyError;
+        if (!StreamCopy::parseChoice(parser.value(copyStreamsOption), available, chosen, copyError)) {
+            qCritical().noquote() << "--copy-streams:" << copyError;
+            return 2;
+        }
+        correctorPool.setCopiedStreams(chosen, sourceNames);
+        correctorPool.setCaptureFrames(captureFrames0);
+        for (const StreamCopy::Candidate &candidate : chosen) qInfo().noquote() << "Copying the stream" << candidate.description() << "of source" << (candidate.source + 1);
+    } else if (parser.isSet(copyStreamsOption)) {
+        qWarning() << "--copy-streams: only an LDX output (a file, or the stream "-") takes the other streams of the sources";
+    }
+
+    // The analogue audio of the first source goes with the video in an LDX output
+    if (!parser.isSet(noAudioOption) && !ldxInput && !TargetVideo::sourceIsCvbs(inputFilenames[0])) {
+        const QVector<FieldAudio::Range> ranges = viewTables[0] ? audioRanges0 : FieldAudio::rangesOf(*ldDecodeMetaData[0]);
+        auto fieldAudio = std::make_shared<FieldAudio>();
+        if (fieldAudio->open(inputFilenames[0], ranges)) correctorPool.setAudio(fieldAudio);
+        else if (ldxOutput) qInfo() << "The first source has no analogue audio to write with the video";
+    }
     if (!correctorPool.process()) result = 1;
 
     // Report on the result of the correction process

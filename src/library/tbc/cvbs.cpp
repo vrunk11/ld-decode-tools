@@ -821,6 +821,44 @@ bool measureFieldPhaseIDs(const QString &dataFileName, VideoSystem system, Sampl
     return failed == std::numeric_limits<qint64>::max();
 }
 
+QString phaseCacheFileName(const QString &dataFileName)
+{
+    return dataFileName + QStringLiteral(".phases");
+}
+
+static QByteArray phaseCacheHeader(const QString &dataFileName, qint32 numberOfFields)
+{
+    const QFileInfo info(dataFileName);
+    return QStringLiteral("ld-decode-tools phases 1 %1 %2 %3\n").arg(info.size()).arg(info.lastModified().toMSecsSinceEpoch()).arg(numberOfFields).toUtf8();
+}
+
+bool readPhaseCache(const QString &dataFileName, qint32 numberOfFields, QVector<qint32> &phaseIDs)
+{
+    QFile file(phaseCacheFileName(dataFileName));
+    if (!QFileInfo::exists(dataFileName) || !file.open(QIODevice::ReadOnly)) return false;
+    const QByteArray header = phaseCacheHeader(dataFileName, numberOfFields);
+    if (file.read(header.size()) != header) return false;
+    const QByteArray bytes = file.readAll();
+    if (bytes.size() != numberOfFields) return false;
+    phaseIDs.resize(numberOfFields);
+    for (qint32 i = 0; i < numberOfFields; i++) {
+        const quint8 value = static_cast<quint8>(bytes[i]);
+        phaseIDs[i] = value == 255 ? -1 : value;
+    }
+    return true;
+}
+
+bool writePhaseCache(const QString &dataFileName, const QVector<qint32> &phaseIDs)
+{
+    QFile file(phaseCacheFileName(dataFileName));
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) return false;
+    file.write(phaseCacheHeader(dataFileName, phaseIDs.size()));
+    QByteArray bytes(phaseIDs.size(), '\0');
+    for (qint32 i = 0; i < phaseIDs.size(); i++) bytes[i] = static_cast<char>(phaseIDs[i] < 0 || phaseIDs[i] > 254 ? 255 : phaseIDs[i]);
+    file.write(bytes);
+    return file.error() == QFileDevice::NoError;
+}
+
 void fillPhaseGaps(QVector<qint32> &phaseIDs, qint32 modulus, qint32 anchorIndex, qint32 anchorPhase)
 {
     const qint32 count = phaseIDs.size();

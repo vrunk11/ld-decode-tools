@@ -161,7 +161,7 @@ void StackerCore::stackField(const qint32 frameNumber,const QVector<SourceVideo:
 }
 
 // The mean of the samples that are within the threshold distance of a centre (not the distance itself), or the centre if there are none.
-// The centre is signed in the smart mean mode and unsigned in the smart neighbour mode, and the arithmetic with the threshold is that of its type.
+// The centre is signed (an unsigned one made centre - threshold wrap round when the centre was under the threshold, and every sample was then out of range).
 template<typename Centre>
 static quint32 smartMean(const QVector<quint16>& elements, Centre centre, qint32 smartThreshold)
 {
@@ -276,7 +276,7 @@ quint16 StackerCore::stackMode(const QVector<quint16>& elements, const QVector<q
             if(nbOfElements > 2)//using median + mean
             {
                 // the mean of the samples within the threshold distance to the closest value to a neighbor, or that value if there is none
-                result = smartMean(elements, resultNeighbor, smartThreshold);
+                result = smartMean(elements, static_cast<qint32>(resultNeighbor), smartThreshold);
             }
             else//using surrounding sample
             {

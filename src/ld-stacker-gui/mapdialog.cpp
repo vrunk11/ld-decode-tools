@@ -13,6 +13,7 @@
 #include "ldxcapture.h"
 #include "lddecodemetadata.h"
 #include "tbcfiles.h"
+#include "framemap.h"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -25,6 +26,7 @@
 #include <QRegularExpression>
 #include <QPushButton>
 #include <QStandardPaths>
+#include <QTemporaryFile>
 #include <QVBoxLayout>
 
 namespace {
@@ -42,21 +44,6 @@ QString audioOf(const QString &tbcFile)
 }
 
 } // namespace
-
-QStringList MapDialog::companions(const QString &tbcFile)
-{
-    QStringList files;
-    for (const QString &suffix: { QStringLiteral(".db"), QStringLiteral(".json") }) {
-        if (QFileInfo::exists(tbcFile + suffix)) files << tbcFile + suffix;
-    }
-    if (QFileInfo::exists(audioOf(tbcFile))) files << audioOf(tbcFile);
-    return files;
-}
-
-QString MapDialog::outputFor(const QString &input, bool overwrite)
-{
-    return overwrite ? temporaryFor(input) : TbcFiles::mappedFileName(input);
-}
 
 MapDialog::MapDialog(const QVector<Job> &newJobs, bool overwriteOriginals, QWidget *parent, Task newTask)
     : QDialog(parent), jobs(newJobs), overwrite(overwriteOriginals), task(newTask)
@@ -143,7 +130,7 @@ MapDialog::MapDialog(const QVector<Job> &newJobs, bool overwriteOriginals, QWidg
         }
         progressTimer->stop();
         QString error;
-        const bool placed = task == UpdateSnr ? finishSnr(job, error) : (isLdxJob(job) ? finishLdx(job, error) : (!overwrite || replaceOriginal(job, error)));
+        const bool placed = task == UpdateSnr ? finishSnr(job, error) : finishMap(job, error);
         if (!placed) {
             cleanUp(job);
             emit jobFinished(job.id, false);
@@ -227,7 +214,7 @@ void MapDialog::runNext()
             finish(true, tr("Done: the SNR is written in the metadata"));
             return;
         }
-        finish(true, overwrite ? tr("Done: the sources are mapped, in place of the captures") : tr("Done: the mapping of each source is written beside it (name_map, or a track of its own in an LDX file)"));
+        finish(true, tr("Done: the map of each source is in the session"));
         return;
     }
     const Job &job = jobs[current];
@@ -251,8 +238,6 @@ void MapDialog::startStage()
 {
     const Job &job = jobs[current];
     const Stage &next = stages[stage];
-    // (what a mapping that was not finished left is of no use, and ld-discmap would not know what to do with it)
-    if (next.mapping && !isLdxJob(job)) removeOutput(job);
     log(QStringLiteral("%1 %2").arg(QFileInfo(next.program).completeBaseName(), next.arguments.join(QLatin1Char(' '))));
     metadataPercent = -1;
     stageOutput.clear();
@@ -264,99 +249,67 @@ bool MapDialog::plan(const Job &job, QString &error)
 {
     stages.clear();
     if (task == UpdateSnr) return planSnr(job, error);
-    if (isLdxJob(job)) return planLdx(job, error);
-    // The metadata format of the capture is that of its mapping (ld-discmap writes what it reads)
-    const QString metadataFile = LdDecodeMetaData::findMetadataFile(job.input);
-    const QString format = metadataFile.endsWith(QStringLiteral(".json"), Qt::CaseInsensitive) ? QStringLiteral("json") : QStringLiteral("db");
+
+    // The map of the capture: ld-discmap works it out and writes it as JSON, and nothing else (the video is not written again). A capture of an LDX file
+    // is read from the file by ld-discmap as it is.
+    const QString tool = toolPath();
+    if (tool.isEmpty()) {
+        error = tr("ld-discmap was not found beside ld-stacker-gui");
+        return false;
+    }
+    QTemporaryFile holder(QDir::tempPath() + QStringLiteral("/ld-stacker-map-XXXXXX.json"));
+    holder.setAutoRemove(false);
+    if (!holder.open()) {
+        error = tr("%1 could not be mapped: a file for the map could not be made").arg(job.title);
+        return false;
+    }
+    mapFile = holder.fileName();
+    holder.close();
+    QFile::remove(mapFile);
+
     Stage mapping;
-    mapping.program = toolPath();
-    mapping.arguments = { QStringLiteral("--meta"), format, job.input, outputFor(job.input, overwrite) };
-    // (a capture with no audio file beside it is mapped without audio, instead of ld-discmap stopping on it)
-    if (!QFileInfo::exists(audioOf(job.input))) mapping.arguments.prepend(QStringLiteral("--no-audio"));
-    mapping.output = outputFor(job.input, overwrite);
-    mapping.mapping = true;
+    mapping.program = tool;
+    mapping.arguments = { QStringLiteral("--maponly"), QStringLiteral("--map-file"), mapFile };
+    if (!isLdxJob(job)) {
+        // The metadata format of the capture (ld-discmap reads what is there)
+        const QString metadataFile = LdDecodeMetaData::findMetadataFile(job.input);
+        mapping.arguments << QStringLiteral("--meta") << (metadataFile.endsWith(QStringLiteral(".json"), Qt::CaseInsensitive) ? QStringLiteral("json") : QStringLiteral("db"));
+        // (a capture with no audio file beside it is mapped without audio, instead of ld-discmap stopping on it)
+        if (!QFileInfo::exists(audioOf(job.input))) mapping.arguments.prepend(QStringLiteral("--no-audio"));
+    }
+    mapping.arguments << job.input;
+    mapping.output = mapFile;
     stages.append(mapping);
     return true;
 }
 
-// A track of an LDX file: its video, metadata and audio are taken out into a folder beside the file, ld-discmap maps them there, and ld-container puts the
-// mapping in the file under a temporary name (as a track of its own that says it is the mapping, or, to overwrite, in the place of the track)
-bool MapDialog::planLdx(const Job &job, QString &error)
+// ld-discmap is done: the map it wrote is kept for the source
+bool MapDialog::finishMap(const Job &job, QString &error)
 {
-    const QString container = toolPath(QStringLiteral("ld-container"));
-    if (container.isEmpty()) {
-        error = tr("ld-container was not found beside ld-stacker-gui");
+    QFile file(mapFile);
+    if (!file.open(QIODevice::ReadOnly)) {
+        error = tr("The map of %1 could not be read back").arg(job.title);
         return false;
     }
-    QString path;
-    qint32 requested;
-    LdxCapture::split(job.input, path, requested);
-    qint32 video, metadata, audio;
-    if (!LdxCapture::captureTracks(job.input, video, metadata, audio) || LdxCapture::isChromaTrack(job.input) || LdxCapture::isCvbs(job.input)) {
-        error = tr("%1 is not a TBC capture of an LDX file that can be mapped").arg(job.title);
+    const QByteArray bytes = file.readAll();
+    file.close();
+    QFile::remove(mapFile);
+    if (bytes.isEmpty()) {
+        error = tr("ld-discmap wrote no map for %1").arg(job.title);
         return false;
     }
-    if (metadata == 0) {
-        error = tr("%1 has no metadata in its file: ld-discmap needs them").arg(job.title);
-        return false;
-    }
-    QString name = QFileInfo(path).fileName();
-    {
-        QVector<qint32> tracks;
-        QStringList names;
-        QString ignored;
-        if (LdxCapture::listCaptures(path, tracks, names, ignored)) {
-            const qint32 at = tracks.indexOf(video);
-            if (at >= 0 && !names[at].isEmpty()) name = names[at];
+    maps.insert(job.id, bytes);
+
+    if (saveInSources) {
+        FrameMap map;
+        QString saveError;
+        if (!FrameMap::fromJsonBytes(bytes, map, saveError) || !LdDecodeMetaData::saveDiscMap(job.input, &map, saveError)) {
+            log(tr("The map of %1 could not be kept in its metadata (%2): it stays in the session").arg(job.title, saveError));
+        } else {
+            saved << job.id;
+            log(tr("The map of %1 is kept in its metadata").arg(job.title));
         }
     }
-
-    const QString folder = workFolder(job);
-    QDir(folder).removeRecursively();
-    if (!QDir().mkpath(folder)) {
-        error = tr("%1 could not be mapped: the folder %2 could not be made").arg(job.title, QDir::toNativeSeparators(folder));
-        return false;
-    }
-    ldxFile = path;
-    ldxResult = folder + QStringLiteral("/result.ldx");
-    const QString capture = folder + QStringLiteral("/capture.tbc");
-    const QString mapped = folder + QStringLiteral("/capture_map.tbc");
-    const auto extract = [&](qint32 id, const QString &file) {
-        Stage take;
-        take.program = container;
-        take.arguments = { QStringLiteral("extract"), path, QStringLiteral("--id"), QString::number(id), QStringLiteral("-o"), file };
-        take.output = file;
-        stages.append(take);
-    };
-    extract(video, capture);
-    extract(metadata, capture + QStringLiteral(".json"));
-    if (audio != 0) extract(audio, folder + QStringLiteral("/capture.pcm"));
-
-    Stage mapping;
-    mapping.program = toolPath();
-    mapping.arguments = { QStringLiteral("--meta"), QStringLiteral("json"), capture, mapped };
-    if (audio == 0) mapping.arguments.prepend(QStringLiteral("--no-audio"));
-    mapping.output = mapped;
-    mapping.mapping = true;
-    stages.append(mapping);
-
-    QString base = path;
-    if (overwrite) {
-        // The track goes, and the mapping comes in with the name it had
-        Stage remove;
-        remove.program = container;
-        remove.arguments = { QStringLiteral("remove"), path, QStringLiteral("--id"), QString::number(video), QStringLiteral("-o"), folder + QStringLiteral("/removed.ldx") };
-        remove.output = folder + QStringLiteral("/removed.ldx");
-        stages.append(remove);
-        base = remove.output;
-    }
-    Stage add;
-    add.program = container;
-    add.arguments = { QStringLiteral("add"), base, mapped, QStringLiteral("-o"), ldxResult, QStringLiteral("--name"), overwrite ? name : tr("%1 (mapped)").arg(name) };
-    if (!overwrite) add.arguments << QStringLiteral("--mapped-from") << QString::number(video);
-    if (audio != 0) add.arguments << QStringLiteral("--pcm") << folder + QStringLiteral("/capture_map.pcm");
-    add.output = ldxResult;
-    stages.append(add);
     return true;
 }
 
@@ -432,99 +385,14 @@ bool MapDialog::finishSnr(const Job &job, QString &error)
     return true;
 }
 
-// The file with the mapping is put in the place of the LDX file (which is set aside first, so that a failure puts it back)
-bool MapDialog::finishLdx(const Job &job, QString &error)
-{
-    const QString aside = ldxFile + QStringLiteral(".bak");
-    QFile::remove(aside);
-    if (!QFile::rename(ldxFile, aside)) {
-        error = tr("%1 could not be mapped: %2 could not be set aside (is it open in another program?)").arg(job.title, QDir::toNativeSeparators(ldxFile));
-        return false;
-    }
-    if (!QFile::rename(ldxResult, ldxFile)) {
-        QFile::rename(aside, ldxFile);
-        error = tr("%1 could not be mapped: %2 could not be written").arg(job.title, QDir::toNativeSeparators(ldxFile));
-        return false;
-    }
-    QFile::remove(aside);
-    QDir(workFolder(job)).removeRecursively();
-    if (overwrite) {
-        replaced.insert(job.id, LdxCapture::trackName(ldxFile, ldxTrack));
-        log(tr("%1 is replaced by its mapping (track %2)").arg(job.title).arg(ldxTrack));
-    } else {
-        log(tr("The mapping of %1 is the track %2 of the file").arg(job.title).arg(ldxTrack));
-    }
-    return true;
-}
-
 // What is left of a job that did not finish
 void MapDialog::cleanUp(const Job &job)
 {
-    if (task == UpdateSnr) {
+    if (task == Map) {
+        if (!mapFile.isEmpty()) QFile::remove(mapFile);
+    } else if (task == UpdateSnr) {
         if (isLdxJob(job)) QDir(workFolder(job)).removeRecursively();
-    } else if (isLdxJob(job)) {
-        QDir(workFolder(job)).removeRecursively();
-    } else {
-        removeOutput(job);
     }
-}
-
-// What ld-discmap wrote for a job, or the start of it: the mapping and its metadata and audio
-void MapDialog::removeOutput(const Job &job)
-{
-    const QString output = outputFor(job.input, overwrite);
-    QFile::remove(output);
-    for (const QString &file: companions(output)) QFile::remove(file);
-}
-
-// The mapping is put in the place of the capture: the capture and its files are set aside first, so that a failure puts them back
-bool MapDialog::replaceOriginal(const Job &job, QString &error)
-{
-    const QString mapped = temporaryFor(job.input);
-    // (the files of the mapping, and the files of the capture that they take the place of: the metadata of the other format, if there is some, stays)
-    QStringList mappedFiles = companions(mapped);
-    mappedFiles.prepend(mapped);
-    QStringList originals;
-    for (const QString &file: mappedFiles) {
-        QString original = file;
-        original.replace(QStringLiteral(".mapping-tmp"), QString());
-        if (QFileInfo::exists(original)) originals << original;
-    }
-
-    QStringList setAside;
-    const auto restore = [&]() {
-        for (const QString &file: setAside) {
-            QFile::remove(file.left(file.length() - 4));
-            QFile::rename(file, file.left(file.length() - 4));
-        }
-    };
-    for (const QString &file: originals) {
-        const QString aside = file + QStringLiteral(".bak");
-        QFile::remove(aside);
-        if (!QFile::rename(file, aside)) {
-            restore();
-            error = tr("%1 could not be replaced: %2 could not be set aside").arg(job.title, QDir::toNativeSeparators(file));
-            return false;
-        }
-        setAside << aside;
-    }
-    QStringList placed;
-    for (const QString &file: mappedFiles) {
-        // <name>.mapping-tmp.tbc -> <name>.tbc, and the same for its metadata (.tbc.db or .tbc.json) and its audio (.pcm)
-        QString target = file;
-        target.replace(QStringLiteral(".mapping-tmp"), QString());
-        if (!QFile::rename(file, target)) {
-            for (const QString &done: placed) QFile::remove(done);
-            restore();
-            error = tr("%1 could not be replaced: %2 could not be written").arg(job.title, QDir::toNativeSeparators(target));
-            return false;
-        }
-        placed << target;
-    }
-    // The capture that was replaced is gone, and the mapping is in its place
-    for (const QString &file: setAside) QFile::remove(file);
-    log(tr("%1 is replaced by its mapping").arg(job.title));
-    return true;
 }
 
 void MapDialog::finish(bool success, const QString &message)

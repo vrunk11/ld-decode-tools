@@ -27,7 +27,6 @@
 #include <iostream>
 #include <getopt.h>
 #include <cstring>
-#include <cassert>
 
 #ifdef _WIN32
 #include <io.h>
@@ -85,7 +84,10 @@ int main(int argc, char *argv[]) {
             // could have stdin/stdout as defaults, with switches to change them
             case 'v':
                 Logger::GLOBAL_LOG_LEVEL = std::stoi(optarg);
-                assert(Logger::GLOBAL_LOG_LEVEL >= 0 && Logger::GLOBAL_LOG_LEVEL <= MAX_LOGLEVEL);
+                if (Logger::GLOBAL_LOG_LEVEL < 0 || Logger::GLOBAL_LOG_LEVEL > MAX_LOGLEVEL) {
+                    fprintf(stderr, "The logging level must be from 0 to %d\n", MAX_LOGLEVEL);
+                    return 2;
+                }
                 continue;
             case 's': // sliding average window size
                 slidingAvgLength = std::stoi(optarg);
@@ -123,7 +125,10 @@ int main(int argc, char *argv[]) {
         char fileBuffer[8196]; // 8K
         inputFile.rdbuf()->pubsetbuf(fileBuffer, sizeof fileBuffer);
         inputFile.open(posArgv[0], std::ostream::binary);
-        assert(inputFile.good());
+        if (!inputFile.good()) {
+            fprintf(stderr, "Cannot open the input file: %s\n", posArgv[0]);
+            return 1;
+        }
         input = &inputFile;
     }
 
@@ -132,7 +137,10 @@ int main(int argc, char *argv[]) {
     if (std::strcmp(posArgv[1], "-") != 0) {
         fprintf(stderr, "using output file: %s\n", posArgv[1]);
         outputFile.open(posArgv[1], std::ostream::binary);
-        assert(outputFile.good());
+        if (!outputFile.good()) {
+            fprintf(stderr, "Cannot open the output file: %s\n", posArgv[1]);
+            return 1;
+        }
         output = &outputFile;
     }
 
@@ -141,11 +149,17 @@ int main(int argc, char *argv[]) {
     if (posArgc > 2 && std::strcmp(posArgv[2], "-") != 0) {
         fprintf(stderr, "using logger file: %s\n", posArgv[2]);
         loggerFile.open(posArgv[2], std::ifstream::binary);
-        assert(loggerFile.good());
+        if (!loggerFile.good()) {
+            fprintf(stderr, "Cannot open the log file: %s\n", posArgv[2]);
+            return 1;
+        }
         Logger::LOG_STREAM = &loggerFile;
     }
 
-    assert(input->good());
+    if (!input->good()) {
+        fprintf(stderr, "The input cannot be read\n");
+        return 1;
+    }
     // auto ac3_filter = AC3Filter(*input, sampleFrequency); // now done with sox
     auto adc = OneBitADC(slidingAvgLength, *input); // 1,000 samples sliding average
     // auto resampler = Resampler(sampleFrequency, adc); // 40MHz  // now done with sox

@@ -26,6 +26,9 @@
 #include "stackedvideo.h"
 #include "ldxcapture.h"
 #include "ldxstream.h"
+#include "framemap.h"
+#include "lddecodemetadata.h"
+#include "mappedmetadata.h"
 
 #include <cstdio>
 #include <QFileInfo>
@@ -255,6 +258,41 @@ bool SourceVideo::open(QString filename, qint32 _fieldLength, qint32 _fieldLineL
     return true;
 }
 
+// Open a capture seen through its map
+bool SourceVideo::openMapped(QString filename, qint32 _fieldLength, qint32 _fieldLineLength, const FrameMap &map, LdDecodeMetaData &capture)
+{
+    QString error;
+    const auto table = MappedMetadata::viewFields(capture, map, error);
+    if (!table) {
+        qWarning().noquote() << error << "-" << filename;
+        return false;
+    }
+    return openMappedFields(filename, _fieldLength, _fieldLineLength, table);
+}
+
+bool SourceVideo::openMappedFields(QString filename, qint32 _fieldLength, qint32 _fieldLineLength, std::shared_ptr<const QVector<qint32>> table)
+{
+    if (isSourceVideoOpen) {
+        qInfo() << "A source video input file is already open, cannot open a new one";
+        return false;
+    }
+
+    auto base = std::make_unique<SourceVideo>();
+    base->lenientReads = lenientReads;
+    if (!base->open(filename, _fieldLength, _fieldLineLength)) return false;
+
+    fieldLength = _fieldLength;
+    fieldByteLength = _fieldLength * 2;
+    fieldLineLength = _fieldLineLength != -1 ? _fieldLineLength * 2 : -1;
+    mappedBase = std::move(base);
+    mappedFields = table;
+    availableFields = table->size();
+    fieldCache.clear();
+    isSourceVideoOpen = true;
+    inputFilePos = 0;
+    return true;
+}
+
 // Close an input video data file
 void SourceVideo::close()
 {
@@ -266,6 +304,8 @@ void SourceVideo::close()
     tbcDebugStream() << "SourceVideo::close(): Called, closing the source video file and emptying the frame cache";
     stream.reset();
     stacked.reset();
+    mappedBase.reset();
+    mappedFields.reset();
     ldx.reset();
     if (inputFile.isOpen()) inputFile.close();
     isSourceVideoOpen = false;
@@ -304,6 +344,16 @@ qint32 SourceVideo::getFieldLength()
 SourceVideo::Data SourceVideo::getVideoField(qint32 fieldNumber, qint32 startFieldLine, qint32 endFieldLine)
 {
     if (stacked) return stacked->getField(fieldNumber, startFieldLine, endFieldLine);
+
+    if (mappedBase) {
+        if (fieldNumber < 1 || fieldNumber > mappedFields->size()) {
+            if (lenientReads) { qWarning() << "Field" << fieldNumber << "is not in the mapped capture: shown blank"; return blankField(startFieldLine, endFieldLine); }
+            qFatal("Application requested a field that is not in the mapped capture");
+        }
+        const qint32 own = (*mappedFields)[fieldNumber - 1];
+        if (own == 0) return blankField(startFieldLine, endFieldLine);      // (a padded frame)
+        return mappedBase->getVideoField(own, startFieldLine, endFieldLine);
+    }
 
     if (ldx) {
         // Whole fields, kept for the next time they are asked for

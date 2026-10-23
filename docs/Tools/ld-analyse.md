@@ -40,6 +40,7 @@ Options for video piped in (input is -), which comes without metadata:
   --sample-encoding <encoding>  CVBS: u10 (the default), u16, tpg21 or s16
   --buffer-frames <number>      The size of each of the two buffers (see below), in frames (default: 5 seconds of video)
   --throttle                    Hold the producer back to the pace of the viewer instead of overwriting old video (for a file, or a decoder that is not live)
+  --ignore-map                  Read the capture as it is, though its metadata keep a map (the frames in the order of the disc, from ld-discmap)
 
 Arguments:
   input               Specify input TBC or CVBS file, or - for video piped in
@@ -397,7 +398,7 @@ This view is useful as only dropouts in the visible area will be noticeable to t
 
 ## Black SNR analysis
 
-The Black SNR analysis window shows the reported black peak SNR across the whole TBC video file (the black lines) and the average (the red line).  Black SNR (Signal to Noise Ratio) gives a view of the quality of the original source (and the capture set-up).
+The Black SNR analysis window shows the reported black peak SNR across the whole TBC video file (the orange line) and the average (the red line).  Black SNR (Signal to Noise Ratio) gives a view of the quality of the original source (and the capture set-up).
 
 Higher values represent a better source signal and can be gained by the use of clean, undamaged source material as well as carefully calibrated and tested capture environments.
 

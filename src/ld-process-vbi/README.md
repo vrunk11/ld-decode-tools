@@ -154,7 +154,7 @@ Invalid data is:
 
 ### Best Practices
 1. **Run Early**: Process VBI before dropout correction
-2. **Check Statistics**: Use --statistics to verify decode success
+2. **Check the result**: Use --debug to see the decode messages
 3. **Validate**: Inspect results with ld-analyse VBI dialog
 4. **Line Selection**: Use correct lines for your disc type
 
@@ -181,18 +181,15 @@ ld-chroma-decoder corrected.tbc output.rgb
 
 **No VBI data extracted:**
 - Verify disc contains VBI data (not all discs do)
-- Try different --vbi-lines range
-- Check --statistics for decode errors
+- Check the decode messages with --debug
 - Inspect with ld-analyse to verify VBI lines are visible
 
 **Incorrect frame numbers:**
-- May be non-standard disc (use --force-standard)
 - Check for multi-format discs (PAL/NTSC hybrid)
 - Verify proper field order in metadata
 
 **Closed captions not extracted:**
 - NTSC only feature (not available on PAL)
-- Use --closed-captions option explicitly
 - Check line 21 quality in ld-analyse
 
 **Inconsistent chapter marks:**
