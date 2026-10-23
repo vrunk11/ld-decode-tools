@@ -109,8 +109,7 @@ is listed, with the reason.
 
 ### Phase 5 - Step 2, the audit of relevance and validity
 
-Planned when step 1 is done: for each feature, is it still needed, does it do what its page says, is the result right (compared with a reference, a standard, a
-test). Own inventory and own plan.
+Done (2026-10-23): for each job of a person, is it needed, does it do what its page says, is the result right. Own plan [audit-step2-plan.md](audit-step2-plan.md) (with its result at the end), own findings [audit-step2-findings.md](audit-step2-findings.md).
 
 ## Checks at every gate
 
@@ -124,13 +123,11 @@ test). Own inventory and own plan.
 
 Written so that a new session (the conversation may have been compacted) can carry on from this file and the inventory alone.
 
-**State of the repository (2026-10-21)**
-- Branch `audit-refactor` is at `4ba94c96`, the same commit as `main` (fast-forwarded on 2026-10-21 at the person's request) and as `origin/main` (pushed): the last commit is the
-  measure modes (rough, full, seek) and the format list of the Process window of ld-stacker-gui. The branch itself is not pushed.
-- The audit files (`docs/Development/audit-refactor-*.md`) are **untracked** and the refactor changes are **only in the working tree** (nothing is staged or committed, nothing pushed); `test-data/` is untouched.
-- Tags: `v1.6.2` is on `0057624f` (published, behind `main`); `v1.6.3` is being prepared and has no tag and no release notes yet (the format of the release notes is the
-  one of v1.6.0: `# vX.Y.Z - title`, a paragraph, `## Section` with `- **Label**: text`, a docs link per section).
-
+**State of the repository (2026-10-23)**
+- Branch `audit-refactor` is at `5592d9c`: ten commits ahead of `origin/audit-refactor` (pushed up to `6175dd2`), and of `main` / `origin/main` (`4ba94c9`, the measure modes of ld-stacker-gui). Nothing of the audit is untracked now: the audit files (`docs/Development/audit-*.md`) and the work of both steps are committed. `test-data/` is untouched.
+- Unit tests: 46 (`ctest -L unit`, all pass). Built with MinGW (GCC 15.2) only.
+- Tags: `v1.6.2` is on `0057624f` (published, behind `main`); `v1.6.3` is being prepared and has no tag and no release notes yet (the format of the release notes is the one of v1.6.0: `# vX.Y.Z - title`, a paragraph, `## Section` with `- **Label**: text`, a docs link per section).
+- **Both steps are finished.** What each entry decided is in [audit-refactor-inventory.md](audit-refactor-inventory.md) (step 1) and [audit-step2-findings.md](audit-step2-findings.md) (step 2, with "The points that were left open, gone through"); what is left is listed at the end of [audit-step2-plan.md](audit-step2-plan.md).
 **What was agreed with the person**
 - Step 1 is the refactor **and the harmonisation** (the same name, default, check and message for the same thing in every tool, window and page; the same job done by the same
   code). Step 2, later, is the audit of relevance and validity.
@@ -138,9 +135,8 @@ Written so that a new session (the conversation may have been compacted) can car
 - Anything that changes what a person sees (an option name, a message, a label, a file name, a format) is asked about first; old option names stay as aliases where possible.
 - The person speaks French; the answers are in French; the repository (code, docs, this file) is in English.
 
-**What is done in the inventory (pass 1, not finished)**
-- Pass 1 is **finished**: 65 entries in sections A to O (O is dead code), all `confirmed`. Annexes: `audit-refactor-options.md`, `audit-refactor-clones.md`. The triage is made entry by entry together with the doing of each point (phase 3 follows the order of the inventory, A to O): done from A to O (each entry says what was done and what is left); next the re-analysis (phase 4) and the plan of step 2.
-
+**What is done**
+- Step 1: pass 1 finished (65 entries, A to O, all confirmed; annexes `audit-refactor-options.md` and `audit-refactor-clones.md`), phase 3 gone through from A to O entry by entry with the person, phase 4 (re-analysis) written below. Step 2: the survey of the workflows, 21 entries (S-01 to S-21) decided one by one with the person and done, the notes of step 1 gone through; see `audit-step2-findings.md`.
 **How the work is done here** (things that went wrong before)
 - Build from the repository root with `.\build.bat` in PowerShell (not from another folder, and not `cmake` from Git Bash). It takes minutes: run it in the background and read
   its output file when it is done. Then `ctest -L unit` in `build\`. A `vcpkg` message about a file in use means a program of the build is still running.
@@ -248,6 +244,13 @@ the Windows/MSVC and macOS builds (`getopt` of `ld-ac3-*`, the new files in the 
 | 2026-10-23 | - | Step 2, S-13 completed: other streams of the sources (EFM, AC3, RF, 24-bit audio) copied into the LDX output, noted in the history: `StreamCopy`, `--copy-streams`, `stacking.copyStreams` in the session, `StreamsDialog` in the Process window | build ok, `ctest -L unit` 40/40; EFM of the output identical to the source's; the window not seen |
 | 2026-10-23 | - | Step 2, offset between video and copied streams recorded (`alignment` of the track, words in the history) | build ok, `ctest -L unit` 40/40; second source shifted by 3 frames gives [[1,0,3],[4,1,26]] |
 | 2026-10-23 | - | Step 2, S-19.7 (b): decoding parameters kept with the metadata (`ldxDecoding` / table `decoding`), ld-analyse starts from them and can keep them, ld-chroma-decoder default = the ld-analyse rule with a log (3D for one capture) | build ok, `ctest -L unit` 40/40; stored decoder and settings = the same options on the command line (ld-chroma-decoder); the window not seen |
+| 2026-10-23 | - | Step 2, S-08 closed (no cache of measures, no measure on demand: the black PSNR is 1 part of 1004 in the quality of ld-discmap and the map never depends on it); S-20.5 (`ld-disc-stacker` and `ld-dropout-correct` refuse a source with a frame that has no two fields); statuses of the findings brought up to date | build ok, `ctest -L unit` 40/40 |
+| 2026-10-23 | - | Step 2, S-21 (tests of what had none): `testvideoio` (TargetVideo to SourceVideo: TBC, CVBS, LDX with its audio) found that a whole missing field was read as one blank line, and that the audio of an LDX output made by ld-disc-stacker, ld-dropout-correct and ld-discmap was **one frame late** (written after its fields, stamped with the next field; now one block before them); `testjsonio` found four faults (capital E, `\u` escapes, null, raw control characters); `testmetadataoptions` found none; the LDX stream checked end to end | build ok, `ctest -L unit` 43/43; the pcm track of the three outputs starts at 0 ms |
+| 2026-10-23 | - | Step 2, review of the windows by running them (clicks posted in the window, the window saved as an image): a **crash** of the SNR window one time in two (GCC for MinGW-w64 stores AVX vectors to a stack aligned to 16 bytes, bug 54412; `-Wa,-muse-unaligned-vector-move` in `CMakeLists.txt`), disabled controls that looked enabled (palette without a disabled colour, `testthemedisabled`), the Info panel and the Map button naming where the map is, *Keep the decoder settings* in the Config menu of ld-analyse | build ok, `ctest -L unit` 44/44; the window opened 20 times without a stop (3 of 6 before) |
+| 2026-10-23 | - | Step 2, cancelling a stack (reported by the person): the program stopped (`cancel()` used the process pointer that `stepFinished` had set to null) and the half-written file stayed (the files of a step were taken back only after it succeeded); `testprocessdialog` | build ok, `ctest -L unit` 45/45; 5 cancels in the real window, no stop, no leftover |
+| 2026-10-23 | - | Step 2, the points left open gone through: `--input-metadata` / `--output-metadata` in the three metadata converters (the old names stay as aliases), `.export.json` named right, three unused functions removed, `ld-container recompress` names the tracks of a stack after the file and says when nothing changed; decided with the person: S-12 keep the warning, the EFM chain out of the scope, B-03 and A-02 moot | build ok, `ctest -L unit` 45/45 |
+| 2026-10-23 | - | Step 2, the map is metadata, so every tool follows it (the person): `ld-export-metadata`, `ld-tbc-to-cvbs` and `ld-cvbs-to-tbc` read through the map their metadata keep, `--ignore-map` as it is; the converters write the audio in the same order with silence for the padded frames | build ok, `ctest -L unit` 45/45; a capture with a gap of 5 frames: 29 frames and 42 676 audio samples (24 and 35 316 with `--ignore-map`); without a map the outputs are unchanged |
+| 2026-10-23 | - | Step 2, what was not seen or read: the windows of ld-analyse run and looked at (boxes and round buttons not ticked were filled with the accent colour on Windows with a dark theme: the platform's palette for the two classes, fixed in `applyAppearance`, 96 checks in `testthemedisabled`); `ld-ac3-demodulate` and `ld-ac3-decode` read for the first time (the program stopped on any input of a few hundred kilobytes: the buffer of the input stream was declared in the block that opens the file; non-numeric, zero or negative options stopped it; exit code 255; `testac3cli`); Transform PAL read (nothing wrong); the Python functional tests read (no fault of M-08) | build ok, `ctest -L unit` 46/46; `testac3cli` fails on the old code |
 
 ## Notes for step 2 (the audit of validity and relevance)
 
