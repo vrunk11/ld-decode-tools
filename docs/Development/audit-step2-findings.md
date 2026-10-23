@@ -255,6 +255,13 @@ Done by running the real `ld-stacker-gui` on two captures, posting clicks and ke
 - Seen and left alone: the path of the file takes nine lines in the Info panel (it breaks at any place; it could be shortened in the middle), the "Decoded by" line shows the commit of ld-decode as it is in the metadata (a hash), the log of the Map window names a temporary JSON file. The Streams window with sources that hold streams was not seen (the sources were TBC captures: it says so, clearly).
 - **`ld-analyse`**: its main window, the Config menu, the question and the status message of *Keep the decoder settings for this capture* were seen, and the action used for real (`ld-chroma-decoder` then logs `Decoder: ntsc3d (the decoding parameters kept in the metadata of the capture)`, and `a.tbc.db.bup` is made). One defect: the action was in the **Window** menu, alone, not in **Config** where the page says it is (`buildConfigMenu` moves actions one by one and did not know it): moved.
 
+### Cancelling a stack (2026-10-23, reported by the person: a cancelled stack ended with an error message)
+
+Reproduced in the real window (Start then Cancel at once: the program stopped with an access violation, in `Qt6Core.dll`) and then by `testprocessdialog` (a segmentation fault). Two defects of `ProcessDialog`, both fixed:
+- `cancel()` killed the process and waited for it: `waitForFinished` gives `finished` at once, to `stepFinished`, which let go of the process and set the pointer to null, and `cancel()` then called `deleteLater()` on that null pointer. The process is taken away from the window and its signals cut before it is killed.
+- The files that a step writes were put in the list of what to take back **after** the step succeeded, so a stack cancelled (or one that failed) in the middle of its step was **left on disk half written**, and the next try was refused ("already exists: the stacking does not overwrite files"; seen in the window after the crash). The files of the stack (and of its conversion, and the LDX file) are in the list before the steps begin, those that were not there only.
+`testprocessdialog` starts a stack and cancels it at once, after 30 ms and after 150 ms: the log says `Cancelled`, the file is not left, the buttons are as they were.
+
 ### Not read in detail (and why)
 The EFM chain (`ld-process-efm`, `efm-decoder-*`: the choice between them was deferred in step 1, I-01, I-03); `ld-process-ac3` (two programs on a pipe, not reviewed beyond its options); the exports (`ld-export-metadata`, `ld-export-decode-metadata`); `ld-container`'s twelve commands
 (the container is specified and tested). None showed a point on the first reading; they come back if the person wants them looked at.

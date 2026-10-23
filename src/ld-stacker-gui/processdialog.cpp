@@ -336,6 +336,18 @@ void ProcessDialog::start()
     // if that is not the one wanted it is converted and the other one is not kept
     steps.append({ tr("Putting the metadata in the format asked for"), QString(), {}, nullptr });
 
+    // What the steps write is known now: a stack that is cancelled, or that fails, in the middle of a step is not left behind half written (the lists are
+    // for files that were not there: the metadata that was beside the video before is not this run's to take away)
+    created.append(stacked);
+    if (!hadDb) created.append(stackerMetadataDb);
+    if (!hadJson) created.append(stackerMetadataJson);
+    if (convertVideo) {
+        created.append(finalVideo);
+        for (const QString &extra: { metadataFile(finalVideo, false), metadataFile(finalVideo, true) }) {
+            if (!QFileInfo::exists(extra)) created.append(extra);
+        }
+    }
+
     log(tr("Saving to %1").arg(finalVideo));
     setRunning(true);
     currentStep = -1;
@@ -425,6 +437,8 @@ void ProcessDialog::startLdx(const QString &output)
         // (what is on the way is taken away if the stacking does not finish)
         temporary.append(stream);
     }
+    // (the file is written by the last step, and taken away if it does not finish: it was not there, start() refused a name that was)
+    created.append(output);
 
     log(tr("Saving to %1").arg(output));
     setRunning(true);
@@ -530,10 +544,14 @@ void ProcessDialog::cancel()
 {
     cancelled = true;
     if (process) {
-        process->kill();
-        process->waitForFinished(3000);
-        process->deleteLater();
+        // (taken away from the window first, and its signals cut: waiting for it to end gives `finished` at once, to stepFinished, which let go of
+        // the process, and what it said last would be read from one that is no longer there)
+        QProcess *running = process;
         process = nullptr;
+        running->disconnect(this);
+        running->kill();
+        running->waitForFinished(3000);
+        running->deleteLater();
     }
     finish(false, tr("Cancelled"));
 }
