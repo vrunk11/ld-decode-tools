@@ -52,6 +52,14 @@ QString CorrectorPool::processDetail() const
 bool CorrectorPool::process()
 {
     qInfo() << "Performing final sanity checks...";
+    // Each frame of each source must have its two fields in the metadata (a hole in the fields cannot be corrected)
+    for (qint32 sourceNo = 0; sourceNo < sourceVideos.size(); sourceNo++) {
+        const qint32 bad = ldDecodeMetaData[sourceNo]->firstFrameWithoutFields();
+        if (bad) {
+            qCritical() << "The metadata of source" << (sourceNo + 1) << "have no complete frame at frame" << bad << "- its fields are not in order, it cannot be corrected";
+            return false;
+        }
+    }
     // The streams of the first source are copied with the times they have there: the frames of the output are its frames. (The streams of the other sources, which only
     // give pictures to correct with, are not aligned to anything.)
     streamAlignments.clear();

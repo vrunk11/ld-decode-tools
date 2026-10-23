@@ -431,8 +431,9 @@ SourceVideo::Data SourceVideo::getVideoField(qint32 fieldNumber, qint32 startFie
     // Calculate the position of the require field line data
     qint64 requiredStartPosition = static_cast<qint64>(fieldByteLength) * static_cast<qint64>(fieldNumber);
     qint64 requiredReadLength;
+    const bool wholeField = startFieldLine == -1 && endFieldLine == -1;
 
-    if (startFieldLine == -1 && endFieldLine == -1) {
+    if (wholeField) {
         // Read the whole field
 
         // Check the cache (we only cache whole fields)
@@ -462,7 +463,7 @@ SourceVideo::Data SourceVideo::getVideoField(qint32 fieldNumber, qint32 startFie
             || requiredStartPosition + requiredReadLength > (static_cast<qint64>(fieldByteLength) * availableFields))) {
         if (lenientReads) {
             qWarning() << "Field" << fieldNumber + 1 << "is past the end of the input TBC file: shown blank";
-            return blankField(startFieldLine + 1, endFieldLine + 1);
+            return wholeField ? blankField(-1, -1) : blankField(startFieldLine + 1, endFieldLine + 1);
         }
         qFatal("Application requested field line range that exceeds the boundaries of the input TBC file");
     }
@@ -511,7 +512,7 @@ SourceVideo::Data SourceVideo::getVideoField(qint32 fieldNumber, qint32 startFie
         if (lenientReads) {
             qWarning() << "Field" << fieldNumber + 1 << "could not be read whole from the input TBC file: shown blank";
             inputFilePos = -1;           // (the position in the file is not known now)
-            return blankField(startFieldLine + 1, endFieldLine + 1);
+            return wholeField ? blankField(-1, -1) : blankField(startFieldLine + 1, endFieldLine + 1);
         }
         qFatal("Could not read field data from input TBC file");
     }

@@ -93,6 +93,14 @@ QString StackingPool::processDetail() const
 bool StackingPool::process()
 {
     qInfo() << "Performing final sanity checks...";
+    // Each frame of each source must have its two fields in the metadata (a hole in the fields cannot be stacked)
+    for (qint32 sourceNo = 0; sourceNo < sourceVideos.size(); sourceNo++) {
+        const qint32 bad = ldDecodeMetaData[sourceNo]->firstFrameWithoutFields();
+        if (bad) {
+            qCritical() << "The metadata of source" << (sourceNo + 1) << "have no complete frame at frame" << bad << "- its fields are not in order, it cannot be stacked";
+            return false;
+        }
+    }
     // Get the VBI frame range for all sources (not needed when the sources are lined up by offsets): the frame of each source that goes with a frame of the
     // output is needed to say where the copied streams are
     qInfo() << "Scanning source videos for VBI frame number ranges...";

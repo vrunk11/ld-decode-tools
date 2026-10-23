@@ -77,7 +77,7 @@ The time code of an NTSC CLV disc jumps by one number at regular places (the IEC
 
 ## Which copy of a repeated frame is kept
 
-When the capture holds the same frame more than once (the player went back), the copy that is kept is the one with the best **quality**, from 0 to 100: the black PSNR of the two fields (as a share of 43 dB, in amplitude), a penalty if the number of the next frame goes back, the sync confidence, and the share of the frame that is not in a dropout. The last counts 1000 times more than the others, so the copy with the fewest dropouts is kept, and the others break a tie. The black PSNR is read from the metadata: run `ld-process-vits` on the capture first, otherwise it is 0 for every frame.
+When the capture holds the same frame more than once (the player went back), the copy that is kept is the one with the best **quality**, from 0 to 100: the black PSNR of the two fields (as a share of 43 dB, in amplitude), a penalty if the number of the next frame goes back, the sync confidence, and the share of the frame that is not in a dropout. The last counts 1000 times more than the others, so the copy with the fewest dropouts is kept, and the others break a tie. The black PSNR is read from the metadata, where `ld-process-vits` writes it, and is 0 for every frame without it; it is 1 part of 1004, so it only breaks a tie between copies that have the same dropouts, and the map itself (numbers, order, gaps) never depends on it.
 
 ## Unmappable frames
 

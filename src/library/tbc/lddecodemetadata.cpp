@@ -2291,6 +2291,15 @@ qint32 LdDecodeMetaData::getSecondFieldNumber(qint32 frameNumber)
     return getFieldNumber(frameNumber, 2);
 }
 
+qint32 LdDecodeMetaData::firstFrameWithoutFields()
+{
+    const qint32 frames = getNumberOfFrames();
+    for (qint32 frame = 1; frame <= frames; frame++) {
+        if (getFirstFieldNumber(frame) < 1 || getSecondFieldNumber(frame) < 1) return frame;
+    }
+    return 0;
+}
+
 // Method to set the isFirstFieldFirst flag
 void LdDecodeMetaData::setIsFirstFieldFirst(bool flag)
 {

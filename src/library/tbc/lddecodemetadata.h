@@ -390,6 +390,8 @@ public:
     qint32 getNumberOfFrames();
     qint32 getFirstFieldNumber(qint32 frameNumber);
     qint32 getSecondFieldNumber(qint32 frameNumber);
+    // The first frame the metadata cannot give two fields to (a hole in the fields, no first field near), or 0 if every frame has them
+    qint32 firstFrameWithoutFields();
 
     void setIsFirstFieldFirst(bool flag);
     bool getIsFirstFieldFirst();

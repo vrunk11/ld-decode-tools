@@ -230,6 +230,13 @@ void testBadFieldNumbers() {
     }
     CHECK(metaData.getFirstFieldNumber(11) == -1);
     CHECK(metaData.getFirstFieldNumber(0) == -1);
+
+    // The first frame that has no two fields is told (the stacking tools refuse such a capture); a capture in order has none
+    CHECK(metaData.firstFrameWithoutFields() == 1);
+    LdDecodeMetaData good;
+    good.initialiseDefault(PAL);
+    good.ensureFields(20);
+    CHECK(good.firstFrameWithoutFields() == 0);
 }
 
 int main(int argc, char *argv[])
