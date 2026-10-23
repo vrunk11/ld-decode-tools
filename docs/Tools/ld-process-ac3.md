@@ -29,4 +29,4 @@ ld-ac3-decode options:
     -h, --help    Print this help.
 ```
 
-These two programs read their options with POSIX `getopt` (the options with a long name above are taken from the command line before it), and they keep their own exit codes (see section 4.4 of AGENTS.md). Here `-v` is the logging level, not the version.
+These two programs read their options with POSIX `getopt` (the options with a long name above are taken from the command line before it), and they exit with 0 when the work was done, 2 for a wrong command line (an option value that is not a whole number in its range, a wrong number of arguments) and 1 when it failed (a file that cannot be opened or written, an input too short to hold a symbol). Here `-v` is the logging level, not the version.

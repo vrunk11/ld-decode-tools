@@ -478,6 +478,10 @@ bool applyAppearance(const QString &styleName, ThemeMode mode, const QString &cu
 
     if (hasPalette) app->setPalette(palette);
 
+    // The platform gives some controls a palette of their own: on Windows with a dark system theme, the boxes and the round buttons that are not ticked are
+    // filled with the accent colour, so that a box that is ticked and one that is not differ by their tick only. They take the palette of the program.
+    for (const char *controlClass : { "QCheckBox", "QRadioButton" }) app->setPalette(app->palette(), controlClass);
+
     // The colour of the play button: the theme's own, or the button text of the system's
     app->setProperty("playButtonColour", hasPalette ? palette.color(QPalette::Active, QPalette::BrightText)
                                                    : app->palette().color(QPalette::Active, QPalette::ButtonText));

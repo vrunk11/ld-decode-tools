@@ -82,22 +82,27 @@ int main(int argc, char *argv[]) {
     while (true) {
         switch (getopt(argc, argv, "v:s:h?")) {
             // could have stdin/stdout as defaults, with switches to change them
-            case 'v':
-                Logger::GLOBAL_LOG_LEVEL = std::stoi(optarg);
-                if (Logger::GLOBAL_LOG_LEVEL < 0 || Logger::GLOBAL_LOG_LEVEL > MAX_LOGLEVEL) {
-                    fprintf(stderr, "The logging level must be from 0 to %d\n", MAX_LOGLEVEL);
+            case 'v': {
+                int level;
+                if (!parseWholeNumber(optarg, 0, MAX_LOGLEVEL, level)) {
+                    fprintf(stderr, "The logging level must be a whole number from 0 to %d\n", MAX_LOGLEVEL);
                     return 2;
                 }
+                Logger::GLOBAL_LOG_LEVEL = level;
                 continue;
+            }
             case 's': // sliding average window size
-                slidingAvgLength = std::stoi(optarg);
+                if (!parseWholeNumber(optarg, 1, 100000000, slidingAvgLength)) {
+                    fprintf(stderr, "The sliding average window must be a whole number of samples, 1 or more\n");
+                    return 2;
+                }
                 fprintf(stderr, "set sliding avg size: %s\n", optarg);
                 continue;
             case '?':
             case 'h':
             default:
                 doHelp(argv[0]);
-                return -1;
+                return 2;
             case -1:
                 break;
         }
@@ -108,7 +113,7 @@ int main(int argc, char *argv[]) {
 
     if (posArgc < 2 || posArgc > 3) {
         doHelp(argv[0]);
-        return -1;
+        return 2;
     }
 
     std::istream *input = &std::cin;
@@ -119,10 +124,12 @@ int main(int argc, char *argv[]) {
     std::cin.tie(nullptr);
 
     // prep input file (if not piped)
+    // (the buffer of the stream lives as long as the stream: it was declared in the block that opens the file, and was gone, its place on the stack taken by other
+    // variables, when the file was read)
+    char fileBuffer[8196]; // 8K
     std::ifstream inputFile;
     if (std::strcmp(posArgv[0], "-") != 0) {
         fprintf(stderr, "using input file: %s\n", posArgv[0]);
-        char fileBuffer[8196]; // 8K
         inputFile.rdbuf()->pubsetbuf(fileBuffer, sizeof fileBuffer);
         inputFile.open(posArgv[0], std::ostream::binary);
         if (!inputFile.good()) {
@@ -163,11 +170,12 @@ int main(int argc, char *argv[]) {
     // auto ac3_filter = AC3Filter(*input, sampleFrequency); // now done with sox
     auto adc = OneBitADC(slidingAvgLength, *input); // 1,000 samples sliding average
     // auto resampler = Resampler(sampleFrequency, adc); // 40MHz  // now done with sox
-    auto demodulator = Demodulator(adc);
-    auto reclocker = Reclocker(demodulator);
 
     long qpskSymbols = 0;
     try {
+        // (the demodulator reads the samples it begins with when it is made: an input that is too short ends there)
+        auto demodulator = Demodulator(adc);
+        auto reclocker = Reclocker(demodulator);
         while (true) {
             // could calculate an ETA here?
             // if ((i % 65536) == 0) {
@@ -184,8 +192,20 @@ int main(int argc, char *argv[]) {
         }
     } catch (std::range_error &e) {}
 
+    if (qpskSymbols == 0) {
+        fprintf(stderr, "The input is too short: there is not a symbol in it\n");
+        return 1;
+    }
+
     // print final / overall stats
     Logger(INFO, "QPSK Symbols Total") << qpskSymbols;
+
+    // what was written must have been written
+    output->flush();
+    if (!output->good()) {
+        fprintf(stderr, "Writing the output failed\n");
+        return 1;
+    }
 
     // cleanup files nicely
     if (inputFile.is_open())

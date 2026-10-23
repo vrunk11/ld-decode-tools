@@ -187,7 +187,7 @@ Do not touch headers of vendored code.
 
 A tool exits with **0** when it did what it was asked, **2** when the command line is wrong (an option or a value that is not valid, an argument missing or too many, options that
 cannot go together, an output that would be a conversion), and **1** when the work failed (a file that cannot be opened or written, data that cannot be used, a stage that stops). Not -1, which a shell sees as 255.
-`ld-container` and `ld-process-ac3` still use their own (1).
+`ld-container` still uses its own (1).
 
 ## 5. Testing
 

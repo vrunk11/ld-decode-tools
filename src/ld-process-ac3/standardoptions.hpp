@@ -11,6 +11,8 @@
 
 #pragma once
 
+#include <cerrno>
+#include <cstdlib>
 #include <cstring>
 #include <iostream>
 #include <string>
@@ -21,6 +23,19 @@
 // -q --quiet) and the long names of their own (--log-level for -v, --sliding-average-window for -s) are taken from the command line first. -d and -q
 // set the logging level (debug, or errors only) before getopt reads -v, so that an explicit -v wins.
 //
+// A whole number from a command line: all of the text is the number, and it is between minimum and maximum. (std::stoi throws on text that is not a number, which
+// stops a program that has not caught it, and takes "12abc" for 12.)
+inline bool parseWholeNumber(const char *text, long minimum, long maximum, int &value)
+{
+    if (text == nullptr || *text == '\0') return false;
+    char *end = nullptr;
+    errno = 0;
+    const long number = std::strtol(text, &end, 10);
+    if (errno != 0 || *end != '\0' || number < minimum || number > maximum) return false;
+    value = static_cast<int>(number);
+    return true;
+}
+
 // Returns -1 when the program goes on with the options that are left in argc and argv, or the exit code when it has done what was asked (--help, --version).
 inline int takeStandardOptions(int &argc, char *argv[], const std::string &application, void (*help)(const std::string &))
 {

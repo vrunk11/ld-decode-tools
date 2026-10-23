@@ -70,18 +70,20 @@ int main(int argc, char *argv[]) {
     while (true) {
         switch (getopt(argc, argv, "v:h?")) {
             // could have stdin/stdout as defaults, with switches to change them
-            case 'v':
-                Logger::GLOBAL_LOG_LEVEL = std::stoi(optarg);
-                if (Logger::GLOBAL_LOG_LEVEL < 0 || Logger::GLOBAL_LOG_LEVEL > MAX_LOGLEVEL) {
-                    fprintf(stderr, "The logging level must be from 0 to %d\n", MAX_LOGLEVEL);
+            case 'v': {
+                int level;
+                if (!parseWholeNumber(optarg, 0, MAX_LOGLEVEL, level)) {
+                    fprintf(stderr, "The logging level must be a whole number from 0 to %d\n", MAX_LOGLEVEL);
                     return 2;
                 }
+                Logger::GLOBAL_LOG_LEVEL = level;
                 continue;
+            }
             case '?':
             case 'h':
             default:
                 doHelp(argv[0]);
-                return -1;
+                return 2;
             case -1:
                 break;
         }
@@ -92,7 +94,7 @@ int main(int argc, char *argv[]) {
 
     if (posArgc < 2 || posArgc > 3) {
         doHelp(argv[0]);
-        return -1;
+        return 2;
     }
 
     std::istream *input = &std::cin;
@@ -103,10 +105,12 @@ int main(int argc, char *argv[]) {
     std::cin.tie(nullptr);
 
     // prep input file (if not piped)
+    // (the buffer of the stream lives as long as the stream: it was declared in the block that opens the file, and was gone, its place on the stack taken by other
+    // variables, when the file was read)
+    char fileBuffer[8196]; // 8K
     std::ifstream inputFile;
     if (std::strcmp(posArgv[0], "-") != 0) {
         fprintf(stderr, "using input file: %s\n", posArgv[0]);
-        char fileBuffer[8196]; // 8K
         inputFile.rdbuf()->pubsetbuf(fileBuffer, sizeof fileBuffer);
         inputFile.open(posArgv[0], std::ifstream::binary);
         if (!inputFile.good()) {
@@ -186,6 +190,13 @@ int main(int argc, char *argv[]) {
         << corrector.total_stats[+4];
     Logger(INFO, "QPSK Frame Total") << framer.n_frames;
     Logger(INFO, "AC3 Frame Total") << ac3_frames;
+
+    // what was written must have been written
+    output->flush();
+    if (!output->good()) {
+        fprintf(stderr, "Writing the output failed\n");
+        return 1;
+    }
 
     // cleanup files nicely
     if (inputFile.is_open())
