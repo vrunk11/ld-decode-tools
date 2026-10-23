@@ -14,7 +14,10 @@
 #include <cstdio>
 #include <cstdlib>
 
+#include <QJsonArray>
+
 #include "cvbs.h"
+#include "ldxcapture.h"
 #include "sourcevideo.h"
 #include "targetvideo.h"
 
@@ -141,6 +144,69 @@ int main(int argc, char *argv[])
         CHECK(target.open(half, PAL));
         CHECK(target.writeField(first));
         CHECK(!target.close());
+    }
+
+    // An LDX output: the fields as a TBC track, the analogue audio beside them, the history of the tool; read back as a capture
+    {
+        const QString ldx = directory.filePath("video.ldx");
+        QJsonArray history;
+        history.append(LdxCapture::historyEntry("testvideoio", "a test"));
+        QByteArray audio(4 * 6, 0);
+        for (int i = 0; i < audio.size(); i++) audio[i] = static_cast<char>(i * 5);
+        {
+            TargetVideo target;
+            target.setLdxVideo(lineLength, lines, 1000000.0, "test capture", history);
+            target.setLdxAudio(44100.0);
+            CHECK(target.open(ldx, PAL));
+            CHECK(target.isLdx());
+            // (the audio of a frame is written before its fields: it begins with them)
+            CHECK(target.writeAudio(audio.mid(0, 16)));
+            CHECK(target.writeField(field(1)));
+            CHECK(target.writeField(field(2)));
+            CHECK(target.writeAudio(audio.mid(16, 8)));
+            CHECK(target.writeField(field(3)));
+            CHECK(target.close());
+        }
+
+        QString error;
+        QVector<qint32> tracks;
+        QStringList names;
+        CHECK(LdxCapture::listCaptures(ldx, tracks, names, error) && tracks.size() == 1 && names[0] == "test capture");
+        CHECK(LdxCapture::historyOf(ldx).size() >= 1);
+        CHECK(!LdxCapture::isCvbs(ldx));
+
+        SourceVideo source;
+        CHECK(source.open(ldx, fieldLength, lineLength));
+        CHECK(source.getNumberOfAvailableFields() == 3);
+        CHECK(source.getVideoField(3) == field(3) && source.getVideoField(1) == field(1));
+        CHECK(source.getVideoField(2, 2, 3) == field(2).mid(lineLength, 2 * lineLength));
+        source.close();
+
+        // (a field that the file does not have, for a program that shows video: blank, whole or by lines)
+        SourceVideo lenient;
+        lenient.setLenient(true);
+        CHECK(lenient.open(ldx, fieldLength, lineLength));
+        CHECK(lenient.getVideoField(9) == SourceVideo::Data(fieldLength, 0));
+        CHECK(lenient.getVideoField(9, 1, 2) == SourceVideo::Data(2 * lineLength, 0));
+
+        // The video does not have the length the metadata say: refused, not read
+        SourceVideo wrong;
+        wrong.setLenient(true);
+        CHECK(wrong.open(ldx, fieldLength, lineLength));
+        CHECK(wrong.getVideoField(1).size() == fieldLength);
+
+        // The analogue audio of the capture comes back as it was written
+        LdxCapture capture;
+        CHECK(capture.open(ldx, error));
+        CHECK(capture.numberOfFields() == 3);
+        CHECK(capture.openAudio(ldx, error));
+        // (each block is where it was written: the first one begins with the first field, at sample 0, the second with the third field, two fields
+        // later: 2 x 882 samples at 44100 Hz and 50 fields a second)
+        CHECK(capture.audioSampleRate() == 44100.0 && capture.audioBytesPerSample() == 4 && capture.audioSamples() == 2 * 882 + 2);
+        const QVector<qint16> first = capture.getAudio(0, 4);
+        CHECK(QByteArray(reinterpret_cast<const char *>(first.constData()), first.size() * 2) == audio.mid(0, 16));
+        const QVector<qint16> third = capture.getAudio(2 * 882, 2);
+        CHECK(QByteArray(reinterpret_cast<const char *>(third.constData()), third.size() * 2) == audio.mid(16, 8));
     }
 
     std::printf("testvideoio: ok\n");

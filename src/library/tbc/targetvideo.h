@@ -48,7 +48,9 @@ public:
     bool writeField(const QVector<quint16> &fieldData, const QByteArray &metadataJson);
     // bits: 16 for the analogue audio of a TBC capture, 24 for that of a CVBS capture
     void setLdxAudio(double sampleRate, qint32 bits = 16);
-    // 16-bit stereo audio of the fields written so far, for an LDX output (anything else: false, the tool writes its own file)
+    // 16-bit stereo audio of the fields that are written next, for an LDX output (anything else: false, the tool writes its own file). The block is stamped with the time of the
+    // next field, which is where its first sample is: write the audio of a frame (in one block) before its two fields, as the specification has it (the first sample of a block
+    // is time * sampleRate).
     bool writeAudio(const QByteArray &samples);
     bool isLdx() const;
 

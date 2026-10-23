@@ -876,8 +876,17 @@ bool DiscMapper::saveDiscMap(DiscMap &discMap)
     auto readWide = [&](qint64 start, qint64 count) {
         return wideFromLdx ? wideAudio.getAudioBytes(start, count) : wavReader.read(start, count);
     };
+    // (the audio of an LDX output is written for the frame as one block, before its fields: it begins with them, see TargetVideo::writeAudio)
+    QByteArray frameAudio;
     auto putWide = [&](const QByteArray &samples) {
-        return ldxOutput ? targetVideo.writeAudio(samples) : wavWriter.write(samples);
+        if (ldxOutput) { frameAudio.append(samples); return true; }
+        return wavWriter.write(samples);
+    };
+    auto flushFrameAudio = [&]() {
+        if (!ldxOutput || frameAudio.isEmpty()) return true;
+        const bool written = targetVideo.writeAudio(frameAudio);
+        frameAudio.clear();
+        return written;
     };
     if (ldxStream) {
         // The metadata of each field go with it, so they are made first
@@ -963,7 +972,7 @@ bool DiscMapper::saveDiscMap(DiscMap &discMap)
     // Audio goes to the .pcm file, or to the track of an LDX output
     auto putAudio = [&](const SourceAudio::Data &samples) {
         const qint64 bytes = static_cast<qint64>(samples.size()) * 2;
-        if (ldxOutput) return targetVideo.writeAudio(QByteArray(reinterpret_cast<const char *>(samples.data()), static_cast<qsizetype>(bytes)));
+        if (ldxOutput) { frameAudio.append(reinterpret_cast<const char *>(samples.data()), static_cast<qsizetype>(bytes)); return true; }
         return targetAudio.write(reinterpret_cast<const char *>(samples.data()), bytes) == bytes;
     };
 
@@ -997,18 +1006,7 @@ bool DiscMapper::saveDiscMap(DiscMap &discMap)
             sourceFirstField = sourceVideo.getVideoField(firstFieldNumber);
             sourceSecondField = sourceVideo.getVideoField(secondFieldNumber);
 
-            // Write the fields into the output TBC file in the same order as the source file
-            if (firstFieldNumber < secondFieldNumber) {
-                // Save the first field and then second field to the output file
-                if (!putField(sourceFirstField)) writeFail = true;
-                if (!putField(sourceSecondField)) writeFail = true;
-            } else {
-                // Save the second field and then first field to the output file
-                if (!putField(sourceSecondField)) writeFail = true;
-                if (!putField(sourceFirstField)) writeFail = true;
-            }
-
-            // Save the audio (not field order dependent)
+            // Save the audio (not field order dependent), which an LDX output has before the fields
             if (cvbsAudio) {
                 const qint32 firstLength = discMap.getFirstFieldAudioDataLength(frameNumber);
                 const qint32 secondLength = discMap.getSecondFieldAudioDataLength(frameNumber);
@@ -1049,11 +1047,20 @@ bool DiscMapper::saveDiscMap(DiscMap &discMap)
                     }
                 }
             }
-        } else {
-            // Padded frame - write two dummy fields
-            if (!putField(missingFieldData)) writeFail = true;
-            if (!putField(missingFieldData)) writeFail = true;
 
+            // Write the fields into the output TBC file in the same order as the source file
+            if (!flushFrameAudio()) writeFail = true;
+            if (firstFieldNumber < secondFieldNumber) {
+                // Save the first field and then second field to the output file
+                if (!putField(sourceFirstField)) writeFail = true;
+                if (!putField(sourceSecondField)) writeFail = true;
+            } else {
+                // Save the second field and then first field to the output file
+                if (!putField(sourceSecondField)) writeFail = true;
+                if (!putField(sourceFirstField)) writeFail = true;
+            }
+        } else {
+            // Padded frame - write two dummy fields (the audio first, for an LDX output)
             if (cvbsAudio) {
                 // Silence of a field's length, twice
                 const QByteArray silence(discMap.getAudioFieldSampleLength() * 6, '\0');
@@ -1064,6 +1071,10 @@ bool DiscMapper::saveDiscMap(DiscMap &discMap)
                 if (!putAudio(missingFieldAudioData)) writeFail = true;
                 if (!putAudio(missingFieldAudioData)) writeFail = true;
             }
+
+            if (!flushFrameAudio()) writeFail = true;
+            if (!putField(missingFieldData)) writeFail = true;
+            if (!putField(missingFieldData)) writeFail = true;
         }
 
         // Notify user

@@ -340,6 +340,19 @@ bool CorrectorPool::setOutputFrame(qint32 frameNumber,
             return false;
         }
 
+        // The audio of the two fields of the frame, in an LDX output: one block, written before the fields, as it begins with them (the audio is stamped with the time of
+        // the next field to be written)
+        if (audio && targetVideo.isLdx()) {
+            const bool firstWrittenFirst = outputFrame.firstFieldSeqNo < outputFrame.secondFieldSeqNo;
+            QByteArray samples = audio->audioOf(firstWrittenFirst ? outputFrame.firstFieldSeqNo : outputFrame.secondFieldSeqNo);
+            samples.append(audio->audioOf(firstWrittenFirst ? outputFrame.secondFieldSeqNo : outputFrame.firstFieldSeqNo));
+            if (!samples.isEmpty() && !targetVideo.writeAudio(samples)) {
+                qCritical() << "Writing the audio to the output failed";
+                targetVideo.close();
+                return false;
+            }
+        }
+
         // Save the frame data to the output file (with the fields in the correct order)
         bool writeFail = false;
         if (outputFrame.firstFieldSeqNo < outputFrame.secondFieldSeqNo) {
@@ -358,23 +371,6 @@ bool CorrectorPool::setOutputFrame(qint32 frameNumber,
             qCritical() << "Writing fields to the output TBC file failed";
             targetVideo.close();
             return false;
-        }
-
-        // (the blocks of the other streams up to the time of the audio, which is stamped with the time of the next field)
-        if (!streamCopy.isEmpty() && !streamCopy.writeUpTo(targetVideo, targetVideo.ldxTimeNs())) {
-            qCritical() << "Writing the copied streams to the output failed";
-            targetVideo.close();
-            return false;
-        }
-        // The audio of the two fields of the frame, in an LDX output
-        if (audio && targetVideo.isLdx()) {
-            QByteArray samples = audio->audioOf(outputFrame.firstFieldSeqNo);
-            samples.append(audio->audioOf(outputFrame.secondFieldSeqNo));
-            if (!samples.isEmpty() && !targetVideo.writeAudio(samples)) {
-                qCritical() << "Writing the audio to the output failed";
-                targetVideo.close();
-                return false;
-            }
         }
 
         // Show debug

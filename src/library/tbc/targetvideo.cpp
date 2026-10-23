@@ -92,7 +92,7 @@ bool TargetVideo::isLdx() const { return ldx != nullptr; }
 bool TargetVideo::writeAudio(const QByteArray &samples)
 {
     if (!ldx || ldx->audio == 0) return false;
-    // (stamped with the time of the next field: the audio of the fields written so far)
+    // (stamped with the time of the next field: the audio begins with the fields that are written next)
     return ldx->writer.writeBlock(ldx->audio, fieldTimeNs(ldx->fields, ldxSystem), samples);
 }
 
