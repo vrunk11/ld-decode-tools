@@ -195,8 +195,13 @@ void JsonReader::discard()
         beginArray();
         while (readElement()) discard();
         endArray();
+    } else if (c == 'n') {
+        // null (from programs that write a missing value so)
+        spaceGet();
+        for (const char *rest = "ull"; *rest; rest++) {
+            if (get() != *rest) throwError("expected null");
+        }
     } else {
-        // XXX recognise null
         throwError("unrecognised value");
     }
 }
@@ -228,6 +233,42 @@ void JsonReader::unget()
     // (If this becomes a problem in the future, we could simulate it.)
     input.unget();
     --position;
+}
+
+// The four hexadecimal digits of a \u escape
+unsigned JsonReader::readHex4()
+{
+    unsigned code = 0;
+    for (int i = 0; i < 4; i++) {
+        const char c = get();
+        unsigned digit;
+        if (c >= '0' && c <= '9') digit = static_cast<unsigned>(c - '0');
+        else if (c >= 'a' && c <= 'f') digit = static_cast<unsigned>(c - 'a' + 10);
+        else if (c >= 'A' && c <= 'F') digit = static_cast<unsigned>(c - 'A' + 10);
+        else throwError("expected four hexadecimal digits after \\u");
+        code = code * 16 + digit;
+    }
+    return code;
+}
+
+// A character as UTF-8
+void JsonReader::pushUtf8(std::string &value, unsigned code)
+{
+    if (code < 0x80) {
+        value.push_back(static_cast<char>(code));
+    } else if (code < 0x800) {
+        value.push_back(static_cast<char>(0xc0 | (code >> 6)));
+        value.push_back(static_cast<char>(0x80 | (code & 0x3f)));
+    } else if (code < 0x10000) {
+        value.push_back(static_cast<char>(0xe0 | (code >> 12)));
+        value.push_back(static_cast<char>(0x80 | ((code >> 6) & 0x3f)));
+        value.push_back(static_cast<char>(0x80 | (code & 0x3f)));
+    } else {
+        value.push_back(static_cast<char>(0xf0 | (code >> 18)));
+        value.push_back(static_cast<char>(0x80 | ((code >> 12) & 0x3f)));
+        value.push_back(static_cast<char>(0x80 | ((code >> 6) & 0x3f)));
+        value.push_back(static_cast<char>(0x80 | (code & 0x3f)));
+    }
 }
 
 // Read a JSON string. The result is unescaped and doesn't include the quotes.
@@ -270,8 +311,20 @@ void JsonReader::readString(std::string &value)
             case 't':
                 value.push_back('\t');
                 break;
-            case 'u':
-                throwError("\\u escapes not supported");
+            case 'u': {
+                // \uXXXX, with a character outside the first plane written as two of them (a surrogate pair)
+                unsigned code = readHex4();
+                if (code >= 0xd800 && code < 0xdc00) {
+                    if (get() != '\\' || get() != 'u') throwError("expected the second half of a \\u pair");
+                    const unsigned low = readHex4();
+                    if (low < 0xdc00 || low > 0xdfff) throwError("expected the second half of a \\u pair");
+                    code = 0x10000 + ((code - 0xd800) << 10) + (low - 0xdc00);
+                } else if (code >= 0xdc00 && code <= 0xdfff) {
+                    throwError("the second half of a \\u pair on its own");
+                }
+                pushUtf8(value, code);
+                break;
+            }
             default:
                 throwError("unrecognised \\ escape");
             }
@@ -324,7 +377,7 @@ void JsonReader::readNumber(double &value)
         }
     }
 
-    if (c == 'e') {
+    if (c == 'e' || c == 'E') {
         buf.push_back(c);
         c = get();
         if (c == '-' || c == '+') {
@@ -467,7 +520,13 @@ void JsonWriter::writeString(const char *str)
             output << "\\t";
             break;
         default:
-            output.put(c);
+            if (static_cast<unsigned char>(c) < 0x20) {
+                // (any other control character: JSON has no raw ones)
+                static const char hex[] = "0123456789abcdef";
+                output << "\\u00" << hex[(c >> 4) & 0xf] << hex[c & 0xf];
+            } else {
+                output.put(c);
+            }
             break;
         }
     }

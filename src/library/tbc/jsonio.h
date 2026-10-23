@@ -82,6 +82,8 @@ private:
     void unget();
 
     void readString(std::string &value);
+    unsigned readHex4();
+    static void pushUtf8(std::string &value, unsigned code);
     void readNumber(double &value);
     template <typename T> void readSignedInteger(T& value) {
         // Round to the nearest integer
