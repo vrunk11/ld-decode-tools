@@ -148,6 +148,7 @@ static QPalette darkPalette()
         { "Base", "#191919" }, { "AlternateBase", "#404040" }, { "Text", "#ffffff" },
         { "Button", "#353535" }, { "ButtonText", "#ffffff" },
         { "Highlight", "#2a82da" }, { "HighlightedText", "#ffffff" },
+        { "DisabledText", "#808080" },
     });
 }
 
@@ -367,7 +368,7 @@ static QString classicDarkStyleSheet(const QPalette &palette)
         "  border: 1px solid %1; padding: 1px 2px;"
         "  selection-background-color: palette(highlight); selection-color: palette(highlighted-text); }"
         "QLineEdit:hover, QAbstractSpinBox:hover, QComboBox:hover { border-color: %2; }"
-        "QComboBox QAbstractItemView {"
+        "QLineEdit:disabled, QAbstractSpinBox:disabled, QComboBox:disabled { color: %4; border-color: %5; }"        "QComboBox QAbstractItemView {"
         "  background-color: palette(base); color: palette(text); border: 1px solid %1; }"
         "QScrollBar:vertical { background: palette(window); width: 17px; }"
         "QScrollBar:horizontal { background: palette(window); height: 17px; }"

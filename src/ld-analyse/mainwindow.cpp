@@ -261,7 +261,7 @@ void MainWindow::buildConfigMenu()
 {
     QMenu *menu = new QMenu(tr("&Config"), this);
     ui->menuBar->insertMenu(ui->menuHelp->menuAction(), menu);
-    for (QAction *action: { ui->actionVideo_parameters, ui->actionChroma_decoder_configuration }) {
+    for (QAction *action: { ui->actionVideo_parameters, ui->actionChroma_decoder_configuration, ui->actionKeep_decoder_settings }) {
         ui->menuWindow->removeAction(action);
         menu->addAction(action);
     }

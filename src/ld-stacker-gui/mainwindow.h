@@ -137,6 +137,7 @@ private:
     QPointer<MapDialog> mapDialog;
     bool mappingBusy = false;
     void mapSelectedSource();
+    static QString mappedAlreadyText(const SourceInfo &info);
     // Whether the source follows its mapping: kept in the session (the tools that read it use it) and in the state of the window
     void setFollowMap(const QString &id, bool follow);
     void updateSnrOfSelectedSource();

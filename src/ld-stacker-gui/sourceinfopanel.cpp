@@ -179,7 +179,12 @@ QString SourceInfoPanel::describe(const SourceInfo &info, const QString &title, 
     html += row(tr("Padded frames"), QString::number(info.paddedFrames));
 
     html += heading(tr("Mapping"));
-    html += row(tr("Mapped"), info.isMapped ? tr("yes (the metadata says so)") : tr("no"));
+    // (a source read through a map has the view's metadata, which say it is mapped: what matters is where the map is kept)
+    QString mapped;
+    if (info.throughMap) mapped = info.mapInSource ? tr("yes (read through the map kept in the source)") : tr("yes (read through the map of the session)");
+    else if (info.mapInSource) mapped = tr("no (the source keeps a map: Follow map is off)");
+    else mapped = info.isMapped ? tr("yes (the metadata says so)") : tr("no");
+    html += row(tr("Mapped"), mapped);
 
     html += heading(tr("SNR of the metadata"));
     html += row(tr("White SNR"), mean(info.whiteSnr));

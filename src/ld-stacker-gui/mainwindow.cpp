@@ -1210,6 +1210,16 @@ void MainWindow::setFollowMap(const QString &id, bool follow)
     if (index >= 0) project.sources[index].followMap = follow;
 }
 
+// Why a source needs no mapping: its metadata say it is a mapped copy, or it is read through a map (of its own metadata, or of the session)
+QString MainWindow::mappedAlreadyText(const SourceInfo &info)
+{
+    if (info.throughMap) {
+        return info.mapInSource ? tr("This source is read through the map kept in its metadata already")
+                                : tr("This source is read through a map of the session already");
+    }
+    return tr("The metadata say that this source is mapped already");
+}
+
 // The Map button of the panel: the source that is chosen, if it has no mapped version; the Follow map box does not matter, the button was pressed
 void MainWindow::mapSelectedSource()
 {
@@ -1218,7 +1228,7 @@ void MainWindow::mapSelectedSource()
     if (index < 0 || project.showStack || mappingBusy) return;
     const SourceState state = states.value(id);
     if (state.info.isMapped) {
-        QMessageBox::information(this, tr("Map"), tr("The metadata say that this source is mapped already."));
+        QMessageBox::information(this, tr("Map"), mappedAlreadyText(state.info) + QLatin1Char('.'));
         return;
     }
     const QString reference = project.sources[index].reference();
@@ -1693,7 +1703,7 @@ void MainWindow::updateInfoPanel()
         if (!state.loaded) why = tr("The source is not loaded");
         else if (mappingBusy) why = tr("Sources are being mapped");
         else if (project.showStack) why = tr("Turn the stack off to map a source");
-        else if (state.info.isMapped) why = tr("The metadata say that this source is mapped already");
+        else if (state.info.isMapped) why = mappedAlreadyText(state.info);
         else if (state.info.cvbs) why = tr("ld-discmap maps TBC captures, not CVBS ones");
         else if (LdxCapture::isLdxName(project.sources[index].reference())) {
             if (LdxCapture::isChromaTrack(project.sources[index].reference())) why = tr("ld-discmap maps the luma (or composite) track of a pair, not the chroma one");
@@ -1702,7 +1712,7 @@ void MainWindow::updateInfoPanel()
         infoPanel->setMappable(why.isEmpty(), why);
         // (the SNR is measured for the same captures: TBC ones, and not the chroma track of a pair)
         QString snrWhy = why;
-        if (snrWhy == tr("The metadata say that this source is mapped already")) snrWhy.clear();
+        if (state.info.isMapped && snrWhy == why) snrWhy.clear();
         if (snrWhy.isEmpty() && LdxCapture::isLdxName(project.sources[index].reference()) && LdxCapture::isChromaTrack(project.sources[index].reference())) snrWhy = tr("The chroma track of a pair has no SNR of its own");
         infoPanel->setSnrUpdatable(snrWhy.isEmpty(), snrWhy);
     }

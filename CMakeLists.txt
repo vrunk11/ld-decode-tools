@@ -106,6 +106,19 @@ if(ENABLE_NATIVE_OPTIMIZATION)
         if(_have_march_native)
             add_compile_options(-march=native)
             message(STATUS "Native optimisation: -march=native")
+
+            # GCC for Windows (MinGW-w64) keeps the stack aligned to 16 bytes only, but with AVX it stores 32 or 64 bytes with aligned moves to
+            # its stack (GCC bug 54412): a program built for an AVX CPU then stops with an access violation, or not, by where the stack of
+            # the thread happens to be. The assembler is asked to use the unaligned moves (they cost the same on an aligned address). The
+            # link line gets it too, as link-time optimisation writes the code at the link.
+            if(WIN32 AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+                check_cxx_compiler_flag("-Wa,-muse-unaligned-vector-move" _have_unaligned_vector_move)
+                if(_have_unaligned_vector_move)
+                    add_compile_options(-Wa,-muse-unaligned-vector-move)
+                    add_link_options(-Wa,-muse-unaligned-vector-move)
+                    message(STATUS "Native optimisation: unaligned vector moves (GCC bug 54412 on Windows)")
+                endif()
+            endif()
         else()
             check_cxx_compiler_flag("-mcpu=native" _have_mcpu_native)
             if(_have_mcpu_native)
@@ -291,6 +304,7 @@ if(BUILD_TESTING)
     add_subdirectory(src/gui-common/testdropoutdrawing)
     add_subdirectory(src/gui-common/testaspectratio)
     add_subdirectory(src/gui-common/testappearancemenus)
+    add_subdirectory(src/gui-common/testthemedisabled)
     add_subdirectory(src/ld-stacker-gui/testsnrplot)
     add_subdirectory(src/ld-stacker-gui/testframebackend)
     add_subdirectory(src/ld-stacker-gui/testmapdialog)
