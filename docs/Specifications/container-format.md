@@ -207,6 +207,17 @@ The metadata of a capture MAY keep the **map** of the capture (the object descri
 
 A tool that reads the video of a capture MUST read it through the map when the metadata keep one, unless it was asked to read the capture as it is: the fields of the capture are then seen in the order of the map, with the metadata of the mapped copy of the capture, as for a source with a map in a session (section 13). A tool that rewrites the metadata MUST keep the map; one that works on the capture itself (measuring the VBI or the test signals) reads and writes the metadata as they are.
 
+### 8.6 Decoding parameters
+
+The metadata of a capture MAY keep how it was chosen to be decoded to colour, in the same places as the map (8.5): the member `"ldxDecoding"` of the JSON (so in the metadata blocks of an LDX file), and in a SQLite file a table `decoding (capture_id INTEGER PRIMARY KEY, parameters TEXT NOT NULL)` that only a file with parameters has, the text being the JSON object:
+
+```json
+{ "ldxDecoding": 1, "decoder": "transform3d", "madeBy": "ld-analyse",
+  "settings": { "chromaGain": 1.0, "chromaPhase": 0.0, "lumaNR": 0.0, "simplePAL": 0 } }
+```
+
+`decoder` is a name of ld-chroma-decoder `--decoder` (`pal2d`, `transform2d`, `transform3d`, `ntsc1d`, `ntsc2d`, `ntsc3d`, `ntsc3dnoadapt`, `mono`). `settings` are numbers by name (`chromaGain`, `chromaPhase`, `lumaNR`, `chromaNR`, `adaptThreshold`, `chromaWeight`, and `phaseCompensation` and `simplePAL` as 0 or 1); a reader ignores the names it does not know. A tool that decodes the capture uses them as its defaults, and what the person says (an option, a setting in a window) has the last word. A reader that does not know them ignores them, and a tool that rewrites the metadata MUST keep them. They are not for a stack of several sources.
+
 ## 9. Attachments
 
 An LDX file MAY hold files as Matroska attachments (name, media type, data). Defined: `session.stack` (section 13). A reader MUST ignore attachments it does not know and a tool that writes a file MUST copy them on.

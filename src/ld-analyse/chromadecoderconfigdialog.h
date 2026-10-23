@@ -19,6 +19,7 @@
 #include "palcolour.h"
 #include "monodecoder.h"
 #include "tbcsource.h"
+#include "decodingparameters.h"
 
 namespace Ui {
 class ChromaDecoderConfigDialog;
@@ -39,6 +40,8 @@ public:
 						  const bool _isInit,
                           const OutputWriter::Configuration &outputConfiguration);
     const PalColour::Configuration &getPalConfiguration();
+    // The decoder and the settings the dialog has now, as decoding parameters (the names of ld-chroma-decoder)
+    DecodingParameters currentDecodingParameters() const;
     const Comb::Configuration &getNtscConfiguration();
     const OutputWriter::Configuration &getOutputConfiguration();
 

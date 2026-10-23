@@ -23,6 +23,7 @@
 
 #include "dropouts.h"
 #include "framemap.h"
+#include "decodingparameters.h"
 
 class JsonReader;
 class JsonWriter;
@@ -339,6 +340,8 @@ public:
     // file is read and written again with the "ldxMap" member (a backup, name.bup, is made first); an LDX file gets the metadata with the map added, as the current
     // ones. Returns false, with the reason in error.
     static bool saveDiscMap(const QString &videoFileName, const FrameMap *map, QString &error);
+    // The same for the decoding parameters (null: take them away)
+    static bool saveDecodingParameters(const QString &videoFileName, const DecodingParameters *parameters, QString &error);
     // The metadata file name for a TBC file in a given format; for a CVBS
     // data file, its companion (<base>.cvbs.db or <base>.cvbs.json).
     static QString metadataFileName(const QString &tbcFileName, MetadataFormat format);
@@ -407,6 +410,13 @@ public:
     void setDiscMap(const FrameMap &map) { discMap = map; discMapPresent = true; }
     void clearDiscMap() { discMap = FrameMap(); discMapPresent = false; }
 
+    // How the capture was chosen to be decoded to colour (see DecodingParameters): in the member "ldxDecoding" of the JSON and the table decoding of a SQLite file, kept by
+    // every rewrite of the metadata
+    bool hasDecodingParameters() const { return decodingPresent; }
+    const DecodingParameters &getDecodingParameters() const { return decodingParameters; }
+    void setDecodingParameters(const DecodingParameters &parameters) { decodingParameters = parameters; decodingPresent = true; }
+    void clearDecodingParameters() { decodingParameters = DecodingParameters(); decodingPresent = false; }
+
     // Video system helper methods
     QString getVideoSystemDescription() const;
 
@@ -420,6 +430,8 @@ private:
     PcmAudioParameters pcmAudioParameters;
     FrameMap discMap;
     bool discMapPresent = false;
+    DecodingParameters decodingParameters;
+    bool decodingPresent = false;
     QVector<Field> fields;
 
     Field &fieldAt(qint32 sequentialFieldNumber, const char *caller);

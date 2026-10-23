@@ -61,6 +61,8 @@ public:
                               bool &isLittleEndian, double &sampleRate);
     // The map of the capture (a FrameMap as JSON), when the file has one: it is in the table disc_map, which only a file with a map has
     bool readDiscMap(int captureId, QByteArray &json);
+    // A table of the file that holds one JSON text for the capture (disc_map and its column map, decoding and its column parameters): not there, or empty, is false
+    bool readJsonTable(int captureId, const QString &table, const QString &column, QByteArray &json);
 
     // Read field metadata
     bool readFields(int captureId, QSqlQuery &fieldsQuery);
@@ -128,6 +130,8 @@ public:
 
     // Write the map of the capture (the table disc_map is made when it is first needed); empty json takes the map away
     bool writeDiscMap(int captureId, const QByteArray &json);
+    // The same, for any such table; empty json takes the row away
+    bool writeJsonTable(int captureId, const QString &table, const QString &column, const QByteArray &json);
 
     // Write PCM audio parameters
     bool writePcmAudioParameters(int captureId, int bits, bool isSigned,

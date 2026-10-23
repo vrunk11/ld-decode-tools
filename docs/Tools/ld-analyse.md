@@ -563,6 +563,8 @@ For most video, this should be set to 4:3. You should only change it to 16:9 if 
 
 ## Chroma decoder configuration
 
+The decoder the window starts with is the one **kept in the metadata of the capture** if there is one, and if not one capture is decoded in 3D, a stack of LaserDiscs in 3D and a stack of tapes in 2D, with the phase compensation turned on for a tape (a tape format in the metadata, or a capture made by vhs-decode). The log says which. *Config > Keep the decoder settings for this capture* writes the decoder and its settings now in the window (chroma gain and phase, noise reduction, adaptive filter thresholds, phase compensation) in the metadata of the capture (its `.tbc.db`, `.tbc.json` or LDX file; a backup of a metadata file is kept as `name.bup`): ld-analyse and ld-chroma-decoder take them as their default for the capture from then on.
+
 This window lets you adjust the chroma decoder's settings. Most of the options here correspond to command-line arguments to the `ld-chroma-decoder` tool, so you can use it prior to decoding to find the best settings.
 
 ### Chroma gain

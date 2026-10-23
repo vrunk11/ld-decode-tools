@@ -126,6 +126,37 @@ void ChromaDecoderConfigDialog::setConfiguration(VideoSystem _system, const PalC
     emit chromaDecoderConfigChanged();
 }
 
+DecodingParameters ChromaDecoderConfigDialog::currentDecodingParameters() const
+{
+    DecodingParameters parameters;
+    if (system == NTSC) {
+        if (ntscConfiguration.dimensions == 0) parameters.decoder = "mono";
+        else if (ntscConfiguration.dimensions == 1) parameters.decoder = "ntsc1d";
+        else if (ntscConfiguration.dimensions == 2) parameters.decoder = "ntsc2d";
+        else parameters.decoder = ntscConfiguration.adaptive ? "ntsc3d" : "ntsc3dnoadapt";
+        parameters.settings.insert("chromaNR", ntscConfiguration.cNRLevel);
+        parameters.settings.insert("lumaNR", ntscConfiguration.yNRLevel);
+        parameters.settings.insert("adaptThreshold", ntscConfiguration.adaptThreshold);
+        parameters.settings.insert("chromaWeight", ntscConfiguration.chromaWeight);
+        parameters.settings.insert("phaseCompensation", ntscConfiguration.phaseCompensation ? 1 : 0);
+        parameters.settings.insert("chromaGain", ntscConfiguration.chromaGain);
+        parameters.settings.insert("chromaPhase", ntscConfiguration.chromaPhase);
+    } else {
+        switch (palConfiguration.chromaFilter) {
+        case PalColour::mono: parameters.decoder = "mono"; break;
+        case PalColour::palColourFilter: parameters.decoder = "pal2d"; break;
+        case PalColour::transform2DFilter: parameters.decoder = "transform2d"; break;
+        default: parameters.decoder = "transform3d"; break;
+        }
+        parameters.settings.insert("lumaNR", palConfiguration.yNRLevel);
+        parameters.settings.insert("chromaGain", palConfiguration.chromaGain);
+        parameters.settings.insert("chromaPhase", palConfiguration.chromaPhase);
+        parameters.settings.insert("simplePAL", palConfiguration.simplePAL ? 1 : 0);
+    }
+    parameters.madeBy = "ld-analyse";
+    return parameters;
+}
+
 const PalColour::Configuration &ChromaDecoderConfigDialog::getPalConfiguration()
 {
     return palConfiguration;
@@ -148,17 +179,31 @@ void ChromaDecoderConfigDialog::updateDialog()
 	
 	if(!isInit)
 	{
-		if(sourceMode == TbcSource::ONE_SOURCE)
-		{
-			palConfiguration.chromaFilter = PalColour::transform3DFilter;
-			ntscConfiguration.dimensions = 3;
+		// The decoder the capture was chosen to be decoded with (kept in its metadata), or by the source: one capture in 3D, a stack of sources in 2D; the phase
+		// compensation is for a tape (a tape format, or a capture made by vhs-decode)
+		const LdDecodeMetaData::VideoParameters &sourceParameters = tbcSource->getVideoParameters();
+		const DecodingParameters *stored = tbcSource->getDecodingParameters();
+		const QString decoderName = stored ? stored->decoder : DecodingParameters::defaultDecoder(system == NTSC, DecodingParameters::prefers2D(sourceMode != TbcSource::ONE_SOURCE, DecodingParameters::isTape(sourceParameters.tapeFormat, sourceParameters.decoder)));
+		if (decoderName == "pal2d") palConfiguration.chromaFilter = PalColour::palColourFilter;
+		else if (decoderName == "transform2d") palConfiguration.chromaFilter = PalColour::transform2DFilter;
+		else if (decoderName == "transform3d") palConfiguration.chromaFilter = PalColour::transform3DFilter;
+		else if (decoderName == "mono") palConfiguration.chromaFilter = PalColour::mono;
+		if (decoderName == "ntsc1d") ntscConfiguration.dimensions = 1;
+		else if (decoderName == "ntsc2d") ntscConfiguration.dimensions = 2;
+		else if (decoderName == "ntsc3d" || decoderName == "ntsc3dnoadapt") { ntscConfiguration.dimensions = 3; ntscConfiguration.adaptive = decoderName == "ntsc3d"; }
+		ntscConfiguration.phaseCompensation = DecodingParameters::isTape(sourceParameters.tapeFormat, sourceParameters.decoder);
+		if (stored) {
+			if (stored->has("chromaGain")) { palConfiguration.chromaGain = stored->value("chromaGain"); ntscConfiguration.chromaGain = stored->value("chromaGain"); }
+			if (stored->has("chromaPhase")) { palConfiguration.chromaPhase = stored->value("chromaPhase"); ntscConfiguration.chromaPhase = stored->value("chromaPhase"); }
+			if (stored->has("lumaNR")) { palConfiguration.yNRLevel = stored->value("lumaNR"); ntscConfiguration.yNRLevel = stored->value("lumaNR"); monoConfiguration.yNRLevel = stored->value("lumaNR"); }
+			if (stored->has("chromaNR")) ntscConfiguration.cNRLevel = stored->value("chromaNR");
+			if (stored->has("adaptThreshold")) ntscConfiguration.adaptThreshold = stored->value("adaptThreshold");
+			if (stored->has("chromaWeight")) ntscConfiguration.chromaWeight = stored->value("chromaWeight");
+			if (stored->has("phaseCompensation")) ntscConfiguration.phaseCompensation = stored->value("phaseCompensation") != 0.0;
+			if (stored->has("simplePAL")) palConfiguration.simplePAL = stored->value("simplePAL") != 0.0;
 		}
-		else
-		{
-			palConfiguration.chromaFilter = PalColour::transform2DFilter;
-			ntscConfiguration.dimensions = 2;
-		}
-		ntscConfiguration.phaseCompensation = (tbcSource->getVideoParameters().tapeFormat != "");//enable phase compensation only for tape
+		qInfo().noquote() << "Decoder:" << decoderName << (stored ? "(the decoding parameters kept in the metadata of the capture)"
+                                                                   : (sourceMode == TbcSource::ONE_SOURCE ? "(one capture: 3D)" : (DecodingParameters::isTape(sourceParameters.tapeFormat, sourceParameters.decoder) ? "(a stack of tapes: 2D)" : "(a stack of LaserDiscs: 3D)")));
 		ui->enableYNRCheckBox->setChecked(yNREnabled);
 		ui->enableYCCombineCheckBox->setChecked(combine);
 		

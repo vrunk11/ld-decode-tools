@@ -1079,6 +1079,7 @@ void MainWindow::setGuiEnabled(bool enabled)
     ui->actionClosed_Captions->setEnabled(enabled);
     ui->actionVideo_parameters->setEnabled(enabled);
     ui->actionChroma_decoder_configuration->setEnabled(enabled);
+    ui->actionKeep_decoder_settings->setEnabled(enabled);
     ui->actionReload_TBC->setEnabled(enabled);
     actionFieldOrder->setEnabled(enabled);
 
@@ -1944,6 +1945,24 @@ void MainWindow::on_actionVideo_parameters_triggered()
 void MainWindow::on_actionChroma_decoder_configuration_triggered()
 {
     chromaDecoderConfigDialog->show();
+}
+
+// Keep the chroma decoder and its settings in the metadata of the capture
+void MainWindow::on_actionKeep_decoder_settings_triggered()
+{
+    const DecodingParameters parameters = chromaDecoderConfigDialog->currentDecodingParameters();
+    const QString name = QFileInfo(tbcSource.getCurrentSourceFilename()).fileName();
+    if (QMessageBox::question(this, tr("Keep the decoder settings"),
+                              tr("Write the decoder (%1) and its settings in the metadata of %2? ld-analyse and ld-chroma-decoder will take them as their default for this capture. A backup of a metadata file is kept (name.bup).").arg(parameters.decoder, name),
+                              QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Yes) != QMessageBox::Yes) {
+        return;
+    }
+    QString error;
+    if (!tbcSource.saveDecodingParameters(parameters, error)) {
+        QMessageBox::warning(this, tr("Keep the decoder settings"), error);
+        return;
+    }
+    statusBar()->showMessage(tr("The decoder settings are kept in the metadata of %1").arg(name), 6000);
 }
 
 // Toggle chroma during seek option

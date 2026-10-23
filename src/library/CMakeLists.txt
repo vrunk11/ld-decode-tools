@@ -35,6 +35,7 @@ add_library(lddecode-library STATIC
     tbc/framemap.cpp
     tbc/fieldaudio.cpp
     tbc/streamcopy.cpp
+    tbc/decodingparameters.cpp
     tbc/mappedmetadata.cpp
     tbc/tbcfiles.cpp
     tbc/streamreader.cpp

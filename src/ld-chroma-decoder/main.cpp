@@ -43,6 +43,8 @@
 #include "tbc/pipedinputoptions.h"
 #include "tbc/commonoptions.h"
 #include "mappedmetadata.h"
+#include "decodingparameters.h"
+#include "stackproject.h"
 
 #include "comb.h"
 #include "monodecoder.h"
@@ -580,23 +582,48 @@ int main(int argc, char *argv[])
         metaData.setIsFirstFieldFirst(false);
     }
 
-    // Work out which decoder to use
+    // Work out which decoder to use: the one that is said, the one the metadata of the capture keep (how it was chosen to be decoded), or by the source, as
+    // ld-analyse chooses it: one capture in 3D, a stack of LaserDiscs in 3D and a stack of tapes in 2D, with the phase compensation for a tape (NTSC)
     QString decoderName;
-    if (parser.isSet(decoderOption)) {
-        decoderName = parser.value(decoderOption);
-    } else {
-        // Check if video parameters are valid before accessing them
-        try {
-            if (metaData.getVideoParameters().system == NTSC) {
-                decoderName = "ntsc2d";
-            } else {
-                decoderName = "pal2d";
+    QString decoderWhy;
+    try {
+        const LdDecodeMetaData::VideoParameters &videoParameters = metaData.getVideoParameters();
+        const bool storedDecoding = metaData.hasDecodingParameters();
+        if (parser.isSet(decoderOption)) {
+            decoderName = parser.value(decoderOption);
+            decoderWhy = "given with --decoder";
+        } else if (storedDecoding) {
+            decoderName = metaData.getDecodingParameters().decoder;
+            decoderWhy = "the decoding parameters kept in the metadata of the capture";
+        } else {
+            const bool session = StackProject::isSession(inputFileName);
+            const bool stack = session || inputFileName == "-";      // (a stream cannot be looked ahead in as a capture can: it is decoded in 2D, as before)
+            const bool tape = DecodingParameters::isTape(videoParameters.tapeFormat, videoParameters.decoder);
+            const bool twoD = session ? DecodingParameters::prefers2D(true, tape) : stack;
+            decoderName = DecodingParameters::defaultDecoder(videoParameters.system == NTSC, twoD);
+            decoderWhy = session ? (tape ? "a stack of tapes: 2D" : "a stack of LaserDiscs: 3D") : (stack ? "a stream: 2D" : "one capture: 3D");
+            if (videoParameters.system == NTSC && DecodingParameters::isTape(videoParameters.tapeFormat, videoParameters.decoder) && !parser.isSet(ntscPhaseCompOption)) {
+                combConfig.phaseCompensation = true;
+                decoderWhy += ", with the phase compensation for a tape";
             }
-        } catch (const std::exception& e) {
-            qCritical() << "Failed to access video parameters from metadata file:" << e.what();
-            return 1;
         }
+        // The settings that are kept with the capture are the defaults of the options that are not given
+        if (storedDecoding) {
+            const DecodingParameters &stored = metaData.getDecodingParameters();
+            if (stored.has("chromaGain") && !parser.isSet(chromaGainOption) && !parser.isSet(setBwModeOption)) { palConfig.chromaGain = stored.value("chromaGain"); combConfig.chromaGain = stored.value("chromaGain"); }
+            if (stored.has("chromaPhase") && !parser.isSet(chromaPhaseOption)) { palConfig.chromaPhase = stored.value("chromaPhase"); combConfig.chromaPhase = stored.value("chromaPhase"); }
+            if (stored.has("lumaNR") && !parser.isSet(lumaNROption)) { combConfig.yNRLevel = stored.value("lumaNR"); palConfig.yNRLevel = stored.value("lumaNR"); monoConfig.yNRLevel = stored.value("lumaNR"); }
+            if (stored.has("chromaNR") && !parser.isSet(chromaNROption)) combConfig.cNRLevel = stored.value("chromaNR");
+            if (stored.has("adaptThreshold") && !parser.isSet(adaptThresholdOption)) combConfig.adaptThreshold = stored.value("adaptThreshold");
+            if (stored.has("chromaWeight") && !parser.isSet(chromaWeightOption)) combConfig.chromaWeight = stored.value("chromaWeight");
+            if (stored.has("phaseCompensation") && !parser.isSet(ntscPhaseCompOption)) combConfig.phaseCompensation = stored.value("phaseCompensation") != 0.0;
+            if (stored.has("simplePAL") && !parser.isSet(simplePALOption)) palConfig.simplePAL = stored.value("simplePAL") != 0.0;
+        }
+    } catch (const std::exception& e) {
+        qCritical() << "Failed to access video parameters from metadata file:" << e.what();
+        return 1;
     }
+    qInfo().noquote() << "Decoder:" << decoderName << "(" + decoderWhy + ")";
 
     // Require ntsc3d if the map overlay is selected
     if (combConfig.showMap && decoderName != "ntsc3d") {

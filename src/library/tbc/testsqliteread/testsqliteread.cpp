@@ -300,6 +300,65 @@ int main(int argc, char *argv[])
         }
     }
 
+    // How the capture is decoded to colour, kept with its metadata (SQLite table decoding, JSON member ldxDecoding), kept by rewrites and by partial writes
+    {
+        DecodingParameters decoding;
+        decoding.decoder = "transform3d";
+        decoding.settings.insert("chromaGain", 1.25);
+        decoding.settings.insert("lumaNR", 0.5);
+        decoding.settings.insert("phaseCompensation", 1);
+        decoding.madeBy = "test";
+        for (const char *format : { "db", "json" }) {
+            const QString videoFile = directory.filePath(QString("decoded_%1.tbc").arg(format));
+            QFile video(videoFile);
+            CHECK(video.open(QIODevice::WriteOnly));
+            video.close();
+            LdDecodeMetaData plain;
+            plain.initialiseDefault(PAL);
+            plain.ensureFields(fields);
+            for (qint32 number = 1; number <= fields; number++) plain.updateField(makeField(number), number);
+            plain.setFormat(QString(format) == "json" ? LdDecodeMetaData::MetadataFormat::Json : LdDecodeMetaData::MetadataFormat::Sqlite);
+            CHECK(!plain.hasDecodingParameters());
+            plain.setDecodingParameters(decoding);
+            CHECK(plain.write(videoFile + "." + format));
+
+            LdDecodeMetaData back;
+            CHECK(back.read(videoFile + "." + format));
+            CHECK(back.hasDecodingParameters() && back.getDecodingParameters() == decoding);
+            CHECK(back.getDecodingParameters().value("chromaGain") == 1.25 && back.getDecodingParameters().has("phaseCompensation"));
+            CHECK(back.write(videoFile + "." + format));
+            LdDecodeMetaData again;
+            CHECK(again.read(videoFile + "." + format));
+            CHECK(again.getDecodingParameters() == decoding);
+
+            // Saved alone, and taken away
+            QString error;
+            DecodingParameters other = decoding;
+            other.decoder = "ntsc2d";
+            CHECK(LdDecodeMetaData::saveDecodingParameters(videoFile, &other, error));
+            LdDecodeMetaData saved;
+            CHECK(saved.read(LdDecodeMetaData::findMetadataFile(videoFile)));
+            CHECK(saved.getDecodingParameters().decoder == "ntsc2d" && saved.getNumberOfFields() == fields);
+            CHECK(LdDecodeMetaData::saveDecodingParameters(videoFile, nullptr, error));
+            LdDecodeMetaData removed;
+            CHECK(removed.read(LdDecodeMetaData::findMetadataFile(videoFile)));
+            CHECK(!removed.hasDecodingParameters() && removed.getNumberOfFields() == fields);
+        }
+
+        // The decoder to use without parameters, and what a tape is
+        CHECK(DecodingParameters::defaultDecoder(true, false) == "ntsc3d" && DecodingParameters::defaultDecoder(true, true) == "ntsc2d");
+        CHECK(DecodingParameters::defaultDecoder(false, false) == "transform3d" && DecodingParameters::defaultDecoder(false, true) == "transform2d");
+        // (one capture is 3D; a stack of LaserDiscs is 3D, a stack of tapes is 2D)
+        CHECK(!DecodingParameters::prefers2D(false, false) && !DecodingParameters::prefers2D(false, true) && !DecodingParameters::prefers2D(true, false) && DecodingParameters::prefers2D(true, true));
+        CHECK(DecodingParameters::isTape("VHS", "ld-decode") && DecodingParameters::isTape("", "vhs-decode") && !DecodingParameters::isTape("", "ld-decode"));
+
+        // Not decoding parameters
+        DecodingParameters bad;
+        QString badError;
+        CHECK(!DecodingParameters::fromJsonBytes("{}", bad, badError));
+        CHECK(!DecodingParameters::fromJsonBytes("{\"ldxDecoding\":1,\"settings\":{}}", bad, badError));
+    }
+
     // The time to write (SQLITE_BENCH=<fields> to measure it): a new file, then the file again in place, as the tools do
     if (const char *benchFields = std::getenv("SQLITE_BENCH")) {
         const qint32 count = std::atoi(benchFields);

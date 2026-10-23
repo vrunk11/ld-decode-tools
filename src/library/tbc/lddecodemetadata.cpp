@@ -762,6 +762,7 @@ void LdDecodeMetaData::clear()
     videoParameters = VideoParameters();
     pcmAudioParameters = PcmAudioParameters();
     clearDiscMap();
+    clearDecodingParameters();
 
     fields.clear();
     cvbsFileMetadata.reset();
@@ -944,9 +945,12 @@ void LdDecodeMetaData::adoptView(const LdDecodeMetaData &view)
     generatePcmAudioMap();
 }
 
-bool LdDecodeMetaData::saveDiscMap(const QString &videoFileName, const FrameMap *map, QString &error)
+// Keep one thing (the map, the decoding parameters) in the metadata of a capture, or take it away: a SQLite file gets its table and nothing else is touched; the other
+// formats are read and written again with the change (a backup, name.bup, is made first, except for an LDX file, which keeps the metadata it had)
+static bool saveInMetadata(const QString &videoFileName, const char *table, const char *column, const QByteArray &json, const std::function<void(LdDecodeMetaData &)> &change,
+                           QString &error)
 {
-    const QString metadataFile = findMetadataFile(videoFileName);
+    const QString metadataFile = LdDecodeMetaData::findMetadataFile(videoFileName);
     const bool isLdx = LdxCapture::isLdxName(metadataFile);
     if (!isLdx && !QFileInfo::exists(metadataFile)) {
         error = QObject::tr("The metadata of %1 are not there").arg(videoFileName);
@@ -976,9 +980,9 @@ bool LdDecodeMetaData::saveDiscMap(const QString &videoFileName, const FrameMap 
                 error = QObject::tr("The metadata %1 could not be written").arg(metadataFile);
                 return false;
             }
-            if (!writer.writeDiscMap(captureId, map ? map->toJsonBytes() : QByteArray())) {
+            if (!writer.writeJsonTable(captureId, table, column, json)) {
                 writer.rollbackTransaction();
-                error = QObject::tr("The map could not be written in %1").arg(metadataFile);
+                error = QObject::tr("%1 could not be written in %2").arg(table, metadataFile);
                 return false;
             }
             if (!writer.commitTransaction()) {
@@ -992,14 +996,13 @@ bool LdDecodeMetaData::saveDiscMap(const QString &videoFileName, const FrameMap 
         return true;
     }
 
-    // JSON, an LDX file, a CVBS capture: the metadata are read and written again with the map
+    // JSON, an LDX file, a CVBS capture: the metadata are read and written again with the change
     LdDecodeMetaData metadata;
     if (!metadata.read(metadataFile)) {
         error = QObject::tr("The metadata of %1 could not be read").arg(videoFileName);
         return false;
     }
-    if (map) metadata.setDiscMap(*map);
-    else metadata.clearDiscMap();
+    change(metadata);
     if (!isLdx && QFileInfo::exists(metadataFile)) {
         QFile::remove(metadataFile + ".bup");
         QFile::copy(metadataFile, metadataFile + ".bup");
@@ -1009,6 +1012,22 @@ bool LdDecodeMetaData::saveDiscMap(const QString &videoFileName, const FrameMap 
         return false;
     }
     return true;
+}
+
+bool LdDecodeMetaData::saveDiscMap(const QString &videoFileName, const FrameMap *map, QString &error)
+{
+    return saveInMetadata(videoFileName, "disc_map", "map", map ? map->toJsonBytes() : QByteArray(), [map](LdDecodeMetaData &metadata) {
+        if (map) metadata.setDiscMap(*map);
+        else metadata.clearDiscMap();
+    }, error);
+}
+
+bool LdDecodeMetaData::saveDecodingParameters(const QString &videoFileName, const DecodingParameters *parameters, QString &error)
+{
+    return saveInMetadata(videoFileName, "decoding", "parameters", parameters ? parameters->toJsonBytes() : QByteArray(), [parameters](LdDecodeMetaData &metadata) {
+        if (parameters) metadata.setDecodingParameters(*parameters);
+        else metadata.clearDecodingParameters();
+    }, error);
 }
 
 QString LdDecodeMetaData::metadataFileName(const QString &tbcFileName, MetadataFormat _format)
@@ -1311,6 +1330,12 @@ bool LdDecodeMetaData::readJson(QString fileName)
                 if (map.read(reader, mapError)) setDiscMap(map);
                 else qWarning().noquote() << "The map in" << fileName << "is not used:" << mapError;
             }
+            else if (member == "ldxDecoding") {
+                DecodingParameters parameters;
+                QString decodingError;
+                if (parameters.read(reader, decodingError)) setDecodingParameters(parameters);
+                else qWarning().noquote() << "The decoding parameters in" << fileName << "are not used:" << decodingError;
+            }
             else if (member == "pcmAudioParameters") pcmAudioParameters.read(reader);
             else if (member == "videoParameters") videoParameters.read(reader);
             else reader.discard();
@@ -1361,6 +1386,10 @@ bool LdDecodeMetaData::writeJson(QString fileName) const
     // Keep members in alphabetical order
     writer.writeMember("fields");
     writeFields(writer);
+    if (decodingPresent) {
+        writer.writeMember("ldxDecoding");
+        decodingParameters.write(writer);
+    }
     if (discMapPresent) {
         writer.writeMember("ldxMap");
         discMap.write(writer);
@@ -1466,6 +1495,13 @@ bool LdDecodeMetaData::readSqlite(QString fileName)
         int bits;
         bool isSigned, isLittleEndian;
         double audioSampleRate;
+        QByteArray decodingJson;
+        if (reader.readJsonTable(captureId, "decoding", "parameters", decodingJson)) {
+            DecodingParameters parameters;
+            QString decodingError;
+            if (DecodingParameters::fromJsonBytes(decodingJson, parameters, decodingError)) setDecodingParameters(parameters);
+            else qWarning().noquote() << "The decoding parameters in" << fileName << "are not used:" << decodingError;
+        }
         QByteArray mapJson;
         if (reader.readDiscMap(captureId, mapJson)) {
             FrameMap map;
@@ -1591,6 +1627,12 @@ bool LdDecodeMetaData::writeSqlite(QString fileName, unsigned tables) const
                 writer.rollbackTransaction();
                 return false;
             }
+        }
+
+        // How the capture is decoded to colour (taken away from the file if the metadata have none)
+        if (!partial && !writer.writeJsonTable(captureId, "decoding", "parameters", decodingPresent ? decodingParameters.toJsonBytes() : QByteArray())) {
+            writer.rollbackTransaction();
+            return false;
         }
 
         // The map of the capture (taken away from the file if the metadata have none)

@@ -296,11 +296,18 @@ bool SqliteReader::readCaptureMetadata(int &captureId, QString &system, QString 
 
 bool SqliteReader::readDiscMap(int captureId, QByteArray &json)
 {
+    return readJsonTable(captureId, "disc_map", "map", json);
+}
+
+bool SqliteReader::readJsonTable(int captureId, const QString &table, const QString &column, QByteArray &json)
+{
     QSqlQuery exists(db);
-    if (!exists.exec("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'disc_map'") || !exists.next()) return false;
+    exists.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?");
+    exists.addBindValue(table);
+    if (!exists.exec() || !exists.next()) return false;
 
     QSqlQuery query(db);
-    query.prepare("SELECT map FROM disc_map WHERE capture_id = ?");
+    query.prepare("SELECT " + column + " FROM " + table + " WHERE capture_id = ?");
     query.addBindValue(captureId);
     if (!query.exec() || !query.next()) return false;
     json = query.value(0).toByteArray();
@@ -647,28 +654,35 @@ bool SqliteWriter::updateCaptureMetadata(int captureId, const QString &system, c
 
 bool SqliteWriter::writeDiscMap(int captureId, const QByteArray &json)
 {
+    return writeJsonTable(captureId, "disc_map", "map", json);
+}
+
+bool SqliteWriter::writeJsonTable(int captureId, const QString &table, const QString &column, const QByteArray &json)
+{
     QSqlQuery exists(db);
-    const bool haveTable = exists.exec("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'disc_map'") && exists.next();
+    exists.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?");
+    exists.addBindValue(table);
+    const bool haveTable = exists.exec() && exists.next();
     if (json.isEmpty()) {
         if (!haveTable) return true;
         QSqlQuery remove(db);
-        remove.prepare("DELETE FROM disc_map WHERE capture_id = ?");
+        remove.prepare("DELETE FROM " + table + " WHERE capture_id = ?");
         remove.addBindValue(captureId);
         return remove.exec();
     }
     if (!haveTable) {
         QSqlQuery create(db);
-        if (!create.exec("CREATE TABLE disc_map (capture_id INTEGER PRIMARY KEY, map TEXT NOT NULL)")) {
-            tbcDebugStream() << "Failed to create the table of the map:" << create.lastError().text();
+        if (!create.exec("CREATE TABLE " + table + " (capture_id INTEGER PRIMARY KEY, " + column + " TEXT NOT NULL)")) {
+            tbcDebugStream() << "Failed to create the table" << table << ":" << create.lastError().text();
             return false;
         }
     }
     QSqlQuery query(db);
-    query.prepare("INSERT OR REPLACE INTO disc_map (capture_id, map) VALUES (?, ?)");
+    query.prepare("INSERT OR REPLACE INTO " + table + " (capture_id, " + column + ") VALUES (?, ?)");
     query.addBindValue(captureId);
     query.addBindValue(QString::fromUtf8(json));
     if (!query.exec()) {
-        tbcDebugStream() << "Failed to write the map:" << query.lastError().text();
+        tbcDebugStream() << "Failed to write" << table << ":" << query.lastError().text();
         return false;
     }
     return true;

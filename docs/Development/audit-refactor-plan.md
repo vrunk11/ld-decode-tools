@@ -247,6 +247,7 @@ the Windows/MSVC and macOS builds (`getopt` of `ld-ac3-*`, the new files in the 
 | 2026-10-23 | - | Step 2, S-12 (one backup suffix .bup, replaced on a new run, `--legacy` for the old) and S-13 (analogue audio of the first source as a pcm track in the LDX output of ld-disc-stacker and ld-dropout-correct, `--no-audio`) | build ok, `ctest -L unit` 39/39; audio track of the LDX output identical to the .pcm of the first source |
 | 2026-10-23 | - | Step 2, S-13 completed: other streams of the sources (EFM, AC3, RF, 24-bit audio) copied into the LDX output, noted in the history: `StreamCopy`, `--copy-streams`, `stacking.copyStreams` in the session, `StreamsDialog` in the Process window | build ok, `ctest -L unit` 40/40; EFM of the output identical to the source's; the window not seen |
 | 2026-10-23 | - | Step 2, offset between video and copied streams recorded (`alignment` of the track, words in the history) | build ok, `ctest -L unit` 40/40; second source shifted by 3 frames gives [[1,0,3],[4,1,26]] |
+| 2026-10-23 | - | Step 2, S-19.7 (b): decoding parameters kept with the metadata (`ldxDecoding` / table `decoding`), ld-analyse starts from them and can keep them, ld-chroma-decoder default = the ld-analyse rule with a log (3D for one capture) | build ok, `ctest -L unit` 40/40; stored decoder and settings = the same options on the command line (ld-chroma-decoder); the window not seen |
 
 ## Notes for step 2 (the audit of validity and relevance)
 

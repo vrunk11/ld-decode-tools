@@ -23,6 +23,7 @@
 // TBC library includes
 #include "sourcevideo.h"
 #include "lddecodemetadata.h"
+#include "decodingparameters.h"
 #include "linenumber.h"
 #include "fieldvbi.h"
 #include "filesnr.h"
@@ -231,6 +232,10 @@ public:
     bool getIsDropoutPresent();
 
     const LdDecodeMetaData::VideoParameters &getVideoParameters();
+    // How the capture was chosen to be decoded (kept in its metadata), or null
+    const DecodingParameters *getDecodingParameters() const { return ldDecodeMetaData.hasDecodingParameters() ? &ldDecodeMetaData.getDecodingParameters() : nullptr; }
+    // Keep decoding parameters in the metadata of the capture that is open (its .tbc.db, .tbc.json or LDX file; a backup name.bup of a metadata file is made)
+    bool saveDecodingParameters(const DecodingParameters &parameters, QString &error);
     void setVideoParameters(const LdDecodeMetaData::VideoParameters &videoParameters);
 
     const ComponentFrame &getComponentFrame();

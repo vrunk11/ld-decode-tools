@@ -609,6 +609,17 @@ const ComponentFrame &TbcSource::getComponentFrame()
 }
 
 // Get the VideoParameters for the current source
+bool TbcSource::saveDecodingParameters(const DecodingParameters &parameters, QString &error)
+{
+    if (currentSourceFilename.isEmpty()) {
+        error = tr("No capture is open");
+        return false;
+    }
+    if (!LdDecodeMetaData::saveDecodingParameters(currentSourceFilename, &parameters, error)) return false;
+    ldDecodeMetaData.setDecodingParameters(parameters);
+    return true;
+}
+
 const LdDecodeMetaData::VideoParameters &TbcSource::getVideoParameters()
 {
     return ldDecodeMetaData.getVideoParameters();

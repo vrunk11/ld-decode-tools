@@ -131,7 +131,9 @@ Ranges:
 
 `-f decoder`, `--decoder decoder`
 
-Chroma decoder to use. Without it, the decoder is chosen from the video system of the capture: `pal2d` for PAL and PAL-M, `ntsc2d` for NTSC.
+Chroma decoder to use. Without it, the decoder is the one **kept in the metadata of the capture** (see "Decoding parameters" below) if there is one; if not, it is chosen from the source as ld-analyse chooses it: one capture in **3D** (`transform3d` for PAL and PAL-M, `ntsc3d` for NTSC), a stack of LaserDiscs (a `.stack` session) in 3D too, a stack of tapes (a tape format in the metadata, or captures made by vhs-decode) in 2D (`transform2d`, `ntsc2d`), and a stream in 2D. For an NTSC capture from a tape (a tape format in the metadata, or made by vhs-decode) the phase compensation is turned on as well. The log says which decoder is used and why. (It used to be `pal2d` and `ntsc2d`: give `--decoder pal2d` or `--decoder ntsc2d` for that.)
+
+**Decoding parameters.** The metadata of a capture can keep how it was chosen to be decoded: the decoder and its settings (chroma gain and phase, luma and chroma noise reduction, the adaptive filter thresholds, the phase compensation, the simple PAL decoder). ld-analyse writes them (*Config > Keep the decoder settings for this capture*). They are the default of ld-chroma-decoder for the capture: what is given on the command line has the last word.
 
 Available decoders:
 

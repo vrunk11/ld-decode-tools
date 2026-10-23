@@ -668,6 +668,7 @@
     <addaction name="separator"/>
     <addaction name="actionVideo_parameters"/>
     <addaction name="actionChroma_decoder_configuration"/>
+    <addaction name="actionKeep_decoder_settings"/>
    </widget>
    <widget class="QMenu" name="menuHelp">
     <property name="title">
@@ -859,6 +860,14 @@
    </property>
    <property name="shortcut">
     <string>Ctrl+K</string>
+   </property>
+  </action>
+  <action name="actionKeep_decoder_settings">
+   <property name="text">
+    <string>Keep the decoder settings for this capture</string>
+   </property>
+   <property name="toolTip">
+    <string>Write the chroma decoder and its settings in the metadata of the capture, where ld-analyse and ld-chroma-decoder take them as their default</string>
    </property>
   </action>
   <action name="actionReload_TBC">
