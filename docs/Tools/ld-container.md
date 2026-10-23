@@ -55,6 +55,8 @@ ld-container pack capture.tbc --pcm capture.pcm -o - | ld-container recompress -
 ld-container pack capture.cvbs --codec ffv1 -o - | ld-chroma-decoder - out.rgb
 ```
 
+The tracks of what a processing tool sends on its standard output (`ld-disc-stacker ... -`) are named `-` (`- audio`, `- metadata`); `recompress` writing to a file gives them the name of that file (`stack`, `stack audio`, `stack metadata` for `-o stack.ldx`). When the tracks of samples are in the codec asked for already, it says so and writes the file as it is.
+
 A stream has no index: what reads a pipe reads it once, in order. A stream that is saved to a file (`ld-container pack capture.tbc -o - > capture.ldx`) is a file like any other: the tools make its index by reading it the first time it is opened (`verify`, `#N`, `ld-analyse`...), and `ld-container recompress capture.ldx -o indexed.ldx` writes it with its index so that this is not needed again. The messages go to the standard error when the standard output carries the data. See the specification (section 15).
 
 `ld-container history file.ldx` shows the history of a file: for each entry the time, the tool and its build, what it did, and the arguments it was given (`--json` for another program). Every tool that changes a capture adds an entry (specification, section 12).

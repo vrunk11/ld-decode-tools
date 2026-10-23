@@ -1497,6 +1497,14 @@ int recompress(const QStringList &arguments)
     Rewrite rewrite;
     if (!openForRewrite(rewrite, source)) return 1;
     int changed = 0;
+    // The tracks of what a tool sent on its standard output are named after that output ("-", "- audio", "- metadata"): they take the name of the file they are
+    // written to
+    if (!isStdio(output)) {
+        const QString base = QFileInfo(output).completeBaseName();
+        for (Ldx::Track &track: rewrite.tracks) {
+            if (!base.isEmpty() && (track.name == QLatin1String("-") || track.name.startsWith(QLatin1String("- ")))) track.name = base + track.name.mid(1);
+        }
+    }
     for (Ldx::Track &track: rewrite.tracks) {
         const bool samples = track.kind == Ldx::Kind::Tbc || track.kind == Ldx::Kind::Rf || track.kind == Ldx::Kind::Pcm || track.kind == Ldx::Kind::Cvbs;
         if (!samples || (parser.isSet("id") && track.number != parser.value("id").toUInt())) continue;
@@ -1527,7 +1535,8 @@ int recompress(const QStringList &arguments)
         if (!error.isEmpty()) err << error << "\n";
         return 1;
     }
-    out << changed << " track(s) now " << parser.value("codec") << ", written to " << output;
+    if (changed == 0) out << "The tracks of samples were " << parser.value("codec") << " already (nothing to change), written to " << output;
+    else out << changed << " track(s) now " << parser.value("codec") << ", written to " << output;
     if (!isStdio(output) && !isStdio(source)) out << ": " << QFileInfo(output).size() << " bytes, from " << QFileInfo(source).size();
     out << "\n";
     return 0;
