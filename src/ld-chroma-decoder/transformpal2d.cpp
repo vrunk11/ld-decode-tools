@@ -26,6 +26,7 @@
 ************************************************************************/
 
 #include "transformpal2d.h"
+#include "fftwlock.h"
 
 #include <QtMath>
 #include <cassert>
@@ -63,6 +64,7 @@ TransformPal2D::TransformPal2D()
         }
     }
 
+    std::lock_guard<std::mutex> planner(fftwPlannerMutex());
     // Allocate buffers for FFTW. These must be allocated using FFTW's own
     // functions so they're properly aligned for SIMD operations.
     fftReal = fftw_alloc_real(YTILE * XTILE);
@@ -76,6 +78,7 @@ TransformPal2D::TransformPal2D()
 
 TransformPal2D::~TransformPal2D()
 {
+    std::lock_guard<std::mutex> planner(fftwPlannerMutex());
     // Free FFTW plans and buffers
     fftw_destroy_plan(forwardPlan);
     fftw_destroy_plan(inversePlan);
