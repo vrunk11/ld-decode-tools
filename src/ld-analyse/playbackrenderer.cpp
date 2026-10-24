@@ -112,8 +112,13 @@ void PlaybackRenderer::start(const TbcSource::RenderSettings &settings, quint32 
     liveParent = _liveParent;
 
     // Leave a core for the window, and a few for the rest of the machine
-    const qint32 count = settings.weave ? std::clamp(QThread::idealThreadCount() - 1, 2, 8) : std::clamp(QThread::idealThreadCount() - 2, 1, 4);
+    qint32 count = settings.weave ? std::clamp(QThread::idealThreadCount() - 1, 2, 8) : std::clamp(QThread::idealThreadCount() - 2, 1, 4);
+    // The HVD decoder takes a core for each frame for a good while (it is the decoder that most needs the frames to be decoded ahead, and the one that scales with the cores)
+    if (settings.hvdSettings.enabled) count = std::max(count, std::clamp(QThread::idealThreadCount() - 2, 2, 12));
     while (static_cast<qint32>(sources.size()) < count) sources.push_back(std::make_unique<TbcSource>());
+    // The sources decode at the same time: the HVD decoder of each takes its share of the cores, not all of them (a team of threads in each would be many)
+    const qint32 shareOfCores = std::max(1, QThread::idealThreadCount() / (count + 1));
+    for (const auto &source : sources) source->setHvdThreads(shareOfCores);
 
     {
         QMutexLocker locker(&mutex);

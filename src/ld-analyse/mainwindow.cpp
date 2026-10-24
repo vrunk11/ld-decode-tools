@@ -1146,7 +1146,7 @@ void MainWindow::resetGui()
 
     // Update the chroma decoder configuration dialogue
     chromaDecoderConfigDialog->setConfiguration(tbcSource.getSystem(), tbcSource.getPalConfiguration(),
-                                                tbcSource.getNtscConfiguration(),
+                                                tbcSource.getNtscConfiguration(), tbcSource.getHvdSettings(),
                                                 tbcSource.getMonoConfiguration(),
                                                 tbcSource.getSourceMode(),
 												true,//set to true because the chroma decoder is already init
@@ -1154,7 +1154,8 @@ void MainWindow::resetGui()
 }
 
 // Method to update the GUI when a file is loaded
-void MainWindow::updateGuiLoaded()
+// newSource is false when only the view changes (the full screen, the field view...): the choice of the decoder is kept then, and not made again
+void MainWindow::updateGuiLoaded(bool newSource)
 {
     updateChapterMarks();
     // (what the remote kept of another capture is of no use; a change of the view keeps it)
@@ -1218,10 +1219,10 @@ void MainWindow::updateGuiLoaded()
 
     // Update the chroma decoder configuration dialogue
         chromaDecoderConfigDialog->setConfiguration(tbcSource.getSystem(), tbcSource.getPalConfiguration(),
-                                                tbcSource.getNtscConfiguration(),
+                                                tbcSource.getNtscConfiguration(), tbcSource.getHvdSettings(),
                                                 tbcSource.getMonoConfiguration(),
                                                 tbcSource.getSourceMode(),
-												false,//set to false to init the chroma decoder selection
+												!newSource,//false to init the chroma decoder selection (a new source), true to keep the choice (the view changed)
 												tbcSource.getOutputConfiguration());
 
     // Ensure the busy dialogue is hidden
@@ -2446,7 +2447,7 @@ void MainWindow::on_viewPushButton_clicked()
     }
 
     setViewValues();
-    updateGuiLoaded();
+    updateGuiLoaded(false);
 
     // Show the current image
     showImage();
@@ -2470,7 +2471,7 @@ void MainWindow::on_fieldOrderPushButton_clicked()
 
         // If the TBC field order is changed, the number of available frames can change, so we need to update the GUI
         resetGui();
-        updateGuiLoaded();
+        updateGuiLoaded(false);
         if (width > 1000)
 			ui->fieldOrderPushButton->setText(tr("Normal Field-order"));
 		else if (width >= 930)
@@ -2482,7 +2483,7 @@ void MainWindow::on_fieldOrderPushButton_clicked()
 
         // If the TBC field order is changed, the number of available frames can change, so we need to update the GUI
         resetGui();
-        updateGuiLoaded();
+        updateGuiLoaded(false);
         if (width > 1000)
 			ui->fieldOrderPushButton->setText(tr("Reverse Field-order"));
 		else if (width >= 930)
@@ -2713,6 +2714,7 @@ void MainWindow::chromaDecoderConfigChangedSignalHandler()
     // Set the new configuration
     tbcSource.setChromaConfiguration(chromaDecoderConfigDialog->getPalConfiguration(),
                                      chromaDecoderConfigDialog->getNtscConfiguration(),
+                                     chromaDecoderConfigDialog->getHvdSettings(),
                                      chromaDecoderConfigDialog->getOutputConfiguration());
 
     // Update the image viewer
@@ -4597,7 +4599,7 @@ void MainWindow::setViewState(TbcSource::ViewMode mode, bool deinterlaced)
         statusBar()->showMessage(tr("The deinterlacer could not be used: %1").arg(problem), 10000);
     }
     setViewValues();
-    updateGuiLoaded();
+    updateGuiLoaded(false);
     showImage();
     if (wasPlaying) togglePlayback();
 }

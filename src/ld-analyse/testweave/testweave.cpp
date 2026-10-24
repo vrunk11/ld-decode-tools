@@ -55,7 +55,7 @@ static int truncatedCapture(const QString &name)
     OutputWriter::Configuration output = source.getOutputConfiguration();
     ntsc.dimensions = 2;
     output.paddingAmount = 1;
-    source.setChromaConfiguration(pal, ntsc, output);
+    source.setChromaConfiguration(pal, ntsc, source.getHvdSettings(), output);
     for (const bool chroma: { false, true }) {
         source.setChromaDecoder(chroma);
         for (qint32 frame = qMax(1, frames - 3); frame <= frames; frame++) {
@@ -114,7 +114,7 @@ int main(int argc, char *argv[])
         OutputWriter::Configuration output = source.getOutputConfiguration();
         ntsc.dimensions = 2;
         output.paddingAmount = 1;
-        source.setChromaConfiguration(pal, ntsc, output);
+        source.setChromaConfiguration(pal, ntsc, source.getHvdSettings(), output);
     }
     source.setChromaDecoder(true);
     source.load(300, 599);
@@ -165,7 +165,7 @@ int main(int argc, char *argv[])
             OutputWriter::Configuration output = source.getOutputConfiguration();
             ntsc.dimensions = dimensions;
             output.paddingAmount = 1;
-            source.setChromaConfiguration(pal, ntsc, output);
+            source.setChromaConfiguration(pal, ntsc, source.getHvdSettings(), output);
             source.setChromaDecoder(true);
             QElapsedTimer timer;
             timer.start();

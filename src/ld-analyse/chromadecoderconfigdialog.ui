@@ -122,6 +122,23 @@
     </widget>
    </item>
    <item>
+    <widget class="QLabel" name="standardLabel">
+     <property name="text">
+      <string>Standard:</string>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QLabel" name="decoderLabel">
+     <property name="text">
+      <string>Decoder:</string>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QComboBox" name="decoderComboBox"/>
+   </item>
+   <item>
     <spacer name="verticalSpacer_1">
      <property name="orientation">
       <enum>Qt::Vertical</enum>
@@ -273,6 +290,242 @@
        </item>
        <item>
         <spacer name="verticalSpacer_4">
+         <property name="orientation">
+          <enum>Qt::Vertical</enum>
+         </property>
+         <property name="sizeHint" stdset="0">
+          <size>
+           <width>20</width>
+           <height>0</height>
+          </size>
+         </property>
+        </spacer>
+       </item>
+      </layout>
+     </widget>
+     <widget class="QWidget" name="hvdTab">
+      <attribute name="title">
+       <string>HVD</string>
+      </attribute>
+      <layout class="QVBoxLayout" name="hvdVerticalLayout">
+       <item>
+        <widget class="QLabel" name="hvdFilterLabel">
+         <property name="text">
+          <string>Separation:</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QRadioButton" name="hvd2DRadioButton">
+         <property name="text">
+          <string>HVD 2D (each field by itself)</string>
+         </property>
+         <attribute name="buttonGroup">
+          <string notr="true">hvdFilterButtonGroup</string>
+         </attribute>
+        </widget>
+       </item>
+       <item>
+        <widget class="QRadioButton" name="hvd3DRadioButton">
+         <property name="text">
+          <string>HVD 3D (with the frames around)</string>
+         </property>
+         <attribute name="buttonGroup">
+          <string notr="true">hvdFilterButtonGroup</string>
+         </attribute>
+        </widget>
+       </item>
+       <item>
+        <widget class="QLabel" name="hvdIterationsLabel">
+         <property name="text">
+          <string>Solver iterations:</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QSpinBox" name="hvdIterationsSpinBox">
+         <property name="maximum">
+          <number>50</number>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QLabel" name="hvdStrengthLabel">
+         <property name="text">
+          <string>Neighbour weight (0 = measured):</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QSlider" name="hvdStrengthHorizontalSlider">
+         <property name="maximum">
+          <number>200</number>
+         </property>
+         <property name="orientation">
+          <enum>Qt::Horizontal</enum>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QLabel" name="hvdStrengthValueLabel">
+         <property name="text">
+          <string>0.00</string>
+         </property>
+         <property name="alignment">
+          <set>Qt::AlignCenter</set>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QLabel" name="hvdOverlapLabel">
+         <property name="text">
+          <string>Frames each side:</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QSpinBox" name="hvdOverlapSpinBox">
+         <property name="minimum">
+          <number>1</number>
+         </property>
+         <property name="maximum">
+          <number>4</number>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QCheckBox" name="hvdFastCheckBox">
+         <property name="text">
+          <string>Fast mode</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QCheckBox" name="hvdBidirectionalCheckBox">
+         <property name="text">
+          <string>Bidirectional 3D (the fields after as well as before)</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QCheckBox" name="hvdSelectiveCheckBox">
+         <property name="text">
+          <string>Selective 3D (only where the picture is ambiguous)</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QLabel" name="hvdPassesLabel">
+         <property name="text">
+          <string>3D passes:</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QSpinBox" name="hvdPassesSpinBox">
+         <property name="minimum">
+          <number>1</number>
+         </property>
+         <property name="maximum">
+          <number>4</number>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QLabel" name="hvdFieldOrderLabel">
+         <property name="text">
+          <string>Field order:</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QComboBox" name="hvdFieldOrderComboBox">
+         <item>
+          <property name="text">
+           <string>Auto (from the metadata)</string>
+          </property>
+         </item>
+         <item>
+          <property name="text">
+           <string>First field is the top one</string>
+          </property>
+         </item>
+         <item>
+          <property name="text">
+           <string>First field is the bottom one</string>
+          </property>
+         </item>
+        </widget>
+       </item>
+       <item>
+        <widget class="QCheckBox" name="hvdAccCheckBox">
+         <property name="text">
+          <string>Automatic colour control</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QCheckBox" name="hvdMonochromeCheckBox">
+         <property name="text">
+          <string>Monochrome</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QLabel" name="hvdSmoothnessLabel">
+         <property name="text">
+          <string>Chroma smoothness:</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QDoubleSpinBox" name="hvdSmoothnessSpinBox">
+         <property name="decimals">
+          <number>2</number>
+         </property>
+         <property name="maximum">
+          <double>8.000000000000000</double>
+         </property>
+         <property name="singleStep">
+          <double>0.100000000000000</double>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QCheckBox" name="hvdSymmetryCheckBox">
+         <property name="text">
+          <string>Spectral-symmetry initialisation</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QCheckBox" name="hvdCustomSubcarrierCheckBox">
+         <property name="text">
+          <string>Non-standard subcarrier (VHD)</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QDoubleSpinBox" name="hvdSubcarrierSpinBox">
+         <property name="suffix">
+          <string> Hz</string>
+         </property>
+         <property name="decimals">
+          <number>2</number>
+         </property>
+         <property name="minimum">
+          <double>500000.000000000000000</double>
+         </property>
+         <property name="maximum">
+          <double>6000000.000000000000000</double>
+         </property>
+         <property name="singleStep">
+          <double>100.000000000000000</double>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <spacer name="verticalSpacer_hvd">
          <property name="orientation">
           <enum>Qt::Vertical</enum>
          </property>
@@ -505,6 +758,7 @@
  <resources/>
  <connections/>
  <buttongroups>
+  <buttongroup name="hvdFilterButtonGroup"/>
   <buttongroup name="ntscFilterButtonGroup"/>
   <buttongroup name="palFilterButtonGroup"/>
  </buttongroups>

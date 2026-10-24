@@ -166,6 +166,7 @@ TbcSource::RenderSettings TbcSource::getRenderSettings()
     settings.metadataFilename = currentMetadataFilename;
     settings.palConfiguration = palConfiguration;
     settings.ntscConfiguration = ntscConfiguration;
+    settings.hvdSettings = hvdSettings;
     settings.monoConfiguration = monoConfiguration;
     settings.outputConfiguration = outputConfiguration;
     settings.videoParameters = ldDecodeMetaData.getVideoParameters();
@@ -238,6 +239,7 @@ void TbcSource::applyRenderSettings(const RenderSettings &settings)
 {
     palConfiguration = settings.palConfiguration;
     ntscConfiguration = settings.ntscConfiguration;
+    hvdSettings = settings.hvdSettings;
     monoConfiguration = settings.monoConfiguration;
     outputConfiguration = settings.outputConfiguration;
     chromaOn = settings.chromaOn;
@@ -860,6 +862,7 @@ qint32 TbcSource::getCcData1()
 
 void TbcSource::setChromaConfiguration(const PalColour::Configuration &_palConfiguration,
                                        const Comb::Configuration &_ntscConfiguration,
+                                       const HvdSettings &_hvdSettings,
                                        const OutputWriter::Configuration &_outputConfiguration)
 {
     settingsGeneration++;
@@ -867,6 +870,7 @@ void TbcSource::setChromaConfiguration(const PalColour::Configuration &_palConfi
 
     palConfiguration = _palConfiguration;
     ntscConfiguration = _ntscConfiguration;
+    hvdSettings = _hvdSettings;
     outputConfiguration = _outputConfiguration;
 
     configureChromaDecoder();
@@ -875,6 +879,11 @@ void TbcSource::setChromaConfiguration(const PalColour::Configuration &_palConfi
 const PalColour::Configuration &TbcSource::getPalConfiguration()
 {
     return palConfiguration;
+}
+
+const HvdSettings &TbcSource::getHvdSettings()
+{
+    return hvdSettings;
 }
 
 const Comb::Configuration &TbcSource::getNtscConfiguration()
@@ -1039,8 +1048,17 @@ void TbcSource::configureChromaDecoder()
     LdDecodeMetaData::VideoParameters videoParameters = ldDecodeMetaData.getVideoParameters(); 
 	
     monoConfiguration.yNRLevel = usesPalColour(videoParameters.system) ? palConfiguration.yNRLevel : ntscConfiguration.yNRLevel;
-    updateColourConfiguration(videoParameters, palColour, palConfiguration, ntscColour, ntscConfiguration);
+    // (HVD has its own decoder: the Transform one, with the FFT plans it makes, is not needed unless the chroma comes from a source of its own)
+    if (!hvdSettings.enabled || sourceMode == BOTH_SOURCES) updateColourConfiguration(videoParameters, palColour, palConfiguration, ntscColour, ntscConfiguration);
 	monoDecoder.updateConfiguration(videoParameters, monoConfiguration);
+    if (hvdSettings.enabled) {
+        // HVD is for a composite capture: when it cannot work on this one the decoder is given up for the others
+        hvdDecoder.setLumaNR(usesPalColour(videoParameters.system) ? palConfiguration.yNRLevel : ntscConfiguration.yNRLevel);
+        if (!hvdDecoder.configure(videoParameters, hvdSettings.makeConfig(palConfiguration.chromaGain, palConfiguration.chromaPhase), hvdSettings.temporal)) {
+            hvdSettings.enabled = false;
+            updateColourConfiguration(videoParameters, palColour, palConfiguration, ntscColour, ntscConfiguration);
+        }
+    }
 
     // Configure the OutputWriter.
     // Because we have padding disabled, this won't change the VideoParameters.
@@ -1070,14 +1088,8 @@ void TbcSource::loadInputFields()
     if (inputFieldsValid) return;
 
     // Work out how many frames ahead/behind we need to fetch
-    qint32 lookBehind, lookAhead;
-    if (getSystem() == PAL || getSystem() == PAL_M) {
-        lookBehind = palConfiguration.getLookBehind();
-        lookAhead = palConfiguration.getLookAhead();
-    } else {
-        lookBehind = ntscConfiguration.getLookBehind();
-        lookAhead = ntscConfiguration.getLookAhead();
-    }
+    const qint32 lookBehind = getLookBehindFrames();
+    const qint32 lookAhead = getLookAheadFrames();
 
     if (weaveStart > 0) {
         // The fields of a weave: a pair from any field, with the pairs round it (the decoders look at them)
@@ -1156,7 +1168,9 @@ void TbcSource::decodeFrame()
 	}
 	else
 	{
-		if (getSystem() == PAL || getSystem() == PAL_M) {
+		if (hvdSettings.enabled) {
+			hvdDecoder.decodeFrames(inputFields, inputStartIndex, inputEndIndex, componentFrames);
+		} else if (getSystem() == PAL || getSystem() == PAL_M) {
 			if(palConfiguration.chromaFilter == palColour.ChromaFilterMode::mono){
 				monoDecoder.decodeFrames(inputFields, inputStartIndex, inputEndIndex, componentFrames);
 			} else {
@@ -1726,6 +1740,7 @@ bool TbcSource::getIsLiveEnded()
 // frame can be decoded, or the decoder would wait for them)
 qint32 TbcSource::getLookAheadFrames()
 {
+    if (hvdSettings.enabled) return hvdDecoder.getLookAhead();
     if (getSystem() == PAL || getSystem() == PAL_M) return palConfiguration.getLookAhead();
     return ntscConfiguration.getLookAhead();
 }
@@ -1748,8 +1763,7 @@ void TbcSource::updateLive()
     const qint32 firstHeldField = sourceVideo.getFirstFieldHeld();
     qint32 firstFrame = (firstHeldField + 2) / 2;
     if (firstHeldField > 1) {
-        const qint32 lookBehind = (getSystem() == PAL || getSystem() == PAL_M) ? palConfiguration.getLookBehind()
-                                                                               : ntscConfiguration.getLookBehind();
+        const qint32 lookBehind = getLookBehindFrames();
         firstFrame += lookBehind;
     }
     liveFirstFrame = qMin(firstFrame, qMax(1, liveFrames));
@@ -1757,6 +1771,7 @@ void TbcSource::updateLive()
 
 qint32 TbcSource::getLookBehindFrames()
 {
+    if (hvdSettings.enabled) return hvdDecoder.getLookBehind();
     if (getSystem() == PAL || getSystem() == PAL_M) return palConfiguration.getLookBehind();
     return ntscConfiguration.getLookBehind();
 }
@@ -2026,4 +2041,9 @@ qint32 TbcSource::numberOfWholeFrames()
         whole--;
     }
     return qMax(1, whole);
+}
+
+void TbcSource::setHvdThreads(qint32 threads)
+{
+    hvdDecoder.setThreads(threads);
 }

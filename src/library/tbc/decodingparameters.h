@@ -22,9 +22,9 @@ class JsonWriter;
 // "ldxDecoding" of the JSON (so in the metadata blocks of an LDX file) or the table decoding of a SQLite file. ld-analyse and ld-chroma-decoder take it as
 // their default for the capture; what is said on the command line, or in the window, has the last word. ld-stacker-gui does not use it (it has several sources).
 struct DecodingParameters {
-    // pal2d, transform2d, transform3d, ntsc1d, ntsc2d, ntsc3d, ntsc3dnoadapt or mono (the names of ld-chroma-decoder --decoder)
+    // pal2d, transform2d, transform3d, ntsc1d, ntsc2d, ntsc3d, ntsc3dnoadapt, hvd2d, hvd3d or mono (the names of ld-chroma-decoder --decoder)
     QString decoder;
-    // The settings of the decoder, by name: lumaNR, chromaNR, chromaGain, chromaPhase, adaptThreshold, chromaWeight (numbers), phaseCompensation, simplePAL (0 or 1)
+    // The settings of the decoder, by name: lumaNR, chromaNR, chromaGain, chromaPhase, adaptThreshold, chromaWeight (numbers), phaseCompensation, simplePAL (0 or 1), hvdIterations, hvdStrength, hvdOverlap, hvdPasses, hvdFieldOrder, hvdSmoothness, hvdSubcarrierHz (numbers), hvdFast, hvdBidirectional, hvdSelective, hvdAcc, hvdMonochrome, hvdSymmetry (0 or 1), for hvd2d and hvd3d
     QMap<QString, double> settings;
     QString madeBy;
 

@@ -13,6 +13,7 @@
 #include "ui_chromadecoderconfigdialog.h"
 #include "mainwindow.h"
 
+#include <QTabBar>
 #include <cmath>
 
 /*
@@ -70,6 +71,12 @@ ChromaDecoderConfigDialog::ChromaDecoderConfigDialog(QWidget *parent) :
 
     ui->yNRHorizontalSlider->setMinimum(0);
     ui->yNRHorizontalSlider->setMaximum(100);
+
+    // The decoder is chosen in the list, not in the tabs: each page is the settings of one decoder
+    ui->standardTabs->tabBar()->hide();
+
+    ui->hvdStrengthHorizontalSlider->setMinimum(0);
+    ui->hvdStrengthHorizontalSlider->setMaximum(200);
     
 	//get tbcSource instance from mainWindow
 	if (auto mw = qobject_cast<MainWindow*>(parent)) {
@@ -87,6 +94,7 @@ ChromaDecoderConfigDialog::~ChromaDecoderConfigDialog()
 
 void ChromaDecoderConfigDialog::setConfiguration(VideoSystem _system, const PalColour::Configuration &_palConfiguration,
                                                  const Comb::Configuration &_ntscConfiguration,
+                                                 const HvdSettings &_hvdSettings,
                                                  const MonoDecoder::MonoConfiguration &_monoConfiguration,
 												 const TbcSource::SourceMode &_mode,
 												 const bool _isInit,
@@ -96,6 +104,7 @@ void ChromaDecoderConfigDialog::setConfiguration(VideoSystem _system, const PalC
     system = _system;
     palConfiguration = _palConfiguration;
     ntscConfiguration = _ntscConfiguration;
+    hvdSettings = _hvdSettings;
     monoConfiguration = _monoConfiguration;
     outputConfiguration = _outputConfiguration;
 	sourceMode = _mode;
@@ -114,12 +123,6 @@ void ChromaDecoderConfigDialog::setConfiguration(VideoSystem _system, const PalC
     ntscConfiguration.chromaGain = palConfiguration.chromaGain;
     ntscConfiguration.chromaPhase = palConfiguration.chromaPhase;
 
-    // Select the tab corresponding to the current standard automatically
-    if (system == NTSC) {
-        ui->standardTabs->setCurrentWidget(ui->ntscTab);
-    } else {
-        ui->standardTabs->setCurrentWidget(ui->palTab);
-    }
 	
 	isInit = _isInit;
     updateDialog();
@@ -153,6 +156,26 @@ DecodingParameters ChromaDecoderConfigDialog::currentDecodingParameters() const
         parameters.settings.insert("chromaPhase", palConfiguration.chromaPhase);
         parameters.settings.insert("simplePAL", palConfiguration.simplePAL ? 1 : 0);
     }
+    if (hvdSettings.enabled) {
+        parameters = DecodingParameters();
+        parameters.decoder = hvdSettings.decoderName();
+        parameters.settings.insert("chromaGain", palConfiguration.chromaGain);
+        parameters.settings.insert("chromaPhase", palConfiguration.chromaPhase);
+        parameters.settings.insert("lumaNR", system == NTSC ? ntscConfiguration.yNRLevel : palConfiguration.yNRLevel);
+        parameters.settings.insert("hvdIterations", hvdSettings.iterations);
+        parameters.settings.insert("hvdStrength", hvdSettings.strength);
+        parameters.settings.insert("hvdOverlap", hvdSettings.overlap);
+        parameters.settings.insert("hvdFast", hvdSettings.fast ? 1 : 0);
+        parameters.settings.insert("hvdFieldOrder", hvdSettings.fieldOrder);
+        parameters.settings.insert("hvdBidirectional", hvdSettings.bidirectional ? 1 : 0);
+        parameters.settings.insert("hvdSelective", hvdSettings.selective ? 1 : 0);
+        parameters.settings.insert("hvdPasses", hvdSettings.passes);
+        parameters.settings.insert("hvdAcc", hvdSettings.acc ? 1 : 0);
+        parameters.settings.insert("hvdMonochrome", hvdSettings.monochrome ? 1 : 0);
+        parameters.settings.insert("hvdSmoothness", hvdSettings.smoothness);
+        parameters.settings.insert("hvdSymmetry", hvdSettings.symmetry ? 1 : 0);
+        if (hvdSettings.customSubcarrier) parameters.settings.insert("hvdSubcarrierHz", hvdSettings.subcarrierHz);
+    }
     parameters.madeBy = "ld-analyse";
     return parameters;
 }
@@ -184,6 +207,7 @@ void ChromaDecoderConfigDialog::updateDialog()
 		const LdDecodeMetaData::VideoParameters &sourceParameters = tbcSource->getVideoParameters();
 		const DecodingParameters *stored = tbcSource->getDecodingParameters();
 		const QString decoderName = stored ? stored->decoder : DecodingParameters::defaultDecoder(system == NTSC, DecodingParameters::prefers2D(sourceMode != TbcSource::ONE_SOURCE, DecodingParameters::isTape(sourceParameters.tapeFormat, sourceParameters.decoder)));
+		palComb = decoderName == "pal2d";
 		if (decoderName == "pal2d") palConfiguration.chromaFilter = PalColour::palColourFilter;
 		else if (decoderName == "transform2d") palConfiguration.chromaFilter = PalColour::transform2DFilter;
 		else if (decoderName == "transform3d") palConfiguration.chromaFilter = PalColour::transform3DFilter;
@@ -192,6 +216,8 @@ void ChromaDecoderConfigDialog::updateDialog()
 		else if (decoderName == "ntsc2d") ntscConfiguration.dimensions = 2;
 		else if (decoderName == "ntsc3d" || decoderName == "ntsc3dnoadapt") { ntscConfiguration.dimensions = 3; ntscConfiguration.adaptive = decoderName == "ntsc3d"; }
 		ntscConfiguration.phaseCompensation = DecodingParameters::isTape(sourceParameters.tapeFormat, sourceParameters.decoder);
+		hvdSettings.enabled = decoderName.startsWith("hvd");
+		hvdSettings.temporal = decoderName == "hvd3d";
 		if (stored) {
 			if (stored->has("chromaGain")) { palConfiguration.chromaGain = stored->value("chromaGain"); ntscConfiguration.chromaGain = stored->value("chromaGain"); }
 			if (stored->has("chromaPhase")) { palConfiguration.chromaPhase = stored->value("chromaPhase"); ntscConfiguration.chromaPhase = stored->value("chromaPhase"); }
@@ -201,6 +227,19 @@ void ChromaDecoderConfigDialog::updateDialog()
 			if (stored->has("chromaWeight")) ntscConfiguration.chromaWeight = stored->value("chromaWeight");
 			if (stored->has("phaseCompensation")) ntscConfiguration.phaseCompensation = stored->value("phaseCompensation") != 0.0;
 			if (stored->has("simplePAL")) palConfiguration.simplePAL = stored->value("simplePAL") != 0.0;
+			if (stored->has("hvdIterations")) hvdSettings.iterations = static_cast<qint32>(stored->value("hvdIterations"));
+			if (stored->has("hvdStrength")) hvdSettings.strength = stored->value("hvdStrength");
+			if (stored->has("hvdOverlap")) hvdSettings.overlap = qMax(1, static_cast<qint32>(stored->value("hvdOverlap")));
+			if (stored->has("hvdFast")) hvdSettings.fast = stored->value("hvdFast") != 0.0;
+			if (stored->has("hvdFieldOrder")) hvdSettings.fieldOrder = qBound(0, static_cast<qint32>(stored->value("hvdFieldOrder")), 2);
+			if (stored->has("hvdBidirectional")) hvdSettings.bidirectional = stored->value("hvdBidirectional") != 0.0;
+			if (stored->has("hvdSelective")) hvdSettings.selective = stored->value("hvdSelective") != 0.0;
+			if (stored->has("hvdPasses")) hvdSettings.passes = qBound(1, static_cast<qint32>(stored->value("hvdPasses")), 4);
+			if (stored->has("hvdAcc")) hvdSettings.acc = stored->value("hvdAcc") != 0.0;
+			if (stored->has("hvdMonochrome")) hvdSettings.monochrome = stored->value("hvdMonochrome") != 0.0;
+			if (stored->has("hvdSmoothness")) hvdSettings.smoothness = stored->value("hvdSmoothness");
+			if (stored->has("hvdSymmetry")) hvdSettings.symmetry = stored->value("hvdSymmetry") != 0.0;
+			if (stored->has("hvdSubcarrierHz")) { hvdSettings.customSubcarrier = true; hvdSettings.subcarrierHz = stored->value("hvdSubcarrierHz"); }
 		}
 		qInfo().noquote() << "Decoder:" << decoderName << (stored ? "(the decoding parameters kept in the metadata of the capture)"
                                                                    : (sourceMode == TbcSource::ONE_SOURCE ? "(one capture: 3D)" : (DecodingParameters::isTape(sourceParameters.tapeFormat, sourceParameters.decoder) ? "(a stack of tapes: 2D)" : "(a stack of LaserDiscs: 3D)")));
@@ -347,6 +386,102 @@ void ChromaDecoderConfigDialog::updateDialog()
 
     ui->cNRValueLabel->setEnabled(isSourceNtsc);
     ui->cNRValueLabel->setText(QString::number(ntscConfiguration.cNRLevel, 'f', 1) + tr(" IRE"));
+
+    // The decoder of the list and the page of its settings
+    const bool isSourceHvd = hvdSettings.enabled;
+    // (the filter says which one it is, but the mono one, which both have)
+    if (palConfiguration.chromaFilter == PalColour::palColourFilter) palComb = true;
+    else if (palConfiguration.chromaFilter != PalColour::mono) palComb = false;
+    const QString standardName = system == NTSC ? QStringLiteral("NTSC") : (system == PAL_M ? QStringLiteral("PAL-M") : QStringLiteral("PAL"));
+    ui->standardLabel->setText(tr("Standard: %1").arg(standardName));
+    {
+        // PAL: Comb (PALcolour, the decoder with delay lines), Transform and HVD; NTSC: Comb and HVD
+        const QSignalBlocker blocker(ui->decoderComboBox);
+        ui->decoderComboBox->clear();
+        if (isSourcePal) {
+            ui->decoderComboBox->addItem(tr("Comb PAL (PALcolour)"), QStringLiteral("comb"));
+            ui->decoderComboBox->addItem(tr("Transform PAL"), QStringLiteral("transform"));
+            ui->decoderComboBox->addItem(tr("HVD"), QStringLiteral("hvd"));
+            ui->decoderComboBox->setCurrentIndex(isSourceHvd ? 2 : (palComb ? 0 : 1));
+        } else {
+            ui->decoderComboBox->addItem(tr("Comb NTSC"), QStringLiteral("comb"));
+            ui->decoderComboBox->addItem(tr("HVD"), QStringLiteral("hvd"));
+            ui->decoderComboBox->setCurrentIndex(isSourceHvd ? 1 : 0);
+        }
+    }
+    if (isSourcePal) {
+        // The page of PAL is the one of the decoder of the list: Comb has the mono and PALcolour, Transform the mono and its two filters and its settings
+        const bool transformPage = !palComb;
+        ui->palFilterPalColourRadioButton->setVisible(!transformPage);
+        ui->palFilterTransform2DRadioButton->setVisible(transformPage);
+        ui->palFilterTransform3DRadioButton->setVisible(transformPage);
+        ui->thresholdLabel->setVisible(transformPage);
+        ui->thresholdHorizontalSlider->setVisible(transformPage);
+        ui->thresholdValueLabel->setVisible(transformPage);
+        ui->showFFTsCheckBox->setVisible(transformPage);
+        ui->simplePALCheckBox->setVisible(transformPage);
+    }
+    if (isSourceHvd) {
+        ui->standardTabs->setCurrentWidget(ui->hvdTab);
+    } else {
+        ui->standardTabs->setCurrentWidget(isSourceNtsc ? ui->ntscTab : ui->palTab);
+    }
+
+    // HVD settings
+    ui->hvd2DRadioButton->setChecked(!hvdSettings.temporal);
+    ui->hvd3DRadioButton->setChecked(hvdSettings.temporal);
+    {
+        const QSignalBlocker iterations(ui->hvdIterationsSpinBox);
+        const QSignalBlocker strength(ui->hvdStrengthHorizontalSlider);
+        const QSignalBlocker overlap(ui->hvdOverlapSpinBox);
+        ui->hvdIterationsSpinBox->setValue(hvdSettings.iterations);
+        ui->hvdStrengthHorizontalSlider->setValue(static_cast<qint32>(hvdSettings.strength * 100));
+        ui->hvdOverlapSpinBox->setValue(hvdSettings.overlap);
+    }
+    ui->hvdStrengthValueLabel->setText(hvdSettings.strength == 0.0 ? tr("measured") : QString::number(hvdSettings.strength, 'f', 2));
+    ui->hvdStrengthLabel->setEnabled(hvdSettings.temporal);
+    ui->hvdStrengthHorizontalSlider->setEnabled(hvdSettings.temporal);
+    ui->hvdStrengthValueLabel->setEnabled(hvdSettings.temporal);
+    ui->hvdOverlapLabel->setEnabled(hvdSettings.temporal);
+    ui->hvdOverlapSpinBox->setEnabled(hvdSettings.temporal);
+    {
+        const QSignalBlocker fast(ui->hvdFastCheckBox);
+        const QSignalBlocker bidirectional(ui->hvdBidirectionalCheckBox);
+        const QSignalBlocker selective(ui->hvdSelectiveCheckBox);
+        const QSignalBlocker passes(ui->hvdPassesSpinBox);
+        const QSignalBlocker fieldOrder(ui->hvdFieldOrderComboBox);
+        const QSignalBlocker acc(ui->hvdAccCheckBox);
+        const QSignalBlocker monochrome(ui->hvdMonochromeCheckBox);
+        const QSignalBlocker smoothness(ui->hvdSmoothnessSpinBox);
+        const QSignalBlocker symmetry(ui->hvdSymmetryCheckBox);
+        const QSignalBlocker custom(ui->hvdCustomSubcarrierCheckBox);
+        const QSignalBlocker subcarrier(ui->hvdSubcarrierSpinBox);
+        ui->hvdFastCheckBox->setChecked(hvdSettings.fast);
+        ui->hvdBidirectionalCheckBox->setChecked(hvdSettings.bidirectional);
+        ui->hvdSelectiveCheckBox->setChecked(hvdSettings.selective);
+        ui->hvdPassesSpinBox->setValue(hvdSettings.passes);
+        ui->hvdFieldOrderComboBox->setCurrentIndex(hvdSettings.fieldOrder);
+        ui->hvdAccCheckBox->setChecked(hvdSettings.acc);
+        ui->hvdMonochromeCheckBox->setChecked(hvdSettings.monochrome);
+        ui->hvdSmoothnessSpinBox->setValue(hvdSettings.smoothness);
+        ui->hvdSymmetryCheckBox->setChecked(hvdSettings.symmetry);
+        ui->hvdCustomSubcarrierCheckBox->setChecked(hvdSettings.customSubcarrier);
+        ui->hvdSubcarrierSpinBox->setValue(hvdSettings.subcarrierHz);
+    }
+    // What only 3D uses
+    ui->hvdBidirectionalCheckBox->setEnabled(hvdSettings.temporal);
+    ui->hvdSelectiveCheckBox->setEnabled(hvdSettings.temporal);
+    ui->hvdPassesLabel->setEnabled(hvdSettings.temporal);
+    ui->hvdPassesSpinBox->setEnabled(hvdSettings.temporal);
+    ui->hvdSubcarrierSpinBox->setEnabled(hvdSettings.customSubcarrier);
+
+    if (isSourceHvd) {
+        // The gain and the phase are the decoder's too, the luma noise reduction is not
+        ui->chromaGainHorizontalSlider->setEnabled(true);
+        ui->chromaPhaseHorizontalSlider->setEnabled(true);
+    }
+    ui->enableYNRCheckBox->setEnabled(true);
+    ui->yNRHorizontalSlider->setEnabled(yNREnabled);
 }
 
 // Methods to handle changes to the dialogue
@@ -394,8 +529,10 @@ void ChromaDecoderConfigDialog::on_palFilterButtonGroup_buttonClicked(QAbstractB
 	if (button == ui->palMonoRadioButton){
 		palConfiguration.chromaFilter = PalColour::mono;
     } else if (button == ui->palFilterPalColourRadioButton) {
+        palComb = true;
         palConfiguration.chromaFilter = PalColour::palColourFilter;
     } else if (button == ui->palFilterTransform2DRadioButton) {
+        palComb = false;
         palConfiguration.chromaFilter = PalColour::transform2DFilter;
     } else {
         palConfiguration.chromaFilter = PalColour::transform3DFilter;
@@ -505,4 +642,115 @@ void ChromaDecoderConfigDialog::on_enableYCCombineCheckBox_clicked()
 	combine = ui->enableYCCombineCheckBox->isChecked();
 	tbcSource->setCombine(combine);
 	emit chromaDecoderConfigChanged();
+}
+const HvdSettings &ChromaDecoderConfigDialog::getHvdSettings()
+{
+    return hvdSettings;
+}
+
+void ChromaDecoderConfigDialog::on_decoderComboBox_activated(int index)
+{
+    const QString chosen = ui->decoderComboBox->itemData(index).toString();
+    hvdSettings.enabled = chosen == QLatin1String("hvd");
+    if (system != NTSC && !hvdSettings.enabled) {
+        palComb = chosen == QLatin1String("comb");
+        // The filter that goes with the decoder (the mono one belongs to both)
+        if (palComb && palConfiguration.chromaFilter != PalColour::mono) palConfiguration.chromaFilter = PalColour::palColourFilter;
+        if (!palComb && palConfiguration.chromaFilter == PalColour::palColourFilter) palConfiguration.chromaFilter = PalColour::transform3DFilter;
+    }
+    updateDialog();
+    emit chromaDecoderConfigChanged();
+}
+
+void ChromaDecoderConfigDialog::on_hvdFilterButtonGroup_buttonClicked(QAbstractButton *button)
+{
+    hvdSettings.temporal = button == ui->hvd3DRadioButton;
+    updateDialog();
+    emit chromaDecoderConfigChanged();
+}
+
+void ChromaDecoderConfigDialog::on_hvdIterationsSpinBox_valueChanged(int value)
+{
+    hvdSettings.iterations = value;
+    emit chromaDecoderConfigChanged();
+}
+
+void ChromaDecoderConfigDialog::on_hvdStrengthHorizontalSlider_valueChanged(int value)
+{
+    hvdSettings.strength = static_cast<double>(value) / 100;
+    ui->hvdStrengthValueLabel->setText(hvdSettings.strength == 0.0 ? tr("measured") : QString::number(hvdSettings.strength, 'f', 2));
+    emit chromaDecoderConfigChanged();
+}
+
+void ChromaDecoderConfigDialog::on_hvdOverlapSpinBox_valueChanged(int value)
+{
+    hvdSettings.overlap = value;
+    emit chromaDecoderConfigChanged();
+}
+
+void ChromaDecoderConfigDialog::on_hvdFastCheckBox_clicked()
+{
+    hvdSettings.fast = ui->hvdFastCheckBox->isChecked();
+    emit chromaDecoderConfigChanged();
+}
+
+void ChromaDecoderConfigDialog::on_hvdBidirectionalCheckBox_clicked()
+{
+    hvdSettings.bidirectional = ui->hvdBidirectionalCheckBox->isChecked();
+    emit chromaDecoderConfigChanged();
+}
+
+void ChromaDecoderConfigDialog::on_hvdSelectiveCheckBox_clicked()
+{
+    hvdSettings.selective = ui->hvdSelectiveCheckBox->isChecked();
+    emit chromaDecoderConfigChanged();
+}
+
+void ChromaDecoderConfigDialog::on_hvdPassesSpinBox_valueChanged(int value)
+{
+    hvdSettings.passes = value;
+    emit chromaDecoderConfigChanged();
+}
+
+void ChromaDecoderConfigDialog::on_hvdFieldOrderComboBox_activated(int index)
+{
+    hvdSettings.fieldOrder = index;
+    emit chromaDecoderConfigChanged();
+}
+
+void ChromaDecoderConfigDialog::on_hvdAccCheckBox_clicked()
+{
+    hvdSettings.acc = ui->hvdAccCheckBox->isChecked();
+    emit chromaDecoderConfigChanged();
+}
+
+void ChromaDecoderConfigDialog::on_hvdMonochromeCheckBox_clicked()
+{
+    hvdSettings.monochrome = ui->hvdMonochromeCheckBox->isChecked();
+    emit chromaDecoderConfigChanged();
+}
+
+void ChromaDecoderConfigDialog::on_hvdSmoothnessSpinBox_valueChanged(double value)
+{
+    hvdSettings.smoothness = value;
+    emit chromaDecoderConfigChanged();
+}
+
+void ChromaDecoderConfigDialog::on_hvdSymmetryCheckBox_clicked()
+{
+    hvdSettings.symmetry = ui->hvdSymmetryCheckBox->isChecked();
+    emit chromaDecoderConfigChanged();
+}
+
+void ChromaDecoderConfigDialog::on_hvdCustomSubcarrierCheckBox_clicked()
+{
+    hvdSettings.customSubcarrier = ui->hvdCustomSubcarrierCheckBox->isChecked();
+    ui->hvdSubcarrierSpinBox->setEnabled(hvdSettings.customSubcarrier);
+    emit chromaDecoderConfigChanged();
+}
+
+void ChromaDecoderConfigDialog::on_hvdSubcarrierSpinBox_valueChanged(double value)
+{
+    hvdSettings.subcarrierHz = value;
+    emit chromaDecoderConfigChanged();
 }

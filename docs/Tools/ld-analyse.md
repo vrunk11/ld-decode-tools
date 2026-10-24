@@ -585,9 +585,17 @@ Luma noise reduction applies a simple noise reduction algorithm to the luma sign
 
 Many LaserDisc players use this kind of noise reduction. For command-line decoding, you usually want to disable this and use a better-quality external noise reduction algorithm (ffmpeg provides several).
 
-### PAL and NTSC tabs
+### Standard and decoder
 
-There are separate tabs for PAL- and NTSC-specific options. In both cases, there are some options that control how chroma (colour) and luma (brightness) information are separated - the chroma filter - and then some that control how chroma information is turned into actual colours.
+The window shows the **standard** of the capture (PAL, PAL-M or NTSC), and a **Decoder** list for it: *Comb PAL (PALcolour)* and *Transform PAL* (PAL and PAL-M) or *Comb NTSC* (NTSC), which are the decoders ld-chroma-decoder has had, and *HVD*, the holographic-variational decoder, which works for all three standards. What is below the list changes with the decoder: its own chroma filter and settings, then the chroma gain, chroma phase and luma noise reduction that every decoder shares (HVD uses them all).
+
+### HVD
+
+HVD separates luma and chroma by solving for the picture that fits the composite signal and is smooth in chroma, instead of filtering it. It is slower than the others and often cleaner on fine detail (cross-colour, dot crawl). The page has the separation (HVD 2D takes each field by itself, `hvd2d` at the command line; HVD 3D also uses the frames around it, `hvd3d`), the **fast mode** (on by default: the solver stops early and has a smaller budget, at about the same quality; `--hvd-no-fast`), the solver iterations (`--hvd-iterations`: more is slower and cleaner) and, in 3D, the weight of the neighbouring fields (`--hvd-strength`, 0 is measured on the picture), the frames each side that are looked at (`--hvd-overlap`), the fields after a field as well as before (`--hvd-no-bidirectional`), the selective 3D (`--hvd-selective`: 3D only where the picture is ambiguous) and the passes (`--hvd-passes`). It also has the order of the fields (from the metadata, or forced), the automatic colour control, monochrome, the chroma smoothness (`--hvd-smoothness`), the spectral-symmetry initialisation, and the **non-standard subcarrier** with its frequency in Hz (`--hvd-subcarrier`), for a source whose colour subcarrier is not the standard one, such as the VHD (2556818.2 Hz); with the box on and a wrong frequency the picture is black and white, so leave it off for ordinary NTSC, PAL and PAL-M. The settings are kept with the capture as the others are (`hvdIterations`, `hvdStrength`, `hvdOverlap`).
+
+### Transform PAL and Comb NTSC settings
+
+Each of the two decoders has some options that control how chroma (colour) and luma (brightness) information are separated - the chroma filter - and then some that control how chroma information is turned into actual colours.
 
 ### PAL
 

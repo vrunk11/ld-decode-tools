@@ -18,6 +18,7 @@
 #include "outputwriter.h"
 #include "palcolour.h"
 #include "monodecoder.h"
+#include "hvddecoder.h"
 #include "tbcsource.h"
 #include "decodingparameters.h"
 
@@ -35,6 +36,7 @@ public:
 
     void setConfiguration(VideoSystem system, const PalColour::Configuration &palConfiguration,
                           const Comb::Configuration &ntscConfiguration,
+                          const HvdSettings &hvdSettings,
                           const MonoDecoder::MonoConfiguration &monoConfiguration,
                           const TbcSource::SourceMode &_mode,
 						  const bool _isInit,
@@ -43,6 +45,7 @@ public:
     // The decoder and the settings the dialog has now, as decoding parameters (the names of ld-chroma-decoder)
     DecodingParameters currentDecodingParameters() const;
     const Comb::Configuration &getNtscConfiguration();
+    const HvdSettings &getHvdSettings();
     const OutputWriter::Configuration &getOutputConfiguration();
 
 signals:
@@ -62,6 +65,23 @@ private slots:
     void on_showFFTsCheckBox_clicked();
     void on_simplePALCheckBox_clicked();
 
+    void on_decoderComboBox_activated(int index);
+    void on_hvdFilterButtonGroup_buttonClicked(QAbstractButton *button);
+    void on_hvdIterationsSpinBox_valueChanged(int value);
+    void on_hvdStrengthHorizontalSlider_valueChanged(int value);
+    void on_hvdOverlapSpinBox_valueChanged(int value);
+    void on_hvdFastCheckBox_clicked();
+    void on_hvdBidirectionalCheckBox_clicked();
+    void on_hvdSelectiveCheckBox_clicked();
+    void on_hvdPassesSpinBox_valueChanged(int value);
+    void on_hvdFieldOrderComboBox_activated(int index);
+    void on_hvdAccCheckBox_clicked();
+    void on_hvdMonochromeCheckBox_clicked();
+    void on_hvdSmoothnessSpinBox_valueChanged(double value);
+    void on_hvdSymmetryCheckBox_clicked();
+    void on_hvdCustomSubcarrierCheckBox_clicked();
+    void on_hvdSubcarrierSpinBox_valueChanged(double value);
+
     void on_ntscFilterButtonGroup_buttonClicked(QAbstractButton *button);
     void on_phaseCompCheckBox_clicked();
     void on_adaptiveCheckBox_clicked();
@@ -76,6 +96,7 @@ private:
     VideoSystem system;
     PalColour::Configuration palConfiguration;
     Comb::Configuration ntscConfiguration;
+    HvdSettings hvdSettings;
     MonoDecoder::MonoConfiguration monoConfiguration;
     OutputWriter::Configuration outputConfiguration;
 	TbcSource* tbcSource = nullptr;
@@ -84,6 +105,7 @@ private:
 	bool isInit = true;
 	bool combine = false;
 	bool yNREnabled = true;
+	bool palComb = false;    // PAL: the decoder of the list is Comb (PALcolour), not Transform
 
     void updateDialog();
 };

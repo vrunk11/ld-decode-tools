@@ -426,7 +426,7 @@ private:
     // Update GUI methods
     void setGuiEnabled(bool enabled);
     void resetGui();
-    void updateGuiLoaded();
+    void updateGuiLoaded(bool newSource = true);
     void updateGuiUnloaded();
     void updateAspectPushButton();
     void updateSourcesPushButton();

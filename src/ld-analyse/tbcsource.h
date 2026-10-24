@@ -38,6 +38,7 @@
 #include "comb.h"
 #include "colourconfiguration.h"
 #include "monodecoder.h"
+#include "hvddecoder.h"
 
 class TbcSource : public QObject
 {
@@ -180,6 +181,7 @@ public:
         QString sourceFilename, chromaFilename, metadataFilename;
         PalColour::Configuration palConfiguration;
         Comb::Configuration ntscConfiguration;
+        HvdSettings hvdSettings;
         MonoDecoder::MonoConfiguration monoConfiguration;
         OutputWriter::Configuration outputConfiguration;
         LdDecodeMetaData::VideoParameters videoParameters;
@@ -248,9 +250,13 @@ public:
     qint32 getCcData1();
 
     void setChromaConfiguration(const PalColour::Configuration &palConfiguration, const Comb::Configuration &ntscConfiguration,
+                                const HvdSettings &hvdSettings,
                                 const OutputWriter::Configuration &outputConfiguration);
     const PalColour::Configuration &getPalConfiguration();
     const Comb::Configuration &getNtscConfiguration();
+    const HvdSettings &getHvdSettings();
+    // Threads that the HVD decoder may use (OpenMP) in the thread that calls it: 0 leaves the default
+    void setHvdThreads(qint32 threads);
     const MonoDecoder::MonoConfiguration &getMonoConfiguration();
     const OutputWriter::Configuration &getOutputConfiguration();
 
@@ -345,6 +351,7 @@ private:
     // Chroma decoder objects
     PalColour palColour;
     Comb ntscColour;
+    HvdFrameDecoder hvdDecoder;
 	MonoDecoder monoDecoder;
     OutputWriter outputWriter;
 
@@ -381,6 +388,7 @@ private:
     // Chroma decoder configuration
     PalColour::Configuration palConfiguration;
     Comb::Configuration ntscConfiguration;
+    HvdSettings hvdSettings;
 	MonoDecoder::MonoConfiguration monoConfiguration;
     OutputWriter::Configuration outputConfiguration;
 	bool combine = false;
