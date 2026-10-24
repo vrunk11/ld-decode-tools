@@ -70,3 +70,5 @@ if(LDDECODE_LDX_AVAILABLE)
     target_link_libraries(lddecode-library PUBLIC lddecode-ldx)
     target_compile_definitions(lddecode-library PUBLIC LDDECODE_WITH_LDX)
 endif()
+
+add_subdirectory(hvd)
