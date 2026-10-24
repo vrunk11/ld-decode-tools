@@ -147,6 +147,29 @@ Available decoders:
 | NTSC   | `ntsc2d`        | NTSC      |
 | NTSC   | `ntsc3d`        |           |
 | NTSC   | `ntsc3dnoadapt` |           |
+| PAL, PAL-M, NTSC | `hvd2d` |         |
+| PAL, PAL-M, NTSC | `hvd3d` |         |
+
+`hvd2d` and `hvd3d` are the holographic-variational decoder: it separates luma and chroma by solving for the picture that fits the composite signal and is smooth in chroma (a few conjugate-gradient iterations per field), instead of filtering. It works for PAL, PAL-M and NTSC. `hvd2d` takes each field by itself; `hvd3d` also uses the fields of the neighbouring frames (before and after, motion compensated) and is slower. Without neighbours (the first and last frames of a capture) `hvd3d` uses the fields it has.
+
+**HVD options**
+
+| Option | Meaning |
+| ------ | ------- |
+| `--hvd-iterations number` | Conjugate-gradient iterations of the solver (default 2; 0 is the fast holographic reconstruction alone; more is slower and cleaner) |
+| `--hvd-strength number` | `hvd3d`: weight of the neighbouring fields (default 0: measured on the picture) |
+| `--hvd-overlap number` | `hvd3d`: frames on each side of a frame that the decoder looks at (default 1) |
+| `--hvd-no-fast` | Turn the fast mode off: the solver runs its whole budget (slower, about the same quality). The fast mode is on by default |
+| `--hvd-no-bidirectional` | `hvd3d`: use only the fields before a field, not the ones after (faster, a little worse) |
+| `--hvd-selective` | `hvd3d`: 3D only on the tiles of the picture where luma and chroma are ambiguous, 2D elsewhere |
+| `--hvd-passes number` | `hvd3d`: passes of the solver over a window of fields (default 2, 1 to 4; from the second the noise-reduced anchor is used) |
+| `--hvd-no-acc` | No automatic colour control: the saturation is not brought to the nominal burst of the standard |
+| `--hvd-smoothness number` | Chroma smoothness (default 1.0): higher is smoother chroma, lower is sharper |
+| `--hvd-field-order order` | `auto` (from the metadata, the default), `top` (the first field of a frame is the top one) or `bottom` |
+| `--hvd-symmetry` | Add the spectral-symmetry initialisation |
+| `--hvd-subcarrier hertz` | Frequency of the colour subcarrier, for a source whose subcarrier is not the standard's (the VHD is 2556818.2); the sample grid does not change |
+
+`--chroma-gain`, `--chroma-phase` and `--blackandwhite` (the chroma is zeroed) apply to the HVD decoders too; `--luma-nr` does too (the same noise reduction of the luma as the other decoders); the Transform and NTSC options do not.
 
 
 ### Chroma Gain
@@ -246,6 +269,7 @@ Options:
   -f, --decoder <decoder>                     Decoder to use (pal2d,
                                               transform2d, transform3d, ntsc1d,
                                               ntsc2d, ntsc3d, ntsc3dnoadapt,
+                                              hvd2d, hvd3d,
                                               mono; default automatic)
   -t, --threads <number>                      Specify the number of concurrent
                                               threads (default number of logical
@@ -286,6 +310,53 @@ Options:
                                               per-bin similarity thresholds
   --show-ffts                                 Transform: Overlay the input and
                                               output FFTs
+  --hvd-iterations <number>                   HVD: Conjugate-gradient
+                                              iterations of the solver
+                                              (default 2, more = slower and
+                                              cleaner)
+  --hvd-strength <number>                     hvd3d: Weight of the neighbouring
+                                              fields (default 0 = measured on
+                                              the picture)
+  --hvd-overlap <number>                      hvd3d: Frames on each side of a
+                                              frame that the decoder looks at
+                                              (default 1)
+  --hvd-no-fast                               HVD: Turn the fast mode
+                                              off (the solver runs its
+                                              whole budget: slower, about
+                                              the same quality)
+  --hvd-no-bidirectional                      hvd3d: Use only the fields
+                                              before a field, not the
+                                              ones after (faster, a
+                                              little worse)
+  --hvd-selective                             hvd3d: 3D only where the
+                                              picture is ambiguous, 2D
+                                              elsewhere
+  --hvd-passes <number>                       hvd3d: Passes of the
+                                              solver over a window of
+                                              fields (default 2, 1 to 4)
+  --hvd-no-acc                                HVD: No automatic colour
+                                              control (the saturation is
+                                              not brought to the nominal
+                                              burst)
+  --hvd-smoothness <number>                   HVD: Chroma smoothness
+                                              (default 1.0; higher is
+                                              smoother chroma, lower is
+                                              sharper)
+  --hvd-field-order <order>                   HVD: Order of the fields:
+                                              auto (from the metadata,
+                                              the default), top (the
+                                              first field of a frame is
+                                              the top one) or bottom
+  --hvd-symmetry                              HVD: Add the
+                                              spectral-symmetry
+                                              initialisation
+  --hvd-subcarrier <hertz>                    HVD: Frequency of the
+                                              colour subcarrier in Hz,
+                                              for a source whose
+                                              subcarrier is not the
+                                              standard's (the VHD
+                                              is 2556818.2)
+
 
 Arguments:
   input                                       Specify input TBC file (- for

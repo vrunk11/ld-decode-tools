@@ -42,7 +42,7 @@ producer's output can be decoded with no files at all; the video then runs until
 The NTSC phase of each field (its place in the 4-field colour sequence) is measured from the colour burst when the metadata has none. A field whose burst cannot be measured gets the phase the sequence expects there, from the nearest measured field before it, or after it (up to 8 frames ahead at the start of the input); a measured phase is never replaced, since one that breaks the sequence is most likely a real break. PAL finds its own phase from the burst of every line.
 
 #### Decoder Selection
-- `-f, --decoder <decoder>`: Decoder to use (pal2d, transform2d, transform3d, ntsc1d, ntsc2d, ntsc3d, ntsc3dnoadapt, mono; default automatic)
+- `-f, --decoder <decoder>`: Decoder to use (pal2d, transform2d, transform3d, ntsc1d, ntsc2d, ntsc3d, ntsc3dnoadapt, hvd2d, hvd3d, mono; default automatic)
 
 #### Output Control
 - `-p, --output-format <format>`: Output format (rgb, yuv, y4m; default rgb); RGB48, YUV444P16, GRAY16 pixel formats are supported
@@ -77,6 +77,18 @@ The NTSC phase of each field (its place in the 4-field colour sequence) is measu
 - `--transform-threshold <number>`: Transform: Uniform similarity threshold (default 0.4)
 - `--transform-thresholds <file>`: Transform: File containing per-bin similarity thresholds
 - `--show-ffts`: Transform: Overlay the input and output FFTs
+- `--hvd-iterations <number>`: HVD: Conjugate-gradient iterations of the solver (default 2, more = slower and cleaner)
+- `--hvd-strength <number>`: hvd3d: Weight of the neighbouring fields (default 0 = measured on the picture)
+- `--hvd-overlap <number>`: hvd3d: Frames on each side of a frame that the decoder looks at (default 1)
+- `--hvd-no-fast`: HVD: Turn the fast mode off (the solver runs its whole budget: slower, about the same quality)
+- `--hvd-no-bidirectional`: hvd3d: Use only the fields before a field, not the ones after (faster, a little worse)
+- `--hvd-selective`: hvd3d: 3D only where the picture is ambiguous, 2D elsewhere
+- `--hvd-passes <number>`: hvd3d: Passes of the solver over a window of fields (default 2, 1 to 4)
+- `--hvd-no-acc`: HVD: No automatic colour control (the saturation is not brought to the nominal burst)
+- `--hvd-smoothness <number>`: HVD: Chroma smoothness (default 1.0; higher is smoother chroma, lower is sharper)
+- `--hvd-field-order <order>`: HVD: Order of the fields: auto (from the metadata, the default), top or bottom
+- `--hvd-symmetry`: HVD: Add the spectral-symmetry initialisation
+- `--hvd-subcarrier <hertz>`: HVD: Frequency of the colour subcarrier in Hz, for a source whose subcarrier is not the standard's (the VHD is 2556818.2)
 - `--input-metadata <filename>`: Specify the input metadata file (default input.db, or input.json if only that exists)
 
 #### Active Area Selection

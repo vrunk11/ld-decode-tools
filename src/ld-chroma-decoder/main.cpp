@@ -47,6 +47,7 @@
 #include "stackproject.h"
 
 #include "comb.h"
+#include "hvddecoder.h"
 #include "monodecoder.h"
 #include "ntscdecoder.h"
 #include "outputwriter.h"
@@ -205,7 +206,7 @@ int main(int argc, char *argv[])
 
     // Option to select which decoder to use (-f)
     QCommandLineOption decoderOption(QStringList() << "f" << "decoder",
-                                     QCoreApplication::translate("main", "Decoder to use (pal2d, transform2d, transform3d, ntsc1d, ntsc2d, ntsc3d, ntsc3dnoadapt, mono; default automatic)"),
+                                     QCoreApplication::translate("main", "Decoder to use (pal2d, transform2d, transform3d, ntsc1d, ntsc2d, ntsc3d, ntsc3dnoadapt, hvd2d, hvd3d, mono; default automatic)"),
                                      QCoreApplication::translate("main", "decoder"));
     parser.addOption(decoderOption);
 
@@ -297,6 +298,63 @@ int main(int argc, char *argv[])
                                       QCoreApplication::translate("main", "Transform: Overlay the input and output FFTs"));
     parser.addOption(showFFTsOption);
 
+    // -- HVD decoder options --
+
+    QCommandLineOption hvdIterationsOption(QStringList() << "hvd-iterations",
+                                           QCoreApplication::translate("main", "HVD: Conjugate-gradient iterations of the solver (default 2, more = slower and cleaner)"),
+                                           QCoreApplication::translate("main", "number"));
+    parser.addOption(hvdIterationsOption);
+
+    QCommandLineOption hvdStrengthOption(QStringList() << "hvd-strength",
+                                         QCoreApplication::translate("main", "hvd3d: Weight of the neighbouring fields (default 0 = measured on the picture)"),
+                                         QCoreApplication::translate("main", "number"));
+    parser.addOption(hvdStrengthOption);
+
+    QCommandLineOption hvdOverlapOption(QStringList() << "hvd-overlap",
+                                        QCoreApplication::translate("main", "hvd3d: Frames on each side of a frame that the decoder looks at (default 1)"),
+                                        QCoreApplication::translate("main", "number"));
+    parser.addOption(hvdOverlapOption);
+
+    QCommandLineOption hvdNoFastOption(QStringList() << "hvd-no-fast",
+                                       QCoreApplication::translate("main", "HVD: Turn the fast mode off (the solver runs its whole budget: slower, about the same quality)"));
+    parser.addOption(hvdNoFastOption);
+
+    QCommandLineOption hvdNoBidirectionalOption(QStringList() << "hvd-no-bidirectional",
+                                                QCoreApplication::translate("main", "hvd3d: Use only the fields before a field, not the ones after (faster, a little worse)"));
+    parser.addOption(hvdNoBidirectionalOption);
+
+    QCommandLineOption hvdSelectiveOption(QStringList() << "hvd-selective",
+                                          QCoreApplication::translate("main", "hvd3d: 3D only where the picture is ambiguous, 2D elsewhere"));
+    parser.addOption(hvdSelectiveOption);
+
+    QCommandLineOption hvdPassesOption(QStringList() << "hvd-passes",
+                                       QCoreApplication::translate("main", "hvd3d: Passes of the solver over a window of fields (default 2, 1 to 4)"),
+                                       QCoreApplication::translate("main", "number"));
+    parser.addOption(hvdPassesOption);
+
+    QCommandLineOption hvdNoAccOption(QStringList() << "hvd-no-acc",
+                                      QCoreApplication::translate("main", "HVD: No automatic colour control (the saturation is not brought to the nominal burst)"));
+    parser.addOption(hvdNoAccOption);
+
+    QCommandLineOption hvdSmoothnessOption(QStringList() << "hvd-smoothness",
+                                           QCoreApplication::translate("main", "HVD: Chroma smoothness (default 1.0; higher is smoother chroma, lower is sharper)"),
+                                           QCoreApplication::translate("main", "number"));
+    parser.addOption(hvdSmoothnessOption);
+
+    QCommandLineOption hvdFieldOrderOption(QStringList() << "hvd-field-order",
+                                           QCoreApplication::translate("main", "HVD: Order of the fields: auto (from the metadata, the default), top (the first field of a frame is the top one) or bottom"),
+                                           QCoreApplication::translate("main", "order"));
+    parser.addOption(hvdFieldOrderOption);
+
+    QCommandLineOption hvdSymmetryOption(QStringList() << "hvd-symmetry",
+                                         QCoreApplication::translate("main", "HVD: Add the spectral-symmetry initialisation"));
+    parser.addOption(hvdSymmetryOption);
+
+    QCommandLineOption hvdSubcarrierOption(QStringList() << "hvd-subcarrier",
+                                           QCoreApplication::translate("main", "HVD: Frequency of the colour subcarrier in Hz, for a source whose subcarrier is not the standard's (the VHD is 2556818.2)"),
+                                           QCoreApplication::translate("main", "hertz"));
+    parser.addOption(hvdSubcarrierOption);
+
     // -- Positional arguments --
 
     // Positional argument to specify input video file
@@ -378,6 +436,7 @@ int main(int argc, char *argv[])
     PalColour::Configuration palConfig;
     Comb::Configuration combConfig;
     MonoDecoder::MonoConfiguration monoConfig;
+    hvd::HvdConfig hvdConfig;
     OutputWriter::Configuration outputConfig;
 
     if (parser.isSet(startFrameOption)) {
@@ -418,6 +477,78 @@ int main(int argc, char *argv[])
         const double value = parser.value(chromaPhaseOption).toDouble();
         palConfig.chromaPhase = value;
         combConfig.chromaPhase = value;
+    }
+
+    if (parser.isSet(hvdIterationsOption)) {
+        bool ok = false;
+        hvdConfig.cg_iterations = parser.value(hvdIterationsOption).toInt(&ok);
+        if (!ok || hvdConfig.cg_iterations < 0) {
+            qCritical("HVD iterations must be a whole number, 0 or more");
+            return 2;
+        }
+    }
+
+    if (parser.isSet(hvdStrengthOption)) {
+        bool ok = false;
+        hvdConfig.temporal_strength = parser.value(hvdStrengthOption).toFloat(&ok);
+        if (!ok || hvdConfig.temporal_strength < 0.0F) {
+            qCritical("HVD strength must be a number, 0 or more");
+            return 2;
+        }
+    }
+
+    if (parser.isSet(hvdOverlapOption)) {
+        bool ok = false;
+        hvdConfig.chunk_overlap = parser.value(hvdOverlapOption).toInt(&ok);
+        if (!ok || hvdConfig.chunk_overlap < 1) {
+            qCritical("HVD overlap must be a whole number, 1 or more");
+            return 2;
+        }
+    }
+
+    if (parser.isSet(hvdNoFastOption)) hvdConfig.fast = false;
+    if (parser.isSet(hvdNoBidirectionalOption)) hvdConfig.bidirectional = false;
+    if (parser.isSet(hvdSelectiveOption)) hvdConfig.selective_3d = true;
+    if (parser.isSet(hvdNoAccOption)) hvdConfig.acc = false;
+    if (parser.isSet(hvdSymmetryOption)) hvdConfig.symmetry_variant = true;
+
+    if (parser.isSet(hvdPassesOption)) {
+        bool ok = false;
+        hvdConfig.passes = parser.value(hvdPassesOption).toInt(&ok);
+        if (!ok || hvdConfig.passes < 1 || hvdConfig.passes > 4) {
+            qCritical("HVD passes must be a whole number from 1 to 4");
+            return 2;
+        }
+    }
+
+    if (parser.isSet(hvdSmoothnessOption)) {
+        bool ok = false;
+        hvdConfig.lambda_c = parser.value(hvdSmoothnessOption).toFloat(&ok);
+        if (!ok || hvdConfig.lambda_c < 0.0F) {
+            qCritical("HVD smoothness must be a number, 0 or more");
+            return 2;
+        }
+    }
+
+    if (parser.isSet(hvdFieldOrderOption)) {
+        const QString order = parser.value(hvdFieldOrderOption);
+        if (order == "auto") hvdConfig.field_order = 0;
+        else if (order == "top") hvdConfig.field_order = 1;
+        else if (order == "bottom") hvdConfig.field_order = 2;
+        else {
+            qCritical("HVD field order must be auto, top or bottom");
+            return 2;
+        }
+    }
+
+    if (parser.isSet(hvdSubcarrierOption)) {
+        bool ok = false;
+        hvdConfig.subcarrier_hz = parser.value(hvdSubcarrierOption).toDouble(&ok);
+        if (!ok || hvdConfig.subcarrier_hz < 500000.0 || hvdConfig.subcarrier_hz > 6000000.0) {
+            qCritical("HVD subcarrier must be a frequency in Hz, from 500000 to 6000000");
+            return 2;
+        }
+        hvdConfig.custom_subcarrier = true;
     }
 
     bool bwMode = parser.isSet(setBwModeOption);
@@ -618,6 +749,19 @@ int main(int argc, char *argv[])
             if (stored.has("chromaWeight") && !parser.isSet(chromaWeightOption)) combConfig.chromaWeight = stored.value("chromaWeight");
             if (stored.has("phaseCompensation") && !parser.isSet(ntscPhaseCompOption)) combConfig.phaseCompensation = stored.value("phaseCompensation") != 0.0;
             if (stored.has("simplePAL") && !parser.isSet(simplePALOption)) palConfig.simplePAL = stored.value("simplePAL") != 0.0;
+            if (stored.has("hvdIterations") && !parser.isSet(hvdIterationsOption)) hvdConfig.cg_iterations = static_cast<int>(stored.value("hvdIterations"));
+            if (stored.has("hvdStrength") && !parser.isSet(hvdStrengthOption)) hvdConfig.temporal_strength = static_cast<float>(stored.value("hvdStrength"));
+            if (stored.has("hvdOverlap") && !parser.isSet(hvdOverlapOption)) hvdConfig.chunk_overlap = qMax(1, static_cast<int>(stored.value("hvdOverlap")));
+            if (stored.has("hvdFast") && !parser.isSet(hvdNoFastOption)) hvdConfig.fast = stored.value("hvdFast") != 0.0;
+            if (stored.has("hvdFieldOrder") && !parser.isSet(hvdFieldOrderOption)) hvdConfig.field_order = qBound(0, static_cast<int>(stored.value("hvdFieldOrder")), 2);
+            if (stored.has("hvdBidirectional") && !parser.isSet(hvdNoBidirectionalOption)) hvdConfig.bidirectional = stored.value("hvdBidirectional") != 0.0;
+            if (stored.has("hvdSelective") && !parser.isSet(hvdSelectiveOption)) hvdConfig.selective_3d = stored.value("hvdSelective") != 0.0;
+            if (stored.has("hvdPasses") && !parser.isSet(hvdPassesOption)) hvdConfig.passes = qBound(1, static_cast<int>(stored.value("hvdPasses")), 4);
+            if (stored.has("hvdAcc") && !parser.isSet(hvdNoAccOption)) hvdConfig.acc = stored.value("hvdAcc") != 0.0;
+            if (stored.has("hvdMonochrome") && !parser.isSet(setBwModeOption)) hvdConfig.monochrome = stored.value("hvdMonochrome") != 0.0;
+            if (stored.has("hvdSmoothness") && !parser.isSet(hvdSmoothnessOption)) hvdConfig.lambda_c = static_cast<float>(stored.value("hvdSmoothness"));
+            if (stored.has("hvdSymmetry") && !parser.isSet(hvdSymmetryOption)) hvdConfig.symmetry_variant = stored.value("hvdSymmetry") != 0.0;
+            if (stored.has("hvdSubcarrierHz") && !parser.isSet(hvdSubcarrierOption)) { hvdConfig.custom_subcarrier = true; hvdConfig.subcarrier_hz = stored.value("hvdSubcarrierHz"); }
         }
     } catch (const std::exception& e) {
         qCritical() << "Failed to access video parameters from metadata file:" << e.what();
@@ -666,6 +810,11 @@ int main(int argc, char *argv[])
         combConfig.dimensions = 3;
         combConfig.adaptive = false;
         decoder = std::make_unique<NtscDecoder>(combConfig);
+    } else if (decoderName == "hvd2d" || decoderName == "hvd3d") {
+        hvdConfig.chroma_gain = static_cast<float>(palConfig.chromaGain);
+        hvdConfig.chroma_phase_deg = static_cast<float>(palConfig.chromaPhase);
+        if (bwMode) hvdConfig.monochrome = true;
+        decoder = std::make_unique<HvdDecoder>(hvdConfig, decoderName == "hvd3d", metaData.getVideoParameters().system == NTSC ? combConfig.yNRLevel : palConfig.yNRLevel);
     } else if (decoderName == "mono") {
         decoder = std::make_unique<MonoDecoder>(monoConfig);
     } else {
