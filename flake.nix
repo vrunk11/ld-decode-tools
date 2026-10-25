@@ -49,6 +49,7 @@
             qt6.qtsvg
             qt6.qtmultimedia
             fftw
+            fftwFloat
             ffmpeg
             libebml
             libmatroska
@@ -74,6 +75,7 @@
             qt6.qtsvg
             qt6.qtmultimedia
             fftw
+            fftwFloat
             ffmpeg
             libebml
             libmatroska

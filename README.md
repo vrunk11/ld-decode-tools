@@ -83,7 +83,7 @@ each GitHub release.
   - Every tool that reads a `.tbc` or `.cvbs` file reads an `.ldx` file; `ld-process-vbi` and `ld-process-vits` add their metadata to it, and `ld-dropout-correct`, `ld-discmap` and `ld-disc-stacker` can write one, or send a stream on `-`
   - `-` is a pipe: an LDX stream carries the video and its metadata, so `ld-chroma-decoder`, `ld-analyse`, `ld-process-vbi`, `ld-process-vits`, `ld-disc-stacker` and `ld-dropout-correct` need no `--system` or `--input-metadata` for it
   - An LDX file holds TBC or CVBS video as it is, and the tools read both, so there is nothing to convert: `ld-tbc-to-cvbs` and `ld-cvbs-to-tbc` are for the separate files. `ld-process-efm` and `efm-decoder-f2` read the EFM track of an LDX file (`efm-decoder-f2` also from a stream); the AC3 tools take RF and make AC3 data, so they have no LDX input
-- **Dependencies**: Qt 6 and FFTW3; libebml and libmatroska for LDX files (without them the LDX tools are not built), with FFmpeg's libavcodec for FLAC and FFV1 in them; FFmpeg is otherwise only needed for the chroma tests and to turn the decoded output into video files
+- **Dependencies**: Qt 6 and FFTW3 (with its single-precision library, fftw3f, for the HVD decoder, which OpenMP speeds up when the compiler has it); libebml and libmatroska for LDX files (without them the LDX tools are not built), with FFmpeg's libavcodec for FLAC and FFV1 in them; FFmpeg is otherwise only needed for the chroma tests and to turn the decoded output into video files
 - **Performance**: Many tools support multi-threading for faster processing
 
 > [!WARNING]  

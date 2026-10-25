@@ -66,7 +66,7 @@ jobs:
             sleep 15
           done || echo "brew update failed after retries; continuing with existing metadata"
 
-          for dep in ninja pkg-config fftw; do
+          for dep in ninja pkg-config fftw libomp; do
             brew list --versions "$dep" > /dev/null 2>&1 || brew install "$dep"
           done
 
@@ -128,6 +128,7 @@ jobs:
           for dir in vcpkg_installed/*-osx-dynamic; do
             [[ -d "$dir" ]] && prefix_path="$PWD/$dir${prefix_path:+;$prefix_path}"
           done
+          # libomp is Homebrew's (Apple's clang has no OpenMP): the HVD decoder uses it for its solver.
           # Homebrew's fftw is single-architecture, so build for the runner's
           # architecture only even though Qt itself is universal.
           cmake -S . -B build -G Ninja \
@@ -135,6 +136,7 @@ jobs:
             -DCMAKE_OSX_ARCHITECTURES="$(uname -m)" \
             -DBUILD_TESTING=OFF \
             "-DCMAKE_PREFIX_PATH=$prefix_path" \
+            "-DOpenMP_ROOT=$(brew --prefix libomp)" \
             -DEZPWD_DIR="$PWD/external/ezpwd-reed-solomon/c++" \
             -DAPP_BRANCH=github-actions \
             -DAPP_COMMIT=${{ steps.version.outputs.version }}

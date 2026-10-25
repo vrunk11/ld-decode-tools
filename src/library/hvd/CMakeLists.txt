@@ -22,7 +22,7 @@ target_link_libraries(lddecode-hvd PUBLIC PkgConfig::FFTW3F Threads::Threads)
 find_package(OpenMP QUIET)
 if(OpenMP_CXX_FOUND)
     target_link_libraries(lddecode-hvd PUBLIC OpenMP::OpenMP_CXX)
-    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
         # MinGW's FindOpenMP finds the flag but no library name, and with LTO the link needs the flag itself
         target_link_options(lddecode-hvd PUBLIC ${OpenMP_CXX_FLAGS})
     endif()
