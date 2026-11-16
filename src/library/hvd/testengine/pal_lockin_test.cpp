@@ -58,7 +58,10 @@ Plane MakePalField(const FieldGeometry& g, const std::vector<float>& theta,
   for (int y = 0; y < f.height(); ++y) {
     const float s = sw[y] > 0 ? 1.0F : -1.0F;
     for (int x = 0; x < g.field_width; ++x) {
-      const float phi = theta[y] + kHalfPi * static_cast<float>(x);
+      // In double: the carrier of the engine is made in double (a product per sample), and a phase of some hundred radians in single precision is
+      // off by 1e-4 radian, which this identity would count as an error of the engine
+      const double phid = static_cast<double>(theta[y]) + 1.57079632679489661923 * static_cast<double>(x);
+      const float phi = static_cast<float>(std::fmod(phid, 6.28318530717958647692));
       float v = 0.0F;
       if (x >= g.colour_burst_start && x < g.colour_burst_end)
         v = -Bs * std::sin(phi) + s * Bs * std::cos(phi);
