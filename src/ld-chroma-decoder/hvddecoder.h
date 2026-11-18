@@ -16,10 +16,16 @@
 
 #include "decoder.h"
 #include "engine/engine.h"
+#include <cmath>
 #include "engine/hvd_config.h"
 #include "engine/ntsc_geometry.h"
 
 class DecoderPool;
+
+// A VideoDisc capture (the system NTSC-VHD): its colour subcarrier is not the one of NTSC, so only the HVD decoder can decode it, with its non-standard subcarrier. The standard
+// NTSC subcarrier (315/88 MHz) is the one it cannot have; the VHD one is the default of HvdSettings.
+inline bool isVhd(const QString &systemVariant) { return systemVariant == QLatin1String("ntsc-vhd"); }
+inline bool isStandardNtscSubcarrier(double hz) { return hz > 0.0 && std::fabs(hz - 315.0e6 / 88.0) < 1000.0; }
 
 // What a person chooses for the HVD decoder (the holographic-variational Y/C separator of lddecode-hvd), in the command line and in ld-analyse
 struct HvdSettings {
@@ -45,6 +51,14 @@ struct HvdSettings {
 
     // The name of the decoder in ld-chroma-decoder --decoder and in the decoding parameters: hvd2d or hvd3d
     QString decoderName() const { return temporal ? QStringLiteral("hvd3d") : QStringLiteral("hvd2d"); }
+
+    // What a VideoDisc (NTSC-VHD) needs: the HVD decoder, with the subcarrier that is not the standard one (the VHD one when it is the standard one, or none)
+    void forceVhd()
+    {
+        enabled = true;
+        customSubcarrier = true;
+        if (subcarrierHz <= 0.0 || isStandardNtscSubcarrier(subcarrierHz)) subcarrierHz = 2556818.2;
+    }
 };
 
 // Decodes the frames of a run of fields with the HVD decoder; one is for one thread (it keeps the plans of the FFTs)

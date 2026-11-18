@@ -49,4 +49,23 @@ expect(2 "a negative strength" ${DECODER} -f hvd3d --hvd-strength -0.5 "${CAPTUR
 expect(2 "an overlap of 0" ${DECODER} -f hvd3d --hvd-overlap 0 "${CAPTURE}" "${WORK}/x.rgb")
 expect(2 "a decoder that does not exist" ${DECODER} -f hvd4d "${CAPTURE}" "${WORK}/x.rgb")
 
+
+# A VideoDisc (the system NTSC-VHD): its colour subcarrier is not the one of NTSC, so only the HVD decoder reads it, with a subcarrier that is not the standard one
+if(CONTAINER)
+    set(vhd "${WORK}/vhd.ldx")
+    file(REMOVE "${vhd}")
+    expect(0 "a VideoDisc capture is packed" ${CONTAINER} pack "${CAPTURE}" --fields 40 --system NTSC-VHD -o "${vhd}")
+    expect(2 "a NTSC decoder on a VideoDisc" ${DECODER} -f ntsc2d --length 2 "${vhd}" "${WORK}/vhd.rgb")
+    expect(2 "a PAL decoder on a VideoDisc" ${DECODER} -f transform2d --length 2 "${vhd}" "${WORK}/vhd.rgb")
+    expect(2 "the standard subcarrier on a VideoDisc" ${DECODER} --hvd-subcarrier 3579545.45 --length 2 "${vhd}" "${WORK}/vhd.rgb")
+    file(REMOVE "${WORK}/vhd.rgb")
+    expect(0 "the decoder that a VideoDisc gets on its own" ${DECODER} --length 2 "${vhd}" "${WORK}/vhd.rgb")
+    file(SIZE "${WORK}/vhd.rgb" vhdSize)
+    math(EXPR expectedVhd "2 * ${frameBytes}")
+    if(NOT vhdSize EQUAL expectedVhd)
+        message(FATAL_ERROR "A VideoDisc: ${vhdSize} bytes were written for 2 frames, ${expectedVhd} were expected")
+    endif()
+    expect(0 "hvd2d on a VideoDisc" ${DECODER} -f hvd2d --length 2 "${vhd}" "${WORK}/vhd2.rgb")
+    expect(0 "mono on a VideoDisc" ${DECODER} -f mono --length 2 "${vhd}" "${WORK}/vhd3.rgb")
+endif()
 message(STATUS "testhvdcli: ok")

@@ -767,6 +767,31 @@ int main(int argc, char *argv[])
         qCritical() << "Failed to access video parameters from metadata file:" << e.what();
         return 1;
     }
+    // A VideoDisc (NTSC-VHD) has a colour subcarrier that is not the one of NTSC: only the HVD decoder reads it, with a non-standard subcarrier (the monochrome decoder needs none).
+    // SECAM is read as PAL for now: there is no SECAM decoder, so its colour is not right
+    {
+        const QString &variant = metaData.getVideoParameters().systemVariant;
+        if (isVhd(variant) && decoderName != "mono") {
+            if (!decoderName.startsWith("hvd")) {
+                if (parser.isSet(decoderOption)) {
+                    qCritical() << "A VideoDisc (NTSC-VHD) can only be decoded by hvd2d or hvd3d (its colour subcarrier is not the one of NTSC), or mono, and not by" << decoderName;
+                    return 2;
+                }
+                decoderName = (decoderName == "ntsc3d" || decoderName == "ntsc3dnoadapt" || decoderName == "transform3d") ? "hvd3d" : "hvd2d";
+                decoderWhy += ", a VideoDisc (NTSC-VHD): only the HVD decoder reads its subcarrier";
+            }
+            hvdConfig.custom_subcarrier = true;
+            if (isStandardNtscSubcarrier(hvdConfig.subcarrier_hz)) {
+                if (parser.isSet(hvdSubcarrierOption)) {
+                    qCritical() << "A VideoDisc (NTSC-VHD) has a subcarrier that is not the standard one of NTSC: --hvd-subcarrier cannot be that";
+                    return 2;
+                }
+                hvdConfig.subcarrier_hz = 2556818.2;
+            }
+        } else if (variant == QLatin1String("secam") && decoderName != "mono") {
+            qWarning() << "SECAM is decoded as PAL for now: there is no SECAM decoder, so the colour is not right";
+        }
+    }
     qInfo().noquote() << "Decoder:" << decoderName << "(" + decoderWhy + ")";
 
     // Require ntsc3d if the map overlay is selected
