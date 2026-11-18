@@ -27,6 +27,8 @@
 #include "discnumbering.h"
 #include "dropouts.h"
 #include "colourconfiguration.h"
+#include "hvddecoder.h"
+#include "monodecoder.h"
 #include "comb.h"
 #include "outputwriter.h"
 #include "palcolour.h"
@@ -61,6 +63,8 @@ struct SourceInfo {
     double fsc = 0;
     qint32 blackIre = -1, whiteIre = -1;
     QString tapeFormat;
+    QString decoder;              // what made the capture ("ld-decode" or "vhs-decode")
+    QString systemVariant;        // "secam" or "ntsc-vhd" when the file says the system is SECAM or NTSC-VHD (system is the one of the lines), else empty
     QString gitCommit;
     qint32 fields = 0;
     qint32 paddedFrames = 0;      // frames that have a field that is not there (padded)
@@ -127,6 +131,7 @@ struct FrameResult {
 
 Q_DECLARE_METATYPE(PalColour::Configuration)
 Q_DECLARE_METATYPE(Comb::Configuration)
+Q_DECLARE_METATYPE(HvdSettings)
 Q_DECLARE_METATYPE(StackSnrPoint)
 Q_DECLARE_METATYPE(SourceInfo)
 Q_DECLARE_METATYPE(FrameRequest)
@@ -156,7 +161,7 @@ public slots:
     void addSource(const QString &id, const QString &file, bool reverseFields, const QByteArray &mapJson = QByteArray(), bool followMap = true);
     void removeSource(const QString &id);
     void setReverseFields(bool reverseFields);
-    void setChromaConfiguration(const PalColour::Configuration &pal, const Comb::Configuration &ntsc);
+    void setChromaConfiguration(const PalColour::Configuration &pal, const Comb::Configuration &ntsc, const HvdSettings &hvd);
     void render(const FrameRequest &request);
     // Measure the SNR of the stack over the whole timeline, a chunk of frames at a time so that pictures asked
     // for in between are not kept waiting
@@ -242,6 +247,9 @@ private:
     // The chroma decoders, set up for the video parameters of the last picture
     PalColour palColour;
     Comb ntscColour;
+    MonoDecoder monoDecoder;
+    HvdFrameDecoder hvdDecoder;
+    HvdSettings hvdSettings;
     OutputWriter outputWriter;
     PalColour::Configuration palConfiguration;
     Comb::Configuration ntscConfiguration;

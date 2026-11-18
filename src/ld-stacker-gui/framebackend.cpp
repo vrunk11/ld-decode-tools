@@ -46,6 +46,7 @@ FrameBackend::FrameBackend(QObject *parent)
     qRegisterMetaType<QVector<StackSnrPoint>>("QVector<StackSnrPoint>");
     qRegisterMetaType<PalColour::Configuration>("PalColour::Configuration");
     qRegisterMetaType<Comb::Configuration>("Comb::Configuration");
+    qRegisterMetaType<HvdSettings>("HvdSettings");
 
     // As ld-analyse sets them: 2D decoders, which need only the frame itself, and 16-bit colour
     palConfiguration = palColour.getConfiguration();
@@ -143,6 +144,8 @@ std::shared_ptr<FrameBackend::Loaded> FrameBackend::loadSource(const QString &id
     info.blackIre = videoParameters.black16bIre;
     info.whiteIre = videoParameters.white16bIre;
     info.tapeFormat = videoParameters.tapeFormat;
+    info.systemVariant = videoParameters.systemVariant;
+    info.decoder = videoParameters.decoder;
     info.gitCommit = videoParameters.gitCommit;
     info.fields = loaded->metadata.getNumberOfFields();
     info.history = LdxCapture::historyOf(file);
@@ -366,16 +369,22 @@ QImage FrameBackend::blankPicture(const FrameRequest &request) const
     return QImage();
 }
 
-void FrameBackend::setChromaConfiguration(const PalColour::Configuration &pal, const Comb::Configuration &ntsc)
+void FrameBackend::setChromaConfiguration(const PalColour::Configuration &pal, const Comb::Configuration &ntsc, const HvdSettings &hvd)
 {
     palConfiguration = pal;
     ntscConfiguration = ntsc;
+    hvdSettings = hvd;
     decoderKey.clear();   // the decoders are set up again for the next picture
 }
 
 // How many frames before and after the one decoded the decoder looks at (0 for the 2D ones)
 void FrameBackend::lookRange(VideoSystem system, qint32 &lookBehind, qint32 &lookAhead) const
 {
+    if (hvdSettings.enabled) {
+        // (HVD 3D looks at the frames round the one decoded; 2D at none)
+        lookBehind = lookAhead = hvdSettings.temporal ? std::max(0, hvdSettings.overlap) : 0;
+        return;
+    }
     const bool isPal = system == PAL || system == PAL_M;
     lookBehind = isPal ? palConfiguration.getLookBehind() : ntscConfiguration.getLookBehind();
     lookAhead = isPal ? palConfiguration.getLookAhead() : ntscConfiguration.getLookAhead();
@@ -384,14 +393,28 @@ void FrameBackend::lookRange(VideoSystem system, qint32 &lookBehind, qint32 &loo
 void FrameBackend::configureDecoders(LdDecodeMetaData::VideoParameters videoParameters)
 {
     // Set up again only when the video is not what the decoders were set up for
-    const QString key = QString("%1/%2/%3/%4/%5/%6/%7/%8/%9/%10/%11").arg(videoParameters.system).arg(videoParameters.fieldWidth)
+    const QString key = QString("%1/%2/%3/%4/%5/%6/%7/%8/%9/%10/%11/%12").arg(videoParameters.system).arg(videoParameters.fieldWidth)
         .arg(videoParameters.fieldHeight).arg(videoParameters.black16bIre).arg(videoParameters.white16bIre)
         .arg(videoParameters.colourBurstStart).arg(videoParameters.colourBurstEnd).arg(videoParameters.activeVideoStart)
-        .arg(videoParameters.activeVideoEnd).arg(videoParameters.firstActiveFrameLine).arg(videoParameters.lastActiveFrameLine);
+        .arg(videoParameters.activeVideoEnd).arg(videoParameters.firstActiveFrameLine).arg(videoParameters.lastActiveFrameLine).arg(videoParameters.systemVariant);
     if (key == decoderKey) return;
     decoderKey = key;
 
-    updateColourConfiguration(videoParameters, palColour, palConfiguration, ntscColour, ntscConfiguration);
+    // A VideoDisc (NTSC-VHD): its colour subcarrier is not the one of NTSC, so only the HVD decoder, with its non-standard subcarrier, can decode it
+    if (isVhd(videoParameters.systemVariant)) hvdSettings.forceVhd();
+    const bool isPal = videoParameters.system == PAL || videoParameters.system == PAL_M;
+    MonoDecoder::MonoConfiguration monoConfiguration;
+    monoConfiguration.yNRLevel = isPal ? palConfiguration.yNRLevel : ntscConfiguration.yNRLevel;
+    if (!hvdSettings.enabled) updateColourConfiguration(videoParameters, palColour, palConfiguration, ntscColour, ntscConfiguration);
+    monoDecoder.updateConfiguration(videoParameters, monoConfiguration);
+    if (hvdSettings.enabled) {
+        // HVD is for a composite capture: when it cannot work on this one the decoder is given up for the others
+        hvdDecoder.setLumaNR(monoConfiguration.yNRLevel);
+        if (!hvdDecoder.configure(videoParameters, hvdSettings.makeConfig(palConfiguration.chromaGain, palConfiguration.chromaPhase), hvdSettings.temporal)) {
+            hvdSettings.enabled = false;
+            updateColourConfiguration(videoParameters, palColour, palConfiguration, ntscColour, ntscConfiguration);
+        }
+    }
     outputWriter.updateConfiguration(videoParameters, outputConfiguration);
 }
 
@@ -429,8 +452,15 @@ QImage FrameBackend::chromaPicture(Loaded &source, qint32 ownFrame, const QVecto
     }
 
     QVector<ComponentFrame> componentFrames(1);
-    if (isPal) palColour.decodeFrames(fields, startIndex, endIndex, componentFrames);
-    else ntscColour.decodeFrames(fields, startIndex, endIndex, componentFrames);
+    if (hvdSettings.enabled) {
+        hvdDecoder.decodeFrames(fields, startIndex, endIndex, componentFrames);
+    } else if (isPal) {
+        if (palConfiguration.chromaFilter == PalColour::mono) monoDecoder.decodeFrames(fields, startIndex, endIndex, componentFrames);
+        else palColour.decodeFrames(fields, startIndex, endIndex, componentFrames);
+    } else {
+        if (ntscConfiguration.dimensions == 0) monoDecoder.decodeFrames(fields, startIndex, endIndex, componentFrames);
+        else ntscColour.decodeFrames(fields, startIndex, endIndex, componentFrames);
+    }
 
     OutputFrame outputFrame;
     outputWriter.convert(componentFrames[0], outputFrame);

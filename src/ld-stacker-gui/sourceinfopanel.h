@@ -16,6 +16,7 @@
 struct SourceInfo;
 class QLabel;
 class QToolButton;
+class CoverWidget;
 class QTextBrowser;
 
 // A panel between the list of the sources and the picture, with what is known of the source that is chosen and that the window does not show
@@ -38,11 +39,19 @@ public:
     // The text of the panel for a source (rich text), apart from the widget so that it can be tried
     static QString describe(const SourceInfo &info, const QString &title, bool loaded);
 
+protected:
+    void resizeEvent(QResizeEvent *event) override;
+
 signals:
     void mapRequested();
     void snrUpdateRequested();
 
 private:
+    void showCover(const QString &source);
+
+    class QFrame *coverFrame = nullptr;
+    CoverWidget *coverWidget;
+    QString coverFile;
     QTextBrowser *browser;
     QToolButton *mapButton;
     QLabel *mapStatus;

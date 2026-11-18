@@ -30,6 +30,7 @@
 #include "framebackend.h"
 #include "discnumbering.h"
 #include "optionsdialogs.h"
+#include "chromadecoderconfigdialog.h"
 #include "snrplot.h"
 #include "sourceinfopanel.h"
 #include "mapdialog.h"
@@ -46,6 +47,8 @@ class MainWindow : public QMainWindow
     Q_OBJECT
 
 public:
+    // Show or hide the information panel of the source that is chosen (the Info button)
+    void setInfoShown(bool shown);
     // arguments: a .stack session file, or the sources (TBC files) to start with
     explicit MainWindow(const QStringList &arguments, QWidget *parent = nullptr);
     ~MainWindow() override;
@@ -198,7 +201,10 @@ private:
     StackOutputWindow *stackWindow = nullptr;
     StackingOptionsDialog *optionsDialog = nullptr;
     EnhanceDialog *enhanceDialog = nullptr;
-    ChromaConfigDialog *chromaDialog = nullptr;
+    ChromaDecoderConfigDialog *chromaDialog = nullptr;      // the chroma decoder configuration of ld-analyse: the decoder, and the settings of each
+    bool chromaKnown = false;
+    VideoSystem chromaSystem = NTSC;
+    QString chromaVariant;
     QAction *stackOutputAction = nullptr;
     QVector<float> stackWhite;    // the SNR of the stack per frame, NaN until measured
     QVector<float> stackBlack;
@@ -275,6 +281,8 @@ private:
     bool scaleWindowWithZoom = false;   // View > Scale window with zoom: the window is resized to the picture each time the zoom changes
     bool fitPicture = false;        // and its first picture is to be shown at its original size
     bool fitWindow = false;         // a session was opened: the window is to fit its picture at its own zoom
+    qint64 fitWindowUntil = 0;      // (and it goes on fitting the picture until then)
+    QSize fitWindowShape;
     QLabel *statusSources = nullptr;
     QLabel *statusMode = nullptr;
     QLabel *statusFormat = nullptr;

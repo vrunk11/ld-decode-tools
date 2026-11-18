@@ -11,6 +11,9 @@
 #include "sourceinfopanel.h"
 
 #include "framebackend.h"
+#include "captureinfo.h"
+#include "coverwidget.h"
+#include "ldxcapture.h"
 
 #include <QFileInfo>
 #include <QHBoxLayout>
@@ -18,6 +21,7 @@
 #include <QJsonObject>
 #include <QIcon>
 #include <QLabel>
+#include <QPixmap>
 #include <QToolButton>
 #include <QTextBrowser>
 #include <QVBoxLayout>
@@ -28,6 +32,20 @@ SourceInfoPanel::SourceInfoPanel(QWidget *parent) : QFrame(parent)
     setMinimumWidth(280);
     QVBoxLayout *layout = new QVBoxLayout(this);
     layout->setContentsMargins(8, 8, 8, 8);
+    // The cover of an LDX file (section 9 of the specification), whole, above the information; nothing is shown for a source that has none
+    // (in a sunken frame, as the picture is in ld-analyse, with no margin round it: it takes the width of the panel)
+    coverFrame = new QFrame(this);
+    coverFrame->setFrameShape(QFrame::StyledPanel);
+    coverFrame->setFrameShadow(QFrame::Sunken);
+    coverFrame->setBackgroundRole(QPalette::Base);
+    coverFrame->setAutoFillBackground(true);
+    QVBoxLayout *coverLayout = new QVBoxLayout(coverFrame);
+    coverLayout->setContentsMargins(0, 0, 0, 0);
+    coverWidget = new CoverWidget(coverFrame);
+    coverWidget->setFill(true);
+    coverLayout->addWidget(coverWidget, 0, Qt::AlignHCenter);
+    coverFrame->hide();
+    layout->addWidget(coverFrame);
     browser = new QTextBrowser(this);
     browser->setOpenLinks(false);
     layout->addWidget(browser, 1);
@@ -103,6 +121,7 @@ void SourceInfoPanel::setMessage(const QString &message)
 
 void SourceInfoPanel::setSource(const SourceInfo &info, const QString &title, bool loaded)
 {
+    showCover(info.file);
     browser->setHtml(describe(info, title, loaded));
 }
 
@@ -155,7 +174,7 @@ QString SourceInfoPanel::describe(const SourceInfo &info, const QString &title, 
     html += row(tr("Metadata"), info.metadataFile.isEmpty() ? QStringLiteral("-") : QFileInfo(info.metadataFile).fileName() + QStringLiteral(" (") + info.metadataFormat + QStringLiteral(")"));
 
     html += heading(tr("Video"));
-    html += row(tr("System"), systemName(info.system) + (info.widescreen ? tr(", widescreen") : QString()));
+    html += row(tr("System"), (info.systemVariant.isEmpty() ? systemName(info.system) : videoSystemFileName(info.system, info.systemVariant)) + (info.widescreen ? tr(", widescreen") : QString()));
     html += row(tr("Frames"), tr("%1 (%2 fields)").arg(info.frames).arg(info.fields));
     html += row(tr("Field size"), QStringLiteral("%1 x %2").arg(info.fieldWidth).arg(info.fieldHeight));
     if (info.sampleRate > 0) html += row(tr("Sample rate"), QStringLiteral("%1 MHz").arg(info.sampleRate / 1.0e6, 0, 'f', 3));
@@ -163,6 +182,20 @@ QString SourceInfoPanel::describe(const SourceInfo &info, const QString &title, 
     if (info.blackIre >= 0 && info.whiteIre >= 0) html += row(tr("Black, white"), QStringLiteral("%1, %2 (16-bit)").arg(info.blackIre).arg(info.whiteIre));
     if (!info.tapeFormat.isEmpty()) html += row(tr("Tape format"), info.tapeFormat);
     if (!info.gitCommit.isEmpty()) html += row(tr("Decoded by"), info.gitCommit);
+
+    // What a person said of the capture, and where it comes from (an LDX file)
+    {
+        const QVector<CaptureInfo::Row> said = CaptureInfo::saidRows(info.file);
+        if (!said.isEmpty()) {
+            html += heading(tr("Capture"));
+            for (const CaptureInfo::Row &item : said) html += row(item.name, item.value);
+        }
+        const QVector<CaptureInfo::Row> from = CaptureInfo::rfSourceRows(info.file);
+        if (!from.isEmpty()) {
+            html += heading(tr("RF source"));
+            for (const CaptureInfo::Row &item : from) html += row(item.name, item.value);
+        }
+    }
 
     html += heading(tr("Disc (VBI)"));
     if (info.discType == 0 && info.vbiFrames == 0) {
@@ -210,4 +243,29 @@ QString SourceInfoPanel::describe(const SourceInfo &info, const QString &title, 
         html += QStringLiteral("</table>");
     }
     return html;
+}
+
+// The cover of the LDX file the source is a track of: read when the file changes (the picture, or where it is kept, and the link), and shown by the widget
+void SourceInfoPanel::showCover(const QString &source)
+{
+    QString path = source;
+    if (LdxCapture::isLdxName(source)) {
+        qint32 track = 0;
+        LdxCapture::split(source, path, track);
+    } else {
+        path.clear();
+    }
+    if (path == coverFile) return;
+    coverFile = path;
+    LdxCapture::CoverInfo info;
+    QString why;
+    if (!path.isEmpty() && LdxCapture::readCoverInfo(path, info, why)) coverWidget->setContent(info.image, info.source, info.link, path);
+    else coverWidget->setContent(QByteArray(), QString(), QString(), QString());
+    coverFrame->setVisible(!coverWidget->isHidden());
+}
+
+void SourceInfoPanel::resizeEvent(QResizeEvent *event)
+{
+    QFrame::resizeEvent(event);
+    coverWidget->setRoom(QSize(std::max(120, width() - 20), 300));
 }

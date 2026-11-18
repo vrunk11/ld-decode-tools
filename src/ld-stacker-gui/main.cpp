@@ -39,6 +39,8 @@ int main(int argc, char *argv[])
     parser.addVersionOption();
     addStandardDebugOptions(parser);
     parser.addOption(QCommandLineOption("force-dark-theme", "Force dark theme regardless of system settings"));
+    parser.addOption(QCommandLineOption("show-info", "With --screenshot: show the information panel of the source that is chosen"));
+    parser.addOption(QCommandLineOption("screenshot", "Write what the window shows to a PNG file a few seconds after the sources are loaded, and quit (for documentation and tests)", "file"));
     parser.addPositionalArgument("files", QCoreApplication::translate("main", "A .stack session file, or the TBC sources to stack"), "[files...]");
     parser.process(application);
     processStandardDebugOptions(parser);
@@ -47,5 +49,15 @@ int main(int argc, char *argv[])
 
     MainWindow window(parser.positionalArguments());
     window.show();
+    if (parser.isSet("screenshot")) {
+        window.resize(1280, 800);
+        const QString target = parser.value("screenshot");
+        const bool info = parser.isSet("show-info");
+        QTimer::singleShot(3500, &window, [&window, info] { if (info) window.setInfoShown(true); });
+        QTimer::singleShot(6500, &window, [&window, &application, target] {
+            window.grab().save(target);
+            application.quit();
+        });
+    }
     return application.exec();
 }

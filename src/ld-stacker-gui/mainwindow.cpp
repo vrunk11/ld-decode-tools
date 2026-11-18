@@ -107,7 +107,8 @@ MainWindow::MainWindow(const QStringList &arguments, QWidget *parent)
 
     optionsDialog = new StackingOptionsDialog(this);
     enhanceDialog = new EnhanceDialog(this);
-    chromaDialog = new ChromaConfigDialog(this);
+    chromaDialog = new ChromaDecoderConfigDialog(this);
+    chromaDialog->setStack(true);
     for (QDialog *dialog: { static_cast<QDialog *>(optionsDialog), static_cast<QDialog *>(enhanceDialog), static_cast<QDialog *>(chromaDialog) }) {
         dialog->setWindowFlag(Qt::Window, true);
     }
@@ -125,10 +126,11 @@ MainWindow::MainWindow(const QStringList &arguments, QWidget *parent)
         applyZoom();
         if (stackWindow->isVisible() && lastStackResult.view == "stack") showStackPicture(lastStackResult);
     });
-    connect(chromaDialog, &ChromaConfigDialog::changed, this, [this]() {
+    connect(chromaDialog, &ChromaDecoderConfigDialog::chromaDecoderConfigChanged, this, [this]() {
         QMetaObject::invokeMethod(backend, "setChromaConfiguration", Qt::QueuedConnection,
-                                  Q_ARG(PalColour::Configuration, chromaDialog->palConfiguration()),
-                                  Q_ARG(Comb::Configuration, chromaDialog->ntscConfiguration()));
+                                  Q_ARG(PalColour::Configuration, chromaDialog->getPalConfiguration()),
+                                  Q_ARG(Comb::Configuration, chromaDialog->getNtscConfiguration()),
+                                  Q_ARG(HvdSettings, chromaDialog->getHvdSettings()));
         if (project.chroma) requestFrame();
     });
     syncDialogs();
@@ -663,8 +665,18 @@ void MainWindow::addSourcesDialog()
     addSources(files);
 }
 
-void MainWindow::addSources(const QStringList &files)
+void MainWindow::addSources(const QStringList &filesGiven)
 {
+    // A .stack file given to an empty list (Add source... takes them too) is a session: it is opened as one, which also fits the window to its picture
+    QStringList files = filesGiven;
+    if (project.sources.isEmpty()) {
+        for (int i = 0; i < files.size(); ++i) {
+            if (!files[i].endsWith(QLatin1String(".stack"), Qt::CaseInsensitive)) continue;
+            const QString session = files.takeAt(i);
+            loadSession(session);
+            break;
+        }
+    }
     // The first source imported shows at its original size; those after it change nothing
     if (project.sources.isEmpty() && resizeOnFirstImport) fitFirstSource = true;
     for (const QString &name: files) {
@@ -760,6 +772,8 @@ void MainWindow::applySession(const StackProject &loaded, const QString &fileNam
     fitFirstSource = false;   // a session has its own zoom
     fitPicture = false;
     fitWindow = true;
+    fitWindowUntil = 0;         // (counted from the first picture: the sources can be long to open)
+    fitWindowShape = QSize();
 
     // What was loaded is let go of
     for (const StackSource &source: project.sources) {
@@ -902,7 +916,26 @@ void MainWindow::on_sourceLoaded(const SourceInfo &info)
                 return;
             }
         }
-        chromaDialog->setSystem(info.system, true);
+        // The chroma decoders for the system of the sources: set up when it is known, or when it is not the one it was (the choices are kept as they are otherwise)
+        if (!chromaKnown || chromaSystem != info.system || chromaVariant != info.systemVariant) {
+            LdDecodeMetaData::VideoParameters parameters;
+            parameters.system = info.system;
+            parameters.systemVariant = info.systemVariant;
+            parameters.tapeFormat = info.tapeFormat;
+            parameters.decoder = info.decoder;
+            chromaDialog->setSystemVariant(info.systemVariant);
+            chromaDialog->setSource(parameters, nullptr);
+            chromaDialog->setConfiguration(info.system, chromaKnown ? chromaDialog->getPalConfiguration() : PalColour::Configuration(),
+                                           chromaKnown ? chromaDialog->getNtscConfiguration() : Comb::Configuration(), HvdSettings(), MonoDecoder::MonoConfiguration(),
+                                           ChromaDecoderConfigDialog::ONE_SOURCE, false, OutputWriter::Configuration());
+            chromaKnown = true;
+            chromaSystem = info.system;
+            chromaVariant = info.systemVariant;
+            QMetaObject::invokeMethod(backend, "setChromaConfiguration", Qt::QueuedConnection,
+                                      Q_ARG(PalColour::Configuration, chromaDialog->getPalConfiguration()),
+                                      Q_ARG(Comb::Configuration, chromaDialog->getNtscConfiguration()),
+                                      Q_ARG(HvdSettings, chromaDialog->getHvdSettings()));
+        }
     }
 
     if (info.ok && fitFirstSource) {
@@ -1871,8 +1904,15 @@ void MainWindow::on_frameReady(const FrameResult &result)
                 setZoom(1.0);
                 resizeToImage();
             } else if (fitWindow) {
-                fitWindow = false;
-                resizeToImage();
+                // A session was opened: the window fits the picture, and goes on fitting it for a few seconds, while the sources load and the picture takes
+                // its shape (the first one can come before the size of the sources, or the shape of the video, is known)
+                if (fitWindowUntil == 0) fitWindowUntil = QDateTime::currentMSecsSinceEpoch() + 4000;
+                if (QDateTime::currentMSecsSinceEpoch() > fitWindowUntil) {
+                    fitWindow = false;
+                } else if (imageLabel->minimumSize() != fitWindowShape) {
+                    fitWindowShape = imageLabel->minimumSize();
+                    resizeToImage();
+                }
             }
         }
     }
@@ -2744,4 +2784,9 @@ QImage MainWindow::shownImage(const QImage &image) const
     if (adjustment == 0 || shown.isNull()) return shown;
     return shown.scaled(shown.width() + adjustment, shown.height(), Qt::IgnoreAspectRatio,
                         zoomMethod == 0 ? Qt::FastTransformation : Qt::SmoothTransformation);
+}
+
+void MainWindow::setInfoShown(bool shown)
+{
+    infoButton->setChecked(shown);
 }

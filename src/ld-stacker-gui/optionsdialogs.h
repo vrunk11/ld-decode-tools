@@ -70,44 +70,5 @@ private:
     QSlider *gammaSlider = nullptr;
 };
 
-// The configuration of the chroma decoders used for the pictures
-class ChromaConfigDialog : public QDialog
-{
-    Q_OBJECT
-
-public:
-    explicit ChromaConfigDialog(QWidget *parent = nullptr);
-
-    // The system of the sources: the settings of the other one are left unavailable
-    void setSystem(VideoSystem system, bool known);
-    PalColour::Configuration palConfiguration() const { return pal; }
-    Comb::Configuration ntscConfiguration() const { return ntsc; }
-
-signals:
-    void changed();
-
-private:
-    void read();
-
-    PalColour::Configuration pal;
-    Comb::Configuration ntsc;
-
-    QDoubleSpinBox *gainSpin = nullptr;
-    QDoubleSpinBox *phaseSpin = nullptr;
-    QDoubleSpinBox *lumaNrSpin = nullptr;
-
-    QWidget *palBox = nullptr;
-    QComboBox *palFilterCombo = nullptr;
-    QDoubleSpinBox *thresholdSpin = nullptr;
-    QCheckBox *simplePalCheck = nullptr;
-
-    QWidget *ntscBox = nullptr;
-    QComboBox *ntscDimensionsCombo = nullptr;
-    QCheckBox *adaptiveCheck = nullptr;
-    QCheckBox *phaseCompensationCheck = nullptr;
-    QDoubleSpinBox *chromaNrSpin = nullptr;
-    QDoubleSpinBox *adaptThresholdSpin = nullptr;
-    QDoubleSpinBox *chromaWeightSpin = nullptr;
-};
 
 #endif // OPTIONSDIALOGS_H
