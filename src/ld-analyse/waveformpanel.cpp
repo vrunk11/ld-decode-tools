@@ -235,6 +235,7 @@ static QString sourceName(const QString &source)
     if (source == "analogue") return QObject::tr("Analogue");
     if (source == "efm") return QObject::tr("EFM digital");
     if (source == "import") return QObject::tr("Imported");
+    if (source == "mix") return QObject::tr("Mix");
     return source;
 }
 

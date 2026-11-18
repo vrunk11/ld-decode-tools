@@ -31,6 +31,17 @@ public:
     explicit VectorscopeDialog(QWidget *parent = nullptr);
     ~VectorscopeDialog();
 
+    // What the controls say (see prepare): the scope is drawn from it, which can be done away from the window
+    struct Options {
+        bool blend = false, defocus = false, all = true, first = false, second = false, graticuleNone = false, graticule75 = false;
+    };
+    // Set the controls as the view lets them be, and read them
+    Options prepare(const TbcSource::ViewMode &viewMode, const bool isFirstField);
+    // Draw the trace (it does not touch the window: any thread can)
+    static QImage renderTrace(const ComponentFrame &componentFrame, const LdDecodeMetaData::VideoParameters &videoParameters, const Options &options);
+    // Show a trace that was drawn
+    void showTraceImage(const QImage &traceImage);
+
     void showTraceImage(const ComponentFrame &componentFrame, const LdDecodeMetaData::VideoParameters &videoParameters,
                         const TbcSource::ViewMode& viewMode, const bool isFirstField);
 
@@ -46,7 +57,6 @@ private slots:
 private:
     Ui::VectorscopeDialog *ui;
 
-    QImage getTraceImage(const ComponentFrame &componentFrame, const LdDecodeMetaData::VideoParameters &videoParameters);
 };
 
 #endif // VECTORSCOPEDIALOG_H

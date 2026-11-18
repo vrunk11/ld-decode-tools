@@ -647,6 +647,7 @@
     </property>
     <addaction name="actionOpen_TBC_file"/>
     <addaction name="actionReload_TBC"/>
+    <addaction name="actionSource_information"/>
     <addaction name="actionSave_Metadata"/>
     <addaction name="separator"/>
     <addaction name="actionSave_frame_as_PNG"/>
@@ -699,6 +700,11 @@
   <action name="actionAbout_ld_analyse">
    <property name="text">
     <string>About ld-analyse...</string>
+   </property>
+  </action>
+  <action name="actionSource_information">
+   <property name="text">
+    <string>Source information...</string>
    </property>
   </action>
   <action name="actionOpen_TBC_file">

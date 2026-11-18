@@ -532,6 +532,8 @@ VideoSystem TbcSource::getSystem()
 QString TbcSource::getSystemDescription()
 {
     if (!sourceReady) return "None";
+    const LdDecodeMetaData::VideoParameters &parameters = ldDecodeMetaData.getVideoParameters();
+    if (!parameters.systemVariant.isEmpty()) return videoSystemFileName(parameters.system, parameters.systemVariant);
     return ldDecodeMetaData.getVideoSystemDescription();
 }
 
@@ -1046,6 +1048,8 @@ void TbcSource::configureChromaDecoder()
 {
     // Configure the chroma decoder
     LdDecodeMetaData::VideoParameters videoParameters = ldDecodeMetaData.getVideoParameters(); 
+    // A VideoDisc (NTSC-VHD): its colour subcarrier is not the one of NTSC, so only the HVD decoder, with its non-standard subcarrier, can decode it
+    if (isVhd(videoParameters.systemVariant)) hvdSettings.forceVhd();
 	
     monoConfiguration.yNRLevel = usesPalColour(videoParameters.system) ? palConfiguration.yNRLevel : ntscConfiguration.yNRLevel;
     // (HVD has its own decoder: the Transform one, with the FFT plans it makes, is not needed unless the chroma comes from a source of its own)
@@ -2046,4 +2050,14 @@ qint32 TbcSource::numberOfWholeFrames()
 void TbcSource::setHvdThreads(qint32 threads)
 {
     hvdDecoder.setThreads(threads);
+}
+
+bool TbcSource::getStackAudioSpans(QVector<StackAudioSpan> &spans, qint32 &timelineFrames)
+{
+    return sourceReady && sourceVideo.stackAudioSpans(spans, timelineFrames);
+}
+
+QString TbcSource::getSystemVariant()
+{
+    return sourceReady ? ldDecodeMetaData.getVideoParameters().systemVariant : QString();
 }

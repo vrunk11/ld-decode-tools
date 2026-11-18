@@ -27,6 +27,10 @@
 #include "cvbs.h"
 #include "stackproject.h"
 #include "tbcfiles.h"
+#include "sourceinfodialog.h"
+#include <QHBoxLayout>
+#include <QLabel>
+#include <QToolButton>
 #include <QDragEnterEvent>
 #include <QDropEvent>
 #include <QMimeData>
@@ -44,6 +48,73 @@ MainWindow::MainWindow(QString inputFilenameParam, const TbcSource::StreamInput 
     // Set up dialogues
     oscilloscopeDialog = new OscilloscopeDialog(this);
     vectorscopeDialog = new VectorscopeDialog(this);
+    scopeUpdater = new ScopeUpdater(this);
+    connect(scopeUpdater, &ScopeUpdater::ready, this, &MainWindow::scopesReady);
+
+    // The information on the source, beside the picture: a dock that can be put on either side or taken out of the window (View > Source information, Ctrl+Shift+I)
+    m_sourceInfo = new SourceInfoDialog(this);
+    m_sourceDock = new QDockWidget(tr("Source information"), this);
+    m_sourceDock->setObjectName(QStringLiteral("sourceInformationDock"));
+    m_sourceDock->setWidget(m_sourceInfo);
+    m_sourceDock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
+    addDockWidget(Qt::RightDockWidgetArea, m_sourceDock);
+    m_sourceDock->resize(320, m_sourceDock->height());
+    // (a title bar of its own: the buttons of the style are dark on dark in a dark theme)
+    {
+        auto *bar = new QWidget(m_sourceDock);
+        auto *barLayout = new QHBoxLayout(bar);
+        barLayout->setContentsMargins(8, 2, 4, 2);
+        auto *title = new QLabel(tr("Source information"), bar);
+        QFont bold = title->font();
+        bold.setBold(true);
+        title->setFont(bold);
+        barLayout->addWidget(title, 1);
+        auto *detach = new QToolButton(bar);
+        detach->setAutoRaise(true);
+        detach->setToolTip(tr("Detach from the window, or put it back"));
+        auto *close = new QToolButton(bar);
+        close->setAutoRaise(true);
+        close->setText(QString(QChar(0x2715)));
+        close->setToolTip(tr("Close"));
+        barLayout->addWidget(detach);
+        barLayout->addWidget(close);
+        m_sourceDock->setTitleBarWidget(bar);
+        const auto showFloating = [detach](bool floating) { detach->setText(QString(QChar(floating ? 0x2199 : 0x2197))); };
+        showFloating(false);
+        connect(detach, &QToolButton::clicked, this, [this]() { m_sourceDock->setFloating(!m_sourceDock->isFloating()); });
+        connect(close, &QToolButton::clicked, m_sourceDock, &QDockWidget::close);
+        connect(m_sourceDock, &QDockWidget::topLevelChanged, this, showFloating);
+    }
+    // The window grows by the room of the panel when it is shown on a side, and goes back when it is hidden or detached (not when it is maximized)
+    const auto adjustForDock = [this]() {
+        constexpr int kDockWidth = 300;
+        const bool wanted = m_sourceDock->isVisible() && !m_sourceDock->isFloating();
+        if (wanted == m_dockAdded) return;
+        m_dockAdded = wanted;
+        if (isMaximized() || isFullScreen()) return;
+        resize(width() + (wanted ? kDockWidth : -kDockWidth), height());
+        if (wanted) resizeDocks({ m_sourceDock }, { kDockWidth }, Qt::Horizontal);
+    };
+    connect(m_sourceDock, &QDockWidget::visibilityChanged, this, [adjustForDock](bool) { adjustForDock(); });
+    connect(m_sourceDock, &QDockWidget::topLevelChanged, this, [adjustForDock](bool) { adjustForDock(); });
+    m_sourceDock->hide();
+    {
+        QAction *toggle = m_sourceDock->toggleViewAction();
+        toggle->setText(tr("Source &information"));
+        toggle->setShortcut(Qt::CTRL | Qt::SHIFT | Qt::Key_I);
+        ui->menuView->addSeparator();
+        ui->menuView->addAction(toggle);
+    }
+    // The Track menu, after File
+    m_trackMenu = new QMenu(tr("&Track"), this);
+    m_trackGroup = new QActionGroup(this);
+    m_trackGroup->setExclusive(true);
+    {
+        const QList<QAction *> top = ui->menuBar->actions();
+        const int at = top.indexOf(ui->menuFile->menuAction());
+        ui->menuBar->insertMenu(at >= 0 && at + 1 < top.size() ? top[at + 1] : nullptr, m_trackMenu);
+    }
+    m_trackMenu->menuAction()->setVisible(false);
     aboutDialog = new AboutDialog(this);
     vbiDialog = new VbiDialog(this);
     dropoutAnalysisDialog = new DropoutAnalysisDialog(this);
@@ -84,6 +155,9 @@ MainWindow::MainWindow(QString inputFilenameParam, const TbcSource::StreamInput 
 
     // Connect to the chroma decoder configuration changed signal
     connect(chromaDecoderConfigDialog, &ChromaDecoderConfigDialog::chromaDecoderConfigChanged, this, &MainWindow::chromaDecoderConfigChangedSignalHandler);
+    connect(chromaDecoderConfigDialog, &ChromaDecoderConfigDialog::combineChanged, this, [this](bool combine) { tbcSource.setCombine(combine); });
+    // (the dialog has its own list of what the sources are: the same as the source of ld-analyse)
+    static_assert(static_cast<int>(TbcSource::ONE_SOURCE) == static_cast<int>(ChromaDecoderConfigDialog::ONE_SOURCE) && static_cast<int>(TbcSource::BOTH_SOURCES) == static_cast<int>(ChromaDecoderConfigDialog::BOTH_SOURCES), "the sources are the same");
 
     // Connect to the TbcSource signals (busy and finished loading)
     connect(&tbcSource, &TbcSource::busy, this, &MainWindow::on_busy);
@@ -1145,10 +1219,12 @@ void MainWindow::resetGui()
     videoParametersDialog->setVideoParameters(tbcSource.getVideoParameters());
 
     // Update the chroma decoder configuration dialogue
+    chromaDecoderConfigDialog->setSystemVariant(tbcSource.getSystemVariant());
+    chromaDecoderConfigDialog->setSource(tbcSource.getVideoParameters(), tbcSource.getDecodingParameters());
     chromaDecoderConfigDialog->setConfiguration(tbcSource.getSystem(), tbcSource.getPalConfiguration(),
                                                 tbcSource.getNtscConfiguration(), tbcSource.getHvdSettings(),
                                                 tbcSource.getMonoConfiguration(),
-                                                tbcSource.getSourceMode(),
+                                                static_cast<ChromaDecoderConfigDialog::SourceMode>(tbcSource.getSourceMode()),
 												true,//set to true because the chroma decoder is already init
 												tbcSource.getOutputConfiguration());
 }
@@ -1157,6 +1233,10 @@ void MainWindow::resetGui()
 // newSource is false when only the view changes (the full screen, the field view...): the choice of the decoder is kept then, and not made again
 void MainWindow::updateGuiLoaded(bool newSource)
 {
+    if (newSource) {
+        updateTrackMenu();
+        refreshSourceInfo();
+    }
     updateChapterMarks();
     // (what the remote kept of another capture is of no use; a change of the view keeps it)
     if (remoteSource != tbcSource.getCurrentSourceFilename()) {
@@ -1218,10 +1298,12 @@ void MainWindow::updateGuiLoaded(bool newSource)
     videoParametersDialog->setVideoParameters(tbcSource.getVideoParameters());
 
     // Update the chroma decoder configuration dialogue
+        chromaDecoderConfigDialog->setSystemVariant(tbcSource.getSystemVariant());
+        chromaDecoderConfigDialog->setSource(tbcSource.getVideoParameters(), tbcSource.getDecodingParameters());
         chromaDecoderConfigDialog->setConfiguration(tbcSource.getSystem(), tbcSource.getPalConfiguration(),
                                                 tbcSource.getNtscConfiguration(), tbcSource.getHvdSettings(),
                                                 tbcSource.getMonoConfiguration(),
-                                                tbcSource.getSourceMode(),
+                                                static_cast<ChromaDecoderConfigDialog::SourceMode>(tbcSource.getSourceMode()),
 												!newSource,//false to init the chroma decoder selection (a new source), true to keep the choice (the view changed)
 												tbcSource.getOutputConfiguration());
 
@@ -1245,6 +1327,8 @@ void MainWindow::updateGuiLoaded(bool newSource)
 // Method to update the GUI when a file is unloaded
 void MainWindow::updateGuiUnloaded()
 {
+    updateTrackMenu();
+    refreshSourceInfo();
     updateChapterMarks();
     memoryFrame = repeatStartFrame = repeatEndFrame = -1;
     keypad.clear();
@@ -1349,7 +1433,7 @@ void MainWindow::updateSourcesPushButton()
 			break;
 		}
 	}
-	chromaDecoderConfigDialog->updateSourceMode(tbcSource.getSourceMode());
+	chromaDecoderConfigDialog->updateSourceMode(static_cast<ChromaDecoderConfigDialog::SourceMode>(tbcSource.getSourceMode()));
 }
 
 // Frame display methods ----------------------------------------------------------------------------------------------
@@ -1452,12 +1536,7 @@ void MainWindow::updateImage()
     updateImageViewer();
 
     // If the scope dialogues are open, update them
-    if (oscilloscopeDialog->isVisible()) {
-        updateOscilloscopeDialogue();
-    }
-    if (vectorscopeDialog->isVisible()) {
-        updateVectorscopeDialogue();
-    }
+    requestScopes(oscilloscopeDialog->isVisible(), vectorscopeDialog->isVisible());
 }
 
 // In the full screen the picture is its active area: what the lines and the width of the video parameters say, without the blanking
@@ -1551,6 +1630,9 @@ void MainWindow::hideImage()
 // Load a TBC file based on the passed file name
 void MainWindow::loadTbcFile(QString inputFileName)
 {
+    m_sourceInfo->clear();      // (it describes the source that was open)
+    scopeUpdater->reset();
+    scopeSettingsValid = false;
     resetContext();
     pausePlayback();
     liveTimer->stop();
@@ -1570,18 +1652,57 @@ void MainWindow::loadTbcFile(QString inputFileName)
 // Method to update the line oscilloscope based on the frame number and scan line
 void MainWindow::updateOscilloscopeDialogue()
 {
-    // Update the oscilloscope dialogue
-    oscilloscopeDialog->showTraceImage(tbcSource.getScanLineData(lastScopeLine),
-                                       lastScopeDot, lastScopeLine - 1,
-                                       tbcSource.getFrameWidth(), tbcSource.getFrameHeight(), tbcSource.getSourceMode() == TbcSource::SourceMode::BOTH_SOURCES);
+    requestScopes(true, vectorscopeDialog->isVisible());
 }
 
 // Method to update the vectorscope
 void MainWindow::updateVectorscopeDialogue()
 {
-    // Update the vectorscope dialogue
-    vectorscopeDialog->showTraceImage(tbcSource.getComponentFrame(), tbcSource.getVideoParameters(),
-                                      tbcSource.getViewMode(), currentFieldNumber % 2);
+    requestScopes(oscilloscopeDialog->isVisible(), true);
+}
+
+// The scopes of the frame that is shown. What they need of the source (the fields read, the frame decoded, the vector scope drawn) is done in a thread of their own,
+// so it does not hold up the window, the playback least of all; what is made is shown when it is ready (scopesReady). A stream, and a weave, are done here.
+void MainWindow::requestScopes(bool line, bool vector)
+{
+    if (!line && !vector) return;
+    if (!tbcSource.getIsSourceLoaded()) return;
+    if (tbcSource.getIsLive() || tbcSource.getRenderSettings().weave) {
+        if (line) {
+            oscilloscopeDialog->showTraceImage(tbcSource.getScanLineData(lastScopeLine), lastScopeDot, lastScopeLine - 1,
+                                               tbcSource.getFrameWidth(), tbcSource.getFrameHeight(), tbcSource.getSourceMode() == TbcSource::SourceMode::BOTH_SOURCES);
+        }
+        if (vector) {
+            vectorscopeDialog->showTraceImage(tbcSource.getComponentFrame(), tbcSource.getVideoParameters(), tbcSource.getViewMode(), currentFieldNumber % 2);
+        }
+        return;
+    }
+    ScopeUpdater::Request request;
+    if (!scopeSettingsValid || scopeSettingsGeneration != tbcSource.getSettingsGeneration()) {
+        scopeSettings = tbcSource.getRenderSettings();
+        scopeSettingsGeneration = tbcSource.getSettingsGeneration();
+        scopeSettingsValid = true;
+    }
+    request.settings = scopeSettings;
+    request.generation = scopeSettingsGeneration;
+    request.frame = currentFrameNumber;
+    request.field = currentFieldNumber;
+    request.line = lastScopeLine;
+    request.dot = lastScopeDot;
+    request.wantLine = line;
+    request.wantVector = vector;
+    if (vector) request.vectorOptions = vectorscopeDialog->prepare(tbcSource.getViewMode(), currentFieldNumber % 2);
+    scopeUpdater->request(request);
+}
+
+void MainWindow::scopesReady()
+{
+    ScopeUpdater::Result result;
+    if (!scopeUpdater->take(result) || result.failed) return;
+    if (result.hasLine && oscilloscopeDialog->isVisible()) {
+        oscilloscopeDialog->showTraceImage(result.scanLine, result.dot, result.line - 1, result.frameWidth, result.frameHeight, result.bothSources);
+    }
+    if (result.hasVector && vectorscopeDialog->isVisible()) vectorscopeDialog->showTraceImage(result.vectorImage);
 }
 
 // Method to set the view (field/frame) values
@@ -3032,6 +3153,14 @@ void MainWindow::setupAudio()
     connect(waveform, &WaveformPanel::trackSelected, this, [this](qint32 index) {
         const double at = audio->isPlaying() ? audio->videoSecondsNow() : -1.0;
         waveform->setMessage(QString());
+        // (the audio of a stack is made when it is chosen)
+        if (index >= 0 && index < audio->tracks().size()) {
+            const qint32 slot = -2 - audio->tracks()[index].trackId;
+            if (slot >= 21 && slot < 25 && stackAudios[slot - 21]) {
+                stackAudios[slot - 21]->begin();
+                statusBar()->showMessage(tr("Audio of the stack: %1").arg(stackAudios[slot - 21]->description()), 10000);
+            }
+        }
         audio->selectTrack(index);
         waveform->refresh();
         audioFollowVideo(at);
@@ -3443,8 +3572,14 @@ void MainWindow::loadAudio()
         return;
     }
     stopEfmDecoders();
+    unloadStackAudio();
     if (tbcSource.getIsLive() && LdxStream::instance()) {
         loadLiveAudio();
+        audioLoadedKey = key;
+        return;
+    }
+    if (!tbcSource.getIsLive() && tbcSource.getIsStack()) {
+        loadStackAudio();
         audioLoadedKey = key;
         return;
     }
@@ -3669,9 +3804,167 @@ void MainWindow::feedLiveEfm()
 }
 
 // No capture, or one with no audio: nothing to show or to play
+// The EFM a capture has to be decoded: an LDX file that has some, or the .efm beside a .tbc; empty if it has none
+static QString efmFileOfCapture(const QString &name)
+{
+    if (name.isEmpty()) return QString();
+    if (LdxCapture::isLdxName(name)) {
+        QString path;
+        qint32 track = 0;
+        LdxCapture::split(name, path, track);
+        LdxByteTrack probe;
+        QString error;
+        return probe.openFile(path, LdxByteTrack::Kind::Efm, error) && probe.size() > 0 ? path : QString();
+    }
+    const QFileInfo video(name);
+    const QString efm = video.absolutePath() + "/" + video.completeBaseName() + ".efm";
+    return QFileInfo::exists(efm) ? efm : QString();
+}
+
+// The audio of a stack: the audio of its sources, the one that goes on the longest where several have some, from the frame each begins at (see StackAudio). It is
+// of four kinds, by what the sources give: the analogue audio, the digital audio (the EFM is decoded for it, source after source, when it is chosen), the mix and
+// what was imported. Each is a track of its own in the waveform and is made when it is chosen.
+void MainWindow::loadStackAudio()
+{
+    QVector<StackAudioSpan> spans;
+    qint32 frames = 0;
+    audio->setVideo(QString());
+    if (!tbcSource.getStackAudioSpans(spans, frames)) {
+        unloadAudio();
+        return;
+    }
+    const StackAudio::EfmOf efmOf = [](const StackAudioSpan &span) {
+        const QString efm = efmFileOfCapture(span.reference);
+        return efm.isEmpty() ? efmFileOfCapture(span.original) : efm;
+    };
+    struct KindInfo {
+        StackAudio::Kind kind;
+        const char *source;         // what the waveform calls it
+        QString label;
+    };
+    const KindInfo kinds[4] = {
+        { StackAudio::Kind::Analogue, "analogue", tr("Stack, analogue") },
+        { StackAudio::Kind::Digital, "efm", tr("Stack, digital (EFM)") },
+        { StackAudio::Kind::Mixed, "mix", tr("Stack, mix") },
+        { StackAudio::Kind::Imported, "import", tr("Stack, imported") },
+    };
+    const double frameRate = videoFrameRate(tbcSource.getSystem());
+    qint32 indexOf[4] = { -1, -1, -1, -1 };
+    QString lastError;
+    for (qint32 k = 0; k < 4; k++) {
+        auto *made = new StackAudio(this);
+        if (!made->prepare(spans, frames, frameRate, kinds[k].kind, efmOf, lastError)) {
+            delete made;
+            continue;
+        }
+        stackAudios[k] = made;
+        connect(made, &StackAudio::grew, this, [this]() { audio->extend(); });
+        connect(made, &StackAudio::finished, this, [this](bool ok, const QString &message) {
+            audio->extend();
+            if (!ok && !message.isEmpty()) statusBar()->showMessage(message, 10000);
+        });
+        connect(made, &StackAudio::efmNeeded, this, [this, made](qint32 source, const QString &file) { decodeStackEfm(made, source, file); });
+        indexOf[k] = audio->addGrowing(21 + k, kinds[k].source, made->cacheFile(), kinds[k].label, StackAudio::sampleRate());
+    }
+    if (audio->tracks().isEmpty()) {
+        unloadAudio();
+        statusBar()->showMessage(lastError.isEmpty() ? tr("No source of the stack has audio") : lastError, 8000);
+        return;
+    }
+    // The one that is heard first: the digital audio when that is preferred (as for a capture), else the analogue audio, else what the others give
+    const bool preferDigital = configuration.audioValue("preferDigital", true).toBool();
+    const qint32 order[4] = { preferDigital ? 1 : 0, 2, preferDigital ? 0 : 1, 3 };
+    // (not one that has to wait for the EFM to be decoded, if another one can be heard at once)
+    qint32 kind = -1;
+    for (qint32 k: order) {
+        if (indexOf[k] >= 0 && !stackAudios[k]->needsDecoding()) { kind = k; break; }
+    }
+    if (kind < 0) {
+        for (qint32 k: order) {
+            if (indexOf[k] >= 0) { kind = k; break; }
+        }
+    }
+    stackAudios[kind]->begin();
+    audio->selectTrack(indexOf[kind]);
+    waveform->setTracks(audio->tracks(), indexOf[kind]);
+    actionWaveform->setEnabled(true);
+    const QSignalBlocker blocker(actionWaveform);
+    actionWaveform->setChecked(waveformWanted);
+    showWaveform(waveformWanted);
+    updateAudioPlayhead();
+    statusBar()->showMessage(tr("Audio of the stack (%1): %2").arg(kinds[kind].label, stackAudios[kind]->description()), 10000);
+}
+
+// The EFM of a source of a stack is to be decoded: one decoder runs at a time, in the order they were asked for, and what is decoded is kept for the other kinds
+void MainWindow::decodeStackEfm(StackAudio *owner, qint32 source, const QString &efmFile)
+{
+    StackEfmJob *&job = stackEfmJobs[efmFile];
+    if (!job) {
+        job = new StackEfmJob;
+        job->file = efmFile;
+        job->waiters.append({ owner, source });
+        stackEfmQueue.append(efmFile);
+        runStackEfm();
+        return;
+    }
+    if (job->done) {
+        owner->efmDecoded(source, job->pcm);
+        return;
+    }
+    job->waiters.append({ owner, source });
+}
+
+void MainWindow::runStackEfm()
+{
+    if (stackEfmBusy || stackEfmQueue.isEmpty()) return;
+    const QString file = stackEfmQueue.takeFirst();
+    StackEfmJob *job = stackEfmJobs.value(file);
+    if (!job) return;
+    const qint32 backend = audioConfig ? audioConfig->currentDecoder() : configuration.audioValue("decoder", 1).toInt();
+    job->decoder = new EfmDecoding(backend == 0 ? EfmDecoding::Backend::Suite : EfmDecoding::Backend::ProcessEfm, this);
+    EfmDecoding::Options options;
+    options.noTimecodes = true;
+    options.conceal = true;
+    QString error;
+    const auto finish = [this, job](bool success, const QString &message) {
+        if (job->done) return;
+        job->done = true;
+        job->pcm = success ? job->decoder->cacheFile() : QString();
+        stackEfmBusy = false;
+        if (!success && !message.isEmpty()) statusBar()->showMessage(message, 10000);
+        for (const auto &waiter : job->waiters) {
+            if (waiter.first) waiter.first->efmDecoded(waiter.second, job->pcm);
+        }
+        job->waiters.clear();
+        runStackEfm();
+    };
+    connect(job->decoder, &EfmDecoding::finished, this, finish);
+    stackEfmBusy = true;
+    statusBar()->showMessage(tr("Decoding the EFM of %1 for the audio of the stack...").arg(QFileInfo(file).fileName()), 6000);
+    if (!job->decoder->start(file, options, error)) {
+        finish(false, error);
+    }
+}
+
+void MainWindow::unloadStackAudio()
+{
+    for (StackAudio *&made: stackAudios) {
+        delete made;
+        made = nullptr;
+    }
+    for (StackEfmJob *job: std::as_const(stackEfmJobs)) {
+        delete job->decoder;
+        delete job;
+    }
+    stackEfmJobs.clear();
+    stackEfmQueue.clear();
+    stackEfmBusy = false;
+}
+
 void MainWindow::unloadAudio()
 {
     audioLoadedKey.clear();
+    unloadStackAudio();
     stopEfmDecoders();
     if (liveAudioTimer) liveAudioTimer->stop();
     liveAnalogue.reset();
@@ -4874,4 +5167,135 @@ void MainWindow::dropEvent(QDropEvent *event)
     pausePlayback();
     lastFilename = path;
     loadTbcFile(path);
+}
+
+// File > Source information (and View > Source information): the panel with the cover of the file (an LDX file may have one) and what is known of the source that is open
+void MainWindow::on_actionSource_information_triggered()
+{
+    m_sourceDock->setVisible(!m_sourceDock->isVisible());
+}
+
+void MainWindow::refreshSourceInfo()
+{
+    if (tbcSource.getIsSourceLoaded()) m_sourceInfo->setSource(tbcSource);
+    else m_sourceInfo->clear();
+}
+
+// The Track menu: when an LDX file holds several captures, or the source is a stack (the session of an LDX file, or a .stack file: the stack of its sources), the one
+// that is shown is chosen here. A capture is opened by itself, which is the stack turned off; the stack is there to turn it on again, and it stays in the menu while
+// one of the sources of a .stack file is shown.
+void MainWindow::updateTrackMenu()
+{
+    const bool loaded = tbcSource.getIsSourceLoaded() && !tbcSource.getIsLive();
+    const QString name = loaded ? tbcSource.getCurrentSourceFilename() : QString();
+    const bool onStack = loaded && tbcSource.getIsStack();
+    const QString key = name + QLatin1Char('\n') + (onStack ? tbcSource.getCurrentMetadataFilename() : QString());
+    if (key == m_trackMenuFor) return;
+    m_trackMenuFor = key;
+    m_trackMenu->clear();
+
+    // What the entries are: (the text, what opens it)
+    const auto same = [](const QString &a, const QString &b) { return QDir::cleanPath(a).compare(QDir::cleanPath(b), Qt::CaseInsensitive) == 0; };
+    const auto itemsOf = [](const QString &context, QVector<QPair<QString, QString>> &items) {
+        if (LdxCapture::isLdxName(context)) {
+            QString path;
+            qint32 track = 0;
+            LdxCapture::split(context, path, track);
+            QVector<qint32> tracks;
+            QStringList names;
+            QString error;
+            if (!LdxCapture::listCaptures(path, tracks, names, error)) return;
+            for (int i = 0; i < tracks.size(); ++i) items.append({ QObject::tr("Track %1: %2").arg(tracks[i]).arg(names.value(i)), LdxCapture::trackName(path, tracks[i]) });
+            return;
+        }
+        StackProject session;
+        QString error;
+        if (!session.load(context, error)) return;
+        for (int i = 0; i < session.sources.size(); ++i) {
+            const StackSource &source = session.sources[i];
+            // (what the stack reads: the mapping of the capture when the source follows one, which is what is shown in the stack, not the capture it was made from)
+            const QString opens = source.resolvedReference();
+            QString path;
+            qint32 track = 0;
+            LdxCapture::split(opens, path, track);
+            const QString label = source.label.isEmpty() || opens != source.reference() ? QFileInfo(path).fileName() + (track > 0 ? QStringLiteral(" #%1").arg(track) : QString()) : source.label;
+            items.append({ QObject::tr("Source %1: %2").arg(i + 1).arg(label), opens });
+        }
+    };
+
+    QString context;
+    QVector<QPair<QString, QString>> items;
+    if (onStack) {
+        context = tbcSource.getCurrentMetadataFilename();
+        if (LdxCapture::isLdxName(context)) {
+            QString path;
+            qint32 track = 0;
+            LdxCapture::split(context, path, track);
+            context = path;
+        }
+        itemsOf(context, items);
+    } else if (LdxCapture::isLdxName(name)) {
+        QString path;
+        qint32 track = 0;
+        LdxCapture::split(name, path, track);
+        context = path;
+        itemsOf(context, items);
+    } else if (!m_stackContext.isEmpty() && loaded) {
+        // (one of the sources of a .stack file that is shown: the stack it comes from is kept)
+        itemsOf(m_stackContext, items);
+        bool found = false;
+        for (const auto &item : items) found = found || same(item.second, name);
+        if (found) context = m_stackContext;
+        else items.clear();
+    }
+    m_stackContext = context;
+    const bool stack = !context.isEmpty() && StackProject::isSession(context);
+    const int entries = items.size() + (stack ? 1 : 0);
+    m_trackMenu->menuAction()->setVisible(entries > 1);
+    if (entries < 2) return;
+
+    const auto open = [this](const QString &target) {
+        pausePlayback();
+        lastFilename = target;
+        loadTbcFile(target);
+    };
+    // (an LDX file with no session, opened with no track named, shows its first capture)
+    QString current = name;
+    {
+        QString path;
+        qint32 track = 0;
+        if (!stack && LdxCapture::isLdxName(name)) {
+            LdxCapture::split(name, path, track);
+            if (track <= 0 && !items.isEmpty()) current = items.first().second;
+        }
+    }
+    if (stack) {
+        QAction *action = m_trackMenu->addAction(tr("Stack (all the sources)"));
+        action->setCheckable(true);
+        action->setActionGroup(m_trackGroup);
+        action->setChecked(onStack);
+        connect(action, &QAction::triggered, this, [open, context, onStack]() {
+            if (!onStack) open(context);
+        });
+        m_trackMenu->addSeparator();
+    }
+    for (const auto &item : items) {
+        QAction *action = m_trackMenu->addAction(item.first);
+        action->setCheckable(true);
+        action->setActionGroup(m_trackGroup);
+        const bool isCurrent = !onStack && same(item.second, current);
+        action->setChecked(isCurrent);
+        const QString target = item.second;
+        connect(action, &QAction::triggered, this, [open, target, isCurrent]() {
+            if (!isCurrent) open(target);
+        });
+    }
+}
+
+bool MainWindow::saveSourceInformationPicture(const QString &path)
+{
+    if (tbcSource.getCurrentSourceFilename().isEmpty()) return false;
+    m_sourceDock->show();
+    QCoreApplication::processEvents();
+    return m_sourceDock->grab().save(path);
 }

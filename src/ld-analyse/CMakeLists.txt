@@ -20,13 +20,16 @@ set(ld-analyse_SOURCES
     vectorscopedialog.cpp vectorscopedialog.ui
     aboutdialog.cpp aboutdialog.ui
     videoparametersdialog.cpp videoparametersdialog.ui
-    chromadecoderconfigdialog.cpp chromadecoderconfigdialog.ui
+
     tbcsource.cpp
     filesnr.cpp
     livesnr.cpp
     snrsourcebar.cpp
     playbackcontroller.cpp
     playbackrenderer.cpp
+    scopeupdater.cpp
+    stackaudio.cpp
+    sourceinfodialog.cpp sourceinfodialog.h
     vbidialog.cpp vbidialog.ui
     configuration.cpp
     dropoutanalysisdialog.cpp dropoutanalysisdialog.ui

@@ -34,6 +34,10 @@
 #include <memory>
 #include <QIcon>
 
+#include <QPointer>
+#include <QDockWidget>
+#include <QActionGroup>
+#include <QMenu>
 #include "oscilloscopedialog.h"
 #include "vectorscopedialog.h"
 #include "aboutdialog.h"
@@ -57,6 +61,9 @@
 #include "tbcsource.h"
 #include "playbackcontroller.h"
 #include "playbackrenderer.h"
+#include "scopeupdater.h"
+#include "stackaudio.h"
+#include <QMap>
 #ifdef LDDECODE_HAVE_AUDIO
 #include "audioengine.h"
 #include "waveformpanel.h"
@@ -78,6 +85,8 @@ class MainWindow : public QMainWindow
     Q_OBJECT
 
 public:
+    // Write the window of File > Source information to a PNG file (for documentation and tests); false when no source is open
+    bool saveSourceInformationPicture(const QString &path);
     // streamInput: video piped in (inputFilenameParam is then "-") rather than a file
     explicit MainWindow(QString inputFilenameParam, const TbcSource::StreamInput *streamInput = nullptr,
                         QWidget *parent = nullptr);
@@ -90,6 +99,7 @@ private slots:
     void on_actionOpen_TBC_file_triggered();
     void on_actionReload_TBC_triggered();
     void on_actionSave_Metadata_triggered();
+    void on_actionSource_information_triggered();
     void on_actionLine_scope_triggered();
     void on_actionVectorscope_triggered();
     void on_actionAbout_ld_analyse_triggered();
@@ -184,6 +194,17 @@ private:
 	bool autoResize = true;
 	qint64 zoomResizeUntil = 0;
 	bool resizeFrameWithWindow = true;
+    // The panel of View > Source information: a dock on a side of the window, that can be detached from it
+    class SourceInfoDialog *m_sourceInfo = nullptr;
+    QDockWidget *m_sourceDock = nullptr;
+    bool m_dockAdded = false;       // the window was made wider for the panel
+    // The Track menu, next to File: the video tracks of an LDX file that holds several
+    QMenu *m_trackMenu = nullptr;
+    QActionGroup *m_trackGroup = nullptr;
+    QString m_trackMenuFor;
+    QString m_stackContext;         // the stack (a .stack file) whose sources the Track menu lists
+    void updateTrackMenu();
+    void refreshSourceInfo();
     qint32 lastScopeLine;
     qint32 lastScopeDot;
     qint32 currentFieldNumber, currentFrameNumber;
@@ -209,6 +230,13 @@ private:
     // Video playback: the controller is the clock, MainWindow shows what falls due
     PlaybackController *playback;
     PlaybackRenderer *renderer;
+    // The scopes are made in a thread of their own (see ScopeUpdater): what they ask of the source does not hold up the window
+    ScopeUpdater *scopeUpdater = nullptr;
+    TbcSource::RenderSettings scopeSettings;
+    quint32 scopeSettingsGeneration = 0;
+    bool scopeSettingsValid = false;
+    void requestScopes(bool line, bool vector);
+    void scopesReady();
     VideoFilter videoFilter;
     VideoFilterSettings videoFilterSettings;
     VideoFilterDialog *videoFilterDialog = nullptr;
@@ -393,6 +421,22 @@ private:
     bool liveEfmStartPending[2] = { false, false };
     bool livePcmStartSet = false;
     QString audioLoadedKey;      // what loadAudio loaded: a source (a file, or the live input) is loaded once
+    // The audio of a stack, by what the sources give (analogue, digital, mix, imported: see StackAudio), made when it is chosen
+    class StackAudio *stackAudios[4] = { nullptr, nullptr, nullptr, nullptr };
+    struct StackEfmJob {
+        QString file;                   // the EFM that is decoded for a stack
+        QString pcm;                    // its audio, when it is decoded
+        bool done = false;
+        EfmDecoding *decoder = nullptr;
+        QVector<QPair<QPointer<StackAudio>, qint32>> waiters;      // who asked for it (the audio of the stack, and which source)
+    };
+    QMap<QString, StackEfmJob *> stackEfmJobs;
+    QStringList stackEfmQueue;
+    bool stackEfmBusy = false;
+    void loadStackAudio();
+    void unloadStackAudio();
+    void decodeStackEfm(StackAudio *owner, qint32 source, const QString &efmFile);
+    void runStackEfm();
     void loadLiveAudio();
     void pollLiveTracks();
     void feedLiveEfm();

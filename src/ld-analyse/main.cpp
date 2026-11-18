@@ -71,6 +71,7 @@ int main(int argc, char *argv[])
 
     // Add theme override option
     parser.addOption(QCommandLineOption("force-dark-theme", "Force dark theme regardless of system settings"));
+    parser.addOption(QCommandLineOption("source-information-picture", "Write the window of File > Source information to a PNG file a few seconds after the source is open, and quit (for documentation and tests)", "file"));
 
     // -- Input from a pipe: ld-analyse - (or a named pipe) shows video as it arrives --
     PipedInputOptions pipedOptions;
@@ -174,6 +175,13 @@ int main(int argc, char *argv[])
     // Start the GUI application
     MainWindow w(inputFileName, isStream ? &streamInput : nullptr);
     w.show();
+    if (parser.isSet("source-information-picture")) {
+        const QString target = parser.value("source-information-picture");
+        QTimer::singleShot(6000, &w, [&w, &a, target] {
+            w.saveSourceInformationPicture(target);
+            a.quit();
+        });
+    }
 
     return a.exec();
 }

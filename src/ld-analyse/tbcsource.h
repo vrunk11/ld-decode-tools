@@ -136,6 +136,8 @@ public:
     bool getIsSourceLoaded();
     // A stacking session (.stack): the stack of its sources, whose metadata has no SNR
     bool getIsStack();
+    // When the source is a stack: where its sources are on its timeline (what the audio of the stack is made from)
+    bool getStackAudioSpans(QVector<struct StackAudioSpan> &spans, qint32 &timelineFrames);
     // "N sources, TBC" or "N sources, CVBS" for a stacking session, empty for another source
     QString getStackDescription();
     void saveSourceMetadata();
@@ -215,6 +217,8 @@ public:
     bool getIsWidescreen();
     VideoSystem getSystem();
     QString getSystemDescription();
+    // "secam" or "ntsc-vhd" when the capture says its system is SECAM or NTSC-VHD (getSystem is the one of its lines), else empty
+    QString getSystemVariant();
     qint32 getFrameHeight();
     qint32 getFrameWidth();
 

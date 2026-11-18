@@ -43,11 +43,9 @@ VectorscopeDialog::~VectorscopeDialog()
     delete ui;
 }
 
-void VectorscopeDialog::showTraceImage(const ComponentFrame &componentFrame, const LdDecodeMetaData::VideoParameters &videoParameters,
-                                       const TbcSource::ViewMode& viewMode, const bool isFirstField)
+// The controls as the view lets them be (a field view shows the field that is shown), and what they say: the scope is drawn from this, by whoever draws it
+VectorscopeDialog::Options VectorscopeDialog::prepare(const TbcSource::ViewMode &viewMode, const bool isFirstField)
 {
-    tbcDebugStream() << "VectorscopeDialog::showTraceImage(): Called";
-
     // Set/enable/disable controls based on view
     switch (viewMode) {
         case TbcSource::ViewMode::FRAME_VIEW:
@@ -75,9 +73,20 @@ void VectorscopeDialog::showTraceImage(const ComponentFrame &componentFrame, con
             break;
     }
 
-    // Draw the image
-    QImage traceImage = getTraceImage(componentFrame, videoParameters);
+    Options options;
+    options.blend = ui->blendColorCheckBox->isChecked();
+    options.defocus = ui->defocusCheckBox->isChecked();
+    options.all = ui->fieldSelectAllRadioButton->isChecked();
+    options.first = ui->fieldSelectFirstRadioButton->isChecked();
+    options.second = ui->fieldSelectSecondRadioButton->isChecked();
+    options.graticuleNone = ui->graticuleNoneRadioButton->isChecked();
+    options.graticule75 = ui->graticule75RadioButton->isChecked();
+    return options;
+}
 
+// A trace that was drawn (by renderTrace, which can be done in any thread) is shown
+void VectorscopeDialog::showTraceImage(const QImage &traceImage)
+{
     // Add the QImage to the QLabel in the dialogue
     ui->scopeLabel->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     ui->scopeLabel->setAlignment(Qt::AlignCenter);
@@ -90,7 +99,14 @@ void VectorscopeDialog::showTraceImage(const ComponentFrame &componentFrame, con
     #endif
 }
 
-QImage VectorscopeDialog::getTraceImage(const ComponentFrame &componentFrame, const LdDecodeMetaData::VideoParameters &videoParameters)
+void VectorscopeDialog::showTraceImage(const ComponentFrame &componentFrame, const LdDecodeMetaData::VideoParameters &videoParameters,
+                                       const TbcSource::ViewMode& viewMode, const bool isFirstField)
+{
+    const Options options = prepare(viewMode, isFirstField);
+    showTraceImage(renderTrace(componentFrame, videoParameters, options));
+}
+
+QImage VectorscopeDialog::renderTrace(const ComponentFrame &componentFrame, const LdDecodeMetaData::VideoParameters &videoParameters, const Options &options)
 {
     // Scope size and scale
     constexpr qint32 SIZE = 1024;
@@ -108,7 +124,7 @@ QImage VectorscopeDialog::getTraceImage(const ComponentFrame &componentFrame, co
     scopePainter.begin(&scopeImage);
 
     // Blend the field colors
-    if (ui->blendColorCheckBox->isChecked()) {
+    if (options.blend) {
         scopePainter.setCompositionMode(QPainter::CompositionMode_Plus);
     }
 
@@ -116,21 +132,21 @@ QImage VectorscopeDialog::getTraceImage(const ComponentFrame &componentFrame, co
     std::minstd_rand randomEngine(12345);
     std::normal_distribution<double> normalDist(0.0, 100.0);
 
-    bool defocus = ui->defocusCheckBox->isChecked();
+    bool defocus = options.defocus;
     QColor color = Qt::green;
 
     // Skip second field if first only is selected
-    qint32 fieldCount = !ui->fieldSelectFirstRadioButton->isChecked() ? 2 : 1;
+    qint32 fieldCount = !options.first ? 2 : 1;
 
     // Skip first field if second only is selected
-    qint32 startingFrame = !ui->fieldSelectSecondRadioButton->isChecked() ? 0 : 1;
+    qint32 startingFrame = !options.second ? 0 : 1;
 
     for (auto fieldN = startingFrame; fieldN < fieldCount; fieldN++) {
         // Set color to cyan on second field if blend enabled...
-        if (ui->fieldSelectAllRadioButton->isChecked() && ui->blendColorCheckBox->isChecked() && fieldN == 1) color = Qt::cyan;
+        if (options.all && options.blend && fieldN == 1) color = Qt::cyan;
 
         // ...or second only is selected
-        if (ui->fieldSelectSecondRadioButton->isChecked()) color = Qt::cyan;
+        if (options.second) color = Qt::cyan;
 
         scopePainter.setPen(color);
 
@@ -154,7 +170,7 @@ QImage VectorscopeDialog::getTraceImage(const ComponentFrame &componentFrame, co
     }
 
     // Overlay the graticule, unless it's disabled
-    if (!ui->graticuleNoneRadioButton->isChecked()) {
+    if (!options.graticuleNone) {
         scopePainter.setPen(Qt::white);
 
         // Draw the vertical/horizontal graticule lines and circle
@@ -175,7 +191,7 @@ QImage VectorscopeDialog::getTraceImage(const ComponentFrame &componentFrame, co
         }
 
         // Scaling factor for which graticule
-        const double percent = ui->graticule75RadioButton->isChecked() ? 0.75 : 1.0;
+        const double percent = options.graticule75 ? 0.75 : 1.0;
 
         // Draw graticule targets for the six colour bars
         for (qint32 rgb = 1; rgb < 7; rgb++) {
