@@ -65,7 +65,9 @@ public:
     // track it goes with (0: the first). The LDX file is written again, in its place, with the track and an entry of the
     // history added to it.
     static bool addTrackFromFile(const QString &ldxPath, const QString &kind, const QString &dataFile, const QJsonObject &parameters,
-                                 const QString &trackName, qint32 about, const QJsonObject &historyEntry, QString &error);
+                                 const QString &trackName, qint32 about, const QJsonObject &historyEntry, QString &error,
+                                 const QString &codec = QString());
+    // (codec: "flac" keeps 16-bit audio in FLAC; empty or "raw" keeps the samples as they are)
 
     // Whether a name is that of an LDX file or of one of its tracks
     static bool isLdxName(const QString &name);
@@ -97,6 +99,25 @@ public:
     // Whether the file keeps a stacking session, and the session
     static bool hasSession(const QString &path);
     static bool readSession(const QString &path, QByteArray &session, QString &error);
+    // The cover of the file (the attachment cover.png or cover.jpg, section 9 of the specification): the data of the picture and its name. False, with the reason, when the file has none.
+    static bool readCover(const QString &path, QByteArray &image, QString &name, QString &error);
+    // What is kept beside the picture of the cover (section 9): where the picture is outside the file (cover.url), the link that opens when it is clicked (link.url)
+    struct CoverInfo {
+        QByteArray image;       // the picture in the file (cover.png or cover.jpg)
+        QString imageName;
+        QString source;         // cover.url: a web address, or a path (absolute, or relative to the folder of the file)
+        QString link;           // link.url
+    };
+    static bool readCoverInfo(const QString &path, CoverInfo &info, QString &error);
+
+    // Change attachments in the file itself, written at the end of it (the last of a name counts, section 9: the file is not written again; one with no data takes the
+    // file out, and taking out what is not there is nothing). False, with the reason, when nothing was to be done.
+    struct AttachmentEdit {
+        QString name;
+        QString mediaType;
+        QByteArray data;
+    };
+    static bool putAttachmentsInPlace(const QString &path, const QVector<AttachmentEdit> &edits, const QJsonObject &historyEntry, QString &error);
 
     // Open the capture a name gives (a track; the session of the file is not a capture)
     bool open(const QString &name, QString &error);
@@ -111,6 +132,24 @@ public:
     // Keep new metadata for a capture in its LDX file: a block added at the end of the file, which is the current one from
     // then on (what was there stays, and the history says what was done)
     static bool writeMetadata(const QString &name, const QByteArray &json, QString &error);
+
+    // Changes made in the file itself, in the room the list of tracks has (section 2: the Void after it), with no copy of the file: the name
+    // of a track, some of its parameters (the ones to remove are named), or the notes of a capture as a track of annotations stamped after
+    // everything in the file. False, with the reason, when the room is not enough or the file has none: it has to be written again then.
+    static bool updateTrackInPlace(const QString &ldxPath, qint32 track, const QString &name, bool setName, const QJsonObject &parameters,
+                                   const QStringList &removeParameters, const QJsonObject &historyEntry, QString &error);
+    static bool addNotesInPlace(const QString &ldxPath, const QByteArray &text, const QString &trackName, qint32 about, const QJsonObject &historyEntry, QString &error);
+    // Where a capture comes from (the track ldx.rfsource of section 8.4): the current JSON block about the capture (about: the id of its video track, 0 for the first), and to put it in the file itself
+    // (a block added at the end; empty json takes it out)
+    // What a person said of a capture (section 3.1): the parameters of its video track; false when it said none of it
+    struct Said {
+        QString medium, reference, face;
+        int copy = 0, capture = 0;
+        bool any() const { return !medium.isEmpty() || !reference.isEmpty() || !face.isEmpty() || copy > 0 || capture > 0; }
+    };
+    static bool readSaid(const QString &name, Said &said);
+    static bool readRfSource(const QString &ldxPath, qint32 about, QByteArray &json, QString &error);
+    static bool putRfSourceInPlace(const QString &ldxPath, qint32 about, const QByteArray &json, const QJsonObject &historyEntry, QString &error);
 
     // The analogue audio of the capture: the PCM track that is about it (16-bit stereo), by samples (a sample is a pair)
     // wide: the 24-bit audio of a CVBS capture (a pair of samples is 6 bytes), read with getAudioBytes, instead of the 16-bit

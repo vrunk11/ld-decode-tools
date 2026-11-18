@@ -35,6 +35,7 @@ add_library(lddecode-library STATIC
     tbc/framemap.cpp
     tbc/fieldaudio.cpp
     tbc/streamcopy.cpp
+    tbc/captureinfo.cpp
     tbc/decodingparameters.cpp
     tbc/mappedmetadata.cpp
     tbc/tbcfiles.cpp
@@ -59,6 +60,7 @@ if(LDDECODE_LDX_AVAILABLE)
     add_library(lddecode-ldx STATIC
         ldx/ldx.cpp
         ldx/ldxcodec.cpp
+        ldx/ldxpicture.cpp
     )
     target_include_directories(lddecode-ldx PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/ldx)
     target_link_libraries(lddecode-ldx PUBLIC Qt::Core EBML::ebml Matroska::matroska)

@@ -24,12 +24,15 @@
 ************************************************************************/
 
 #include <QCoreApplication>
+#include <QFile>
+#include <QTemporaryDir>
 #include <QCommandLineParser>
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
 #include <sstream>
 
+#include "captureinfo.h"
 #include "lddecodemetadata.h"
 
 // Run unit tests for VideoSystem
@@ -239,6 +242,81 @@ void testBadFieldNumbers() {
     CHECK(good.firstFrameWithoutFields() == 0);
 }
 
+// SECAM and NTSC-VHD as systems (systemVariant of the video parameters, with the system of the lines): spelt in the system of the JSON, kept by the SQLite file in a table of their own, and a file that says nothing
+// of it is read as it always was
+void testSystemVariant() {
+    std::cerr << "Testing the colour standard\n";
+
+    QTemporaryDir directory;
+    CHECK(directory.isValid());
+    for (const QString &extension : { QString("json"), QString("db") }) {
+        const QString said = directory.filePath("said.tbc." + extension);
+        const QString none = directory.filePath("none.tbc." + extension);
+
+        LdDecodeMetaData metaData;
+        metaData.initialiseDefault(PAL);
+        metaData.ensureFields(4);
+        LdDecodeMetaData::VideoParameters parameters = metaData.getVideoParameters();
+        CHECK(parameters.systemVariant.isEmpty());
+        CHECK(metaData.write(none));
+        parameters.systemVariant = "secam";
+        metaData.setVideoParameters(parameters);
+        CHECK(metaData.write(said));
+
+        LdDecodeMetaData back;
+        CHECK(back.read(said));
+        CHECK(back.getVideoParameters().systemVariant == "secam");
+        CHECK(back.getVideoParameters().system == PAL);        // (the system of the lines is what it was)
+        LdDecodeMetaData unsaid;
+        CHECK(unsaid.read(none));
+        CHECK(unsaid.getVideoParameters().systemVariant.isEmpty());
+
+        // Taken away again: the file does not keep it
+        parameters.systemVariant.clear();
+        metaData.setVideoParameters(parameters);
+        CHECK(metaData.write(said));
+        LdDecodeMetaData cleared;
+        CHECK(cleared.read(said));
+        CHECK(cleared.getVideoParameters().systemVariant.isEmpty());
+    }
+
+    // The words
+    QString value;
+    CHECK(CaptureInfo::parseMedium("LD", value) && value == "ld");
+    CHECK(CaptureInfo::parseMedium("unknown", value) && value.isEmpty());
+    CHECK(!CaptureInfo::parseMedium("betamax", value));
+    CHECK(CaptureInfo::parseFace("ba", value) && value == "BA");
+    CHECK(!CaptureInfo::parseFace("C", value));
+
+    // The names of the systems: SECAM and NTSC-VHD have the lines of PAL and of NTSC, and are read in any case
+    VideoSystem system = PAL_M;
+    QString variant;
+    CHECK(parseVideoSystemVariant("SECAM", system, variant) && system == PAL && variant == "secam");
+    CHECK(parseVideoSystemVariant("ntsc-vhd", system, variant) && system == NTSC && variant == "ntsc-vhd");
+    CHECK(parseVideoSystemVariant("PAL-M", system, variant) && system == PAL_M && variant.isEmpty());
+    CHECK(parseVideoSystemVariant("pal", system, variant) && system == PAL && variant.isEmpty());
+    CHECK(!parseVideoSystemVariant("PAL-N", system, variant));
+    CHECK(videoSystemFileName(PAL, "secam") == "SECAM" && videoSystemFileName(NTSC, "ntsc-vhd") == "NTSC-VHD");
+    CHECK(videoSystemFileName(PAL_M, QString()) == "PAL-M" && videoSystemFileName(NTSC, QString()) == "NTSC");
+    CHECK(videoSystemFileName(NTSC, "secam") == "NTSC");        // (a variant of other lines is not one)
+    CHECK(videoSystemOfName("SECAM") == PAL && videoSystemOfName("NTSC-VHD") == NTSC && videoSystemOfName("") == PAL_M);
+    // The JSON spells the system as the file said it
+    {
+        LdDecodeMetaData metaData;
+        metaData.initialiseDefault(NTSC);
+        LdDecodeMetaData::VideoParameters parameters = metaData.getVideoParameters();
+        parameters.systemVariant = "ntsc-vhd";
+        metaData.setVideoParameters(parameters);
+        const QString path = directory.filePath("vhd.tbc.json");
+        CHECK(metaData.write(path));
+        QFile file(path);
+        CHECK(file.open(QIODevice::ReadOnly));
+        CHECK(file.readAll().contains("\"system\": \"NTSC-VHD\"") || file.seek(0));
+        file.seek(0);
+        CHECK(file.readAll().contains("NTSC-VHD"));
+    }
+}
+
 int main(int argc, char *argv[])
 {
     // Initialise Qt
@@ -278,6 +356,7 @@ int main(int argc, char *argv[])
         testFrameRateAndTimecodes();
         testBadFieldNumbers();
         testFieldAccessors();
+        testSystemVariant();
         return 0;
     }
     if (positionalArguments.count() > 2) {

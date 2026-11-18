@@ -35,6 +35,7 @@
 #include "streamreader.h"
 
 class StackedVideo;
+struct StackAudioSpan;
 class LdxCapture;
 class FrameMap;
 class LdDecodeMetaData;
@@ -54,6 +55,9 @@ public:
     // Prevent copying or assignment
     SourceVideo(const SourceVideo &) = delete;
     SourceVideo& operator=(const SourceVideo &) = delete;
+
+    // When the video is a stack: where its sources are on its timeline, for what is read along with them (their audio). False when it is not a stack.
+    bool stackAudioSpans(QVector<StackAudioSpan> &spans, qint32 &timelineFrames) const;
 
     // A .stack file (a stacking session) is read as the TBC file of the stack of its sources, which are
     // stacked as the fields are asked for (see StackedVideo); its metadata is read by LdDecodeMetaData.

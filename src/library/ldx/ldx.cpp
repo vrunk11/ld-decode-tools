@@ -28,12 +28,14 @@
 #include <deque>
 #include <stdexcept>
 #include <map>
+#include <set>
 #include <vector>
 
 #include <ebml/EbmlHead.h>
 #include <ebml/EbmlStream.h>
 #include <ebml/EbmlSubHead.h>
 #include <ebml/EbmlVoid.h>
+#include <ebml/MemIOCallback.h>
 #include <ebml/StdIOCallback.h>
 #include <matroska/KaxAttached.h>
 #include <matroska/KaxAttachments.h>
@@ -67,7 +69,6 @@ constexpr qint64 ClusterSpanNs = 30000000;
 constexpr quint64 TrackPaddingBytes = 4096;
 
 const char *PcmCodecId = "A_PCM/INT/LIT";
-constexpr double StandInSampleRate = 48000.0;   // the real rate is in the parameters of the track
 
 struct KindName { Kind kind; const char *name; };
 const KindName kindNames[] = {
@@ -99,6 +100,75 @@ CvbsShape cvbsShape(const Track &track)
     if (shape.ok()) shape.height = ffv1Height(shape.samples, shape.width);
     return shape;
 }
+
+// A raw track of a picture that a video track can carry as it is: the field of a TBC (16 bits), or the frame of a CVBS capture when its
+// samples make exactly the image (width x height, 10 or 16 bits in 16-bit words). Anything else stays an audio track, as before.
+struct RawVideo {
+    bool ok = false;
+    int width = 0;
+    int height = 0;
+    int bits = 16;
+    quint64 frameNs = 0;        // the time of a unit, when it is known (a field of the system)
+};
+
+RawVideo rawVideoOf(const Track &track)
+{
+    RawVideo raw;
+    if (track.codec != Codec::Raw) return raw;
+    if (track.kind == Kind::Tbc && track.depth == 16) {
+        raw.width = track.parameters.value("fieldWidth").toInt();
+        raw.height = track.parameters.value("fieldHeight").toInt();
+        raw.bits = 16;
+        const QString system = track.parameters.value("system").toString();
+        raw.frameNs = has625Lines(system) ? 20000000 : (system.isEmpty() ? 0 : 16683333);
+    } else if (track.kind == Kind::Cvbs && (track.depth == 10 || track.depth == 16)) {
+        const CvbsShape shape = cvbsShape(track);
+        if (!shape.ok()) return raw;
+        raw.width = shape.width;
+        raw.height = static_cast<int>(shape.samples / qMax(1, shape.width));
+        if (static_cast<qint64>(raw.width) * raw.height != shape.samples) return raw;
+        raw.bits = track.depth;
+        const QString system = track.parameters.value("system").toString();
+        raw.frameNs = has625Lines(system) ? 40000000 : (system.isEmpty() ? 0 : 33366667);
+    }
+    raw.ok = raw.width > 0 && raw.height > 0;
+    return raw;
+}
+
+} // namespace
+
+// The shape a video track is shown in by the players, the same as ld-analyse shows the capture in (the width adjustment of the whole picture: AspectRatio
+// in gui-common): "4:3" and "16:9" are the names the user knows them by, and what is written is the size the whole image is shown at, a width of the
+// picture plus the adjustment of its system by the lines of a frame (a field is half a frame in height, and shown as one). The image is not cut: the
+// active area is only a part of what is shown. Nothing is written without displayAspect: the image has square pixels (1:1).
+bool displayShape(const Track &track, int width, int height, int *displayWidth, int *displayHeight)
+{
+    const QJsonObject &p = track.parameters;
+    const QString shape = p.value("displayAspect").toString();
+    if (shape != QLatin1String("4:3") && shape != QLatin1String("16:9")) return false;
+    const bool wide = shape == QLatin1String("16:9");
+    const bool pal = has625Lines(p.value("system").toString());
+    const int adjustment = wide ? (pal ? 103 : 122) : (pal ? -196 : -150);
+    // The lines of a frame: two fields less one (525, 625), from the field of the capture when it is known
+    const int fieldHeight = p.value("fieldHeight").toInt(0);
+    const bool frame = track.kind == Kind::Cvbs;
+    const int lines = fieldHeight > 0 ? 2 * fieldHeight - 1 : (frame ? height : 2 * height - 1);
+    if (displayWidth) *displayWidth = width + adjustment;
+    if (displayHeight) *displayHeight = lines;
+    return true;
+}
+
+namespace {
+
+void setDisplay(KaxTrackVideo &video, const Track &track, bool, int width, int height)
+{
+    int displayWidth = 0, displayHeight = 0;
+    if (!displayShape(track, width, height, &displayWidth, &displayHeight)) return;
+    GetChild<KaxVideoDisplayWidth>(video).SetValue(static_cast<uint64>(displayWidth));
+    GetChild<KaxVideoDisplayHeight>(video).SetValue(static_cast<uint64>(displayHeight));
+    GetChild<KaxVideoDisplayUnit>(video).SetValue(3);       // the shape (display aspect ratio), not a size
+}
+
 
 QByteArray trackDescription(const Track &track)
 {
@@ -270,7 +340,7 @@ struct Writer::Private
     std::unique_ptr<KaxSegment> segment;
     KaxTracks *trackList = nullptr;
     std::map<quint32, KaxTrackEntry *> entries;            // by the id (number) of the track
-    std::map<int, QByteArray> flacPrivates;                // what the FLAC tracks give the decoder before the data, by channels
+    std::map<std::pair<int, int>, QByteArray> flacPrivates;     // what the FLAC tracks give the decoder before the data, by channels and sample rate
     std::map<quint32, std::unique_ptr<Ffv1Encoder>> ffv1Encoders;   // one for each FFV1 track
     std::map<quint32, QByteArray> ffv1Privates;            // what the decoder of an FFV1 track is given before the data
     quint32 nextId = 1;                                    // the id the next track gets
@@ -281,6 +351,34 @@ struct Writer::Private
     };
     std::vector<Attached> attachments;
     KaxCues cues;
+
+    // The list of tracks of a file that is added to, in the room it has: the length of what is there (and of the Void after it), and what changed
+    quint64 tracksAt = 0;
+    quint64 tracksSpace = 0;
+    bool tracksChanged = false;
+    std::vector<quint32> changedTracks;
+    std::unique_ptr<KaxTracks> ownedTracks;
+    QByteArray tracksBytes;
+    quint64 tracksGap = 0;
+
+    // The list of tracks as it is now, rendered, to see that it fits where the old one was (what is left is a Void)
+    bool renderTracks(QString &error)
+    {
+        ownedTracks.reset(new KaxTracks);
+        trackList = ownedTracks.get();
+        entries.clear();
+        buildEntries();
+        MemIOCallback memory;
+        trackList->Render(memory, false);
+        tracksBytes = QByteArray(reinterpret_cast<const char *>(memory.GetDataBuffer()), static_cast<int>(memory.GetDataBufferSize()));
+        const quint64 size = static_cast<quint64>(tracksBytes.size());
+        if (tracksSpace == 0 || size > tracksSpace || tracksSpace - size == 1) {
+            error = QObject::tr("The list of tracks does not fit in the room the file has for it (%1 bytes for %2): the file has to be written again").arg(tracksSpace).arg(size);
+            return false;
+        }
+        tracksGap = tracksSpace - size;
+        return true;
+    }
 
     KaxCluster *cluster = nullptr;
     qint64 clusterStartNs = 0;
@@ -317,6 +415,15 @@ struct Writer::Private
         return track.kind == Kind::Pcm ? qBound(1, track.parameters.value("channels").toInt(2), 8) : 1;
     }
 
+    // The sample rate an audio track declares: the real one for the audio of a capture (so that a player plays it at its speed: 44100 Hz, not
+    // faster at the stand-in), and the stand-in for samples that are not audio (a TBC, and the like: a rate of 14 MHz is not one for audio)
+    static int rateOf(const Track &track)
+    {
+        if (track.kind != Kind::Pcm) return FlacStandInRate;
+        const double rate = track.parameters.value("sampleRate").toDouble();
+        return rate >= 8000.0 && rate <= 192000.0 && rate == static_cast<double>(static_cast<int>(rate)) ? static_cast<int>(rate) : FlacStandInRate;
+    }
+
     // FLAC is for tracks of 16-bit samples, and needs ffmpeg
     bool prepareCodecs(QString &error)
     {
@@ -327,9 +434,10 @@ struct Writer::Private
                     return false;
                 }
                 const int channels = channelsOf(track);
-                if (flacPrivates[channels].isEmpty()) {
-                    flacPrivates[channels] = flacCodecPrivate(channels, error);
-                    if (flacPrivates[channels].isEmpty()) return false;
+                const std::pair<int, int> key { channels, rateOf(track) };
+                if (flacPrivates[key].isEmpty()) {
+                    flacPrivates[key] = flacCodecPrivate(channels, error, key.second);
+                    if (flacPrivates[key].isEmpty()) return false;
                 }
             } else if (track.codec == Codec::Ffv1) {
                 if (track.kind != Kind::Cvbs) {
@@ -374,14 +482,30 @@ struct Writer::Private
                 const CvbsShape shape = cvbsShape(track);
                 GetChild<KaxTrackType>(entry).SetValue(track_video);
                 GetChild<KaxCodecID>(entry).SetValue("V_FFV1");
+                // The time of a frame: 40 ms for 625 lines (PAL), 1001/30000 s for 525 (NTSC, PAL-M), so that a player has the frame rate
+                const QString system = track.parameters.value("system").toString();
+                if (!system.isEmpty()) GetChild<KaxTrackDefaultDuration>(entry).SetValue(has625Lines(system) ? 40000000 : 33366667);
                 KaxTrackVideo &video = GetChild<KaxTrackVideo>(entry);
                 GetChild<KaxVideoPixelWidth>(video).SetValue(shape.width);
                 GetChild<KaxVideoPixelHeight>(video).SetValue(shape.height);
+                setDisplay(video, track, true, shape.width, shape.height);
+            } else if (const RawVideo raw = rawVideoOf(track); raw.ok) {
+                // Raw samples of a picture are kept in a video track of their own (V_UNCOMPRESSED, with the colour space that names the sample
+                // format), which the usual players open: the blocks hold the same bytes as before, a field or a frame each
+                GetChild<KaxTrackType>(entry).SetValue(track_video);
+                GetChild<KaxCodecID>(entry).SetValue("V_UNCOMPRESSED");
+                if (raw.frameNs > 0) GetChild<KaxTrackDefaultDuration>(entry).SetValue(raw.frameNs);
+                KaxTrackVideo &video = GetChild<KaxTrackVideo>(entry);
+                GetChild<KaxVideoPixelWidth>(video).SetValue(raw.width);
+                GetChild<KaxVideoPixelHeight>(video).SetValue(raw.height);
+                setDisplay(video, track, track.kind == Kind::Cvbs, raw.width, raw.height);
+                const binary fourcc[4] = { 'Y', '1', 0, static_cast<binary>(raw.bits) };
+                GetChild<KaxVideoColourSpace>(video).CopyBuffer(fourcc, 4);
             } else if (isSampleKind(track.kind)) {
                 GetChild<KaxTrackType>(entry).SetValue(track_audio);
                 GetChild<KaxCodecID>(entry).SetValue(track.codec == Codec::Flac ? "A_FLAC" : PcmCodecId);
                 KaxTrackAudio &audio = GetChild<KaxTrackAudio>(entry);
-                GetChild<KaxAudioSamplingFreq>(audio).SetValue(StandInSampleRate);
+                GetChild<KaxAudioSamplingFreq>(audio).SetValue(static_cast<double>(rateOf(track)));
                 GetChild<KaxAudioChannels>(audio).SetValue(channelsOf(track));
                 GetChild<KaxAudioBitDepth>(audio).SetValue(track.depth == 24 ? 24 : 16);
             } else {
@@ -389,7 +513,7 @@ struct Writer::Private
                 GetChild<KaxCodecID>(entry).SetValue(QByteArray("D_LDX/" + kindName(track.kind).toUpper().toLatin1()).constData());
             }
             // (a FLAC track has what its decoder needs, and the description of every track is also in a tag)
-            const QByteArray description = track.codec == Codec::Flac ? flacPrivates[channelsOf(track)]
+            const QByteArray description = track.codec == Codec::Flac ? flacPrivates[{ channelsOf(track), rateOf(track) }]
                                            : (track.codec == Codec::Ffv1 ? ffv1Privates[track.number] : trackDescription(track));
             GetChild<KaxCodecPrivate>(entry).CopyBuffer(reinterpret_cast<const binary *>(description.constData()), description.size());
             entry.SetGlobalTimecodeScale(TimecodeScaleNs);
@@ -558,6 +682,45 @@ void Writer::addHistory(const QJsonObject &entry)
     d->history.append(entry);
 }
 
+bool Writer::replaceTrack(const Track &track, QString &error)
+{
+    if (!d->appending) {
+        error = QObject::tr("The tracks of a file are changed in its place only when it is added to");
+        return false;
+    }
+    for (Track &existing: d->tracks) {
+        if (existing.number != track.number) continue;
+        const Track before = existing;
+        existing.name = track.name;
+        existing.parameters = track.parameters;
+        if (!d->renderTracks(error)) {
+            existing = before;
+            return false;
+        }
+        d->tracksChanged = true;
+        d->changedTracks.push_back(existing.number);
+        return true;
+    }
+    error = QObject::tr("There is no track %1").arg(track.number);
+    return false;
+}
+
+bool Writer::addTrackInPlace(Track &track, QString &error)
+{
+    if (!d->appending) {
+        error = QObject::tr("A track is added to a file in its place only when it is added to");
+        return false;
+    }
+    addTrack(track);
+    if (!d->renderTracks(error)) {
+        d->tracks.removeLast();
+        return false;
+    }
+    d->tracksChanged = true;
+    d->changedTracks.push_back(track.number);
+    return true;
+}
+
 bool Writer::openAppend(const QString &fileName, QString &error)
 {
     try {
@@ -573,6 +736,8 @@ bool Writer::openAppend(const QString &fileName, QString &error)
         if (!d->prepareCodecs(error)) return false;
         d->history = reader.history();
         d->nextId = reader.nextTrackId();
+        d->tracksAt = reader.tracksPosition();
+        d->tracksSpace = reader.tracksSpace();
         for (const Reader::BlockRef &ref: reader.blockRefs()) {
             d->cueRecords.push_back({ ref.timeNs, ref.track, ref.clusterPosition, ref.relativePosition });
         }
@@ -622,7 +787,7 @@ bool Writer::writeBlock(quint32 track, qint64 timeNs, const QByteArray &data)
         }
         if (info && info->codec == Codec::Flac) {
             QString encodeError;
-            if (!flacEncode(data, Private::channelsOf(*info), info->kind == Kind::Tbc, frames, encodeError)) {
+            if (!flacEncode(data, Private::channelsOf(*info), info->kind == Kind::Tbc, frames, encodeError, Private::rateOf(*info))) {
                 d->error = encodeError;
                 return false;
             }
@@ -688,6 +853,24 @@ bool Writer::finish(QString &error)
             return true;
         }
         d->flushCluster();
+        // The list of tracks, changed in its place: written where it was, with a Void for what is left of the room
+        if (d->appending && d->tracksChanged) {
+            QString problem;
+            if (!d->renderTracks(problem)) {
+                error = problem;
+                return false;
+            }
+            const int64 here = d->output->getFilePointer();
+            d->output->setFilePointer(static_cast<int64>(d->tracksAt));
+            d->output->writeFully(d->tracksBytes.constData(), static_cast<size_t>(d->tracksBytes.size()));
+            if (d->tracksGap > 0) {
+                EbmlVoid rest;
+                // (the size of a Void is that of its data: its id and its size take 2 bytes, or 3 for more than 126)
+                rest.SetSize(d->tracksGap - (d->tracksGap - 2 <= 126 ? 2 : 3));
+                rest.Render(*d->output);
+            }
+            d->output->setFilePointer(here);
+        }
         // A file that was added to: its history, with what was added, as tags at the end (the last ones are the current ones)
         if (d->appending) {
             KaxTags &tags = GetChild<KaxTags>(*d->segment);
@@ -697,7 +880,34 @@ bool Writer::finish(QString &error)
             setSimpleTag(tag, simple, "LDX_PROFILE", QByteArray::number(ProfileVersion));
             setSimpleTag(tag, simple, "LDX_HISTORY", QJsonDocument(d->history).toJson(QJsonDocument::Compact));
             setSimpleTag(tag, simple, "LDX_NEXT_TRACK_ID", QByteArray::number(d->nextId));
+            // What the tracks that changed are now (the tags at the start describe them as they were)
+            KaxTag *previousTag = &tag;
+            for (quint32 number: d->changedTracks) {
+                for (const Track &track: d->tracks) {
+                    if (track.number != number) continue;
+                    KaxTag &trackTag = GetNextChild<KaxTag>(tags, *previousTag);
+                    previousTag = &trackTag;
+                    KaxTagTargets &targets = GetChild<KaxTagTargets>(trackTag);
+                    GetChild<KaxTagTrackUID>(targets).SetValue(track.uid);
+                    KaxTagSimple *trackSimple = nullptr;
+                    setSimpleTag(trackTag, trackSimple, "LDX_TRACK", trackDescription(track));
+                }
+            }
             tags.Render(*d->output, false);
+            // Files added to the file (the cover): attachments at the end, where the last of a name is the one that counts (no data: it is taken out)
+            if (!d->attachments.empty()) {
+                KaxAttachments &attachments = GetChild<KaxAttachments>(*d->segment);
+                KaxAttached *previousFile = nullptr;
+                for (const Private::Attached &file: d->attachments) {
+                    KaxAttached &attached = previousFile ? GetNextChild<KaxAttached>(attachments, *previousFile) : GetChild<KaxAttached>(attachments);
+                    previousFile = &attached;
+                    GetChild<KaxFileName>(attached).SetValueUTF8(file.name.toUtf8().constData());
+                    GetChild<KaxMimeType>(attached).SetValue(file.mediaType.toLatin1().constData());
+                    GetChild<KaxFileUID>(attached).SetValue(QRandomGenerator::global()->generate64() | 1);
+                    if (!file.data.isEmpty()) GetChild<KaxFileData>(attached).CopyBuffer(reinterpret_cast<const binary *>(file.data.constData()), static_cast<uint32>(file.data.size()));
+                }
+                attachments.Render(*d->output, false);
+            }
         }
         // The cues, at the end: where the blocks of each track are
         if (!d->cueRecords.empty()) {
@@ -728,6 +938,7 @@ bool Writer::finish(QString &error)
     return true;
 }
 
+
 // ---------------------------------------------------------------------------------------------------------------
 // Reader
 
@@ -748,6 +959,7 @@ struct Reader::Private
     quint32 nextIdValue = 0;
     QVector<Attachment> attachmentList;
     std::map<quint64, QByteArray> descriptions;       // what each track is, by the uid of the track, from the tags
+    std::set<quint64> describedByPrivate;             // the tracks that are described by their private data
     std::map<quint32, QByteArray> flacPrivates;       // what the decoder of a FLAC track is given first
     std::map<quint32, std::unique_ptr<FlacDecoder>> decoders;
     std::map<quint32, QByteArray> ffv1Privates;
@@ -765,6 +977,9 @@ struct Reader::Private
     std::map<quint32, std::vector<IndexEntry>> index;
     bool indexed = false;
     quint64 cuesAt = 0;
+    quint64 tracksAt = 0;                      // in the file, where the list of tracks starts, how long it is, and the Void that follows it
+    quint64 tracksLength = 0;
+    quint64 voidLength = 0;
 
     ~Private()
     {
@@ -781,6 +996,15 @@ struct Reader::Private
             if (auto *number = FindChild<KaxTrackNumber>(entry)) track.number = static_cast<quint32>(number->GetValue());
             if (auto *uid = FindChild<KaxTrackUID>(entry)) track.uid = uid->GetValue();
             if (auto *name = FindChild<KaxTrackName>(entry)) track.name = QString::fromUtf8(name->GetValueUTF8().c_str());
+            if (auto *video = FindChild<KaxTrackVideo>(entry)) {
+                if (auto *w = FindChild<KaxVideoPixelWidth>(*video)) track.headerPixelWidth = w->GetValue();
+                if (auto *h = FindChild<KaxVideoPixelHeight>(*video)) track.headerPixelHeight = h->GetValue();
+                if (auto *w = FindChild<KaxVideoDisplayWidth>(*video)) track.headerDisplayWidth = w->GetValue();
+                if (auto *h = FindChild<KaxVideoDisplayHeight>(*video)) track.headerDisplayHeight = h->GetValue();
+            }
+            if (auto *audio = FindChild<KaxTrackAudio>(entry)) {
+                if (auto *rate = FindChild<KaxAudioSamplingFreq>(*audio)) track.headerRate = rate->GetValue();
+            }
             if (auto *enabled = FindChild<KaxTrackFlagEnabled>(entry)) {
                 if (enabled->GetValue() == 0) continue;     // a removed stream
             }
@@ -800,6 +1024,7 @@ struct Reader::Private
             } else if (auto *priv = FindChild<KaxCodecPrivate>(entry)) {
                 const QJsonObject object = QJsonDocument::fromJson(QByteArray(reinterpret_cast<const char *>(priv->GetBuffer()),
                                                                               static_cast<int>(priv->GetSize()))).object();
+                describedByPrivate.insert(track.uid);
                 track.kind = kindFromName(object["kind"].toString());
                 track.codec = codecFromName(object["codec"].toString());
                 track.depth = object["depth"].toInt(16);
@@ -819,11 +1044,13 @@ struct Reader::Private
     }
 
     // What each track is: from its tag when it has one (a track written before the tags was described in its private data)
-    void applyDescriptions()
+    // (the private data of a track that is described there are written again with the track when it is changed in its place, so they are the current
+    // description until the tags at the end are read: those of the start say how it was)
+    void applyDescriptions(bool atEnd = false)
     {
         for (Track &track: trackList) {
             const auto found = descriptions.find(track.uid);
-            if (found == descriptions.end()) continue;
+            if (found == descriptions.end() || (!atEnd && describedByPrivate.count(track.uid))) continue;
             const QJsonObject object = QJsonDocument::fromJson(found->second).object();
             track.kind = kindFromName(object["kind"].toString());
             track.codec = codecFromName(object["codec"].toString());
@@ -977,7 +1204,11 @@ struct Reader::Private
             if (auto *name = FindChild<KaxFileName>(attached)) file.name = QString::fromUtf8(name->GetValueUTF8().c_str());
             if (auto *type = FindChild<KaxMimeType>(attached)) file.mediaType = QString::fromLatin1(type->GetValue().c_str());
             if (auto *data = FindChild<KaxFileData>(attached)) file.data = QByteArray(reinterpret_cast<const char *>(data->GetBuffer()), static_cast<int>(data->GetSize()));
-            attachmentList.append(file);
+            // (the last attachment of a name is the one that counts: what is added at the end of a file replaces it; with no data it takes the file out)
+            for (int i = attachmentList.size() - 1; i >= 0; --i) {
+                if (attachmentList[i].name == file.name) attachmentList.removeAt(i);
+            }
+            if (!file.data.isEmpty()) attachmentList.append(file);
         }
     }
 
@@ -1025,6 +1256,13 @@ struct Reader::Private
                 EbmlElement *dummy = nullptr;
                 element->Read(scan, EBML_CONTEXT(element), up, dummy, true);
                 readTags(*static_cast<KaxTags *>(element));
+                applyDescriptions(true);        // (a track that changed after the file was written is described again by a tag at the end)
+            } else if (EbmlId(*element) == EBML_ID(KaxAttachments)) {
+                // Attachments added at the end of the file (the cover, changed in its place)
+                int up = 0;
+                EbmlElement *dummy = nullptr;
+                element->Read(scan, EBML_CONTEXT(element), up, dummy, true);
+                readAttachments(*static_cast<KaxAttachments *>(element));
             } else {
                 element->SkipData(scan, EBML_CONTEXT(element));
             }
@@ -1318,6 +1556,8 @@ bool Reader::begin(const QString &fileName, QString &error, FILE *stream)
                 if (auto *scale = FindChild<KaxTimecodeScale>(*static_cast<KaxInfo *>(element))) d->timecodeScale = scale->GetValue();
             } else if (EbmlId(*element) == EBML_ID(KaxTracks)) {
                 element->Read(*d->stream, EBML_CONTEXT(element), up, dummy, true);
+                d->tracksAt = element->GetElementPosition();
+                d->tracksLength = element->GetSize() + element->HeadSize();
                 d->readTracks(*static_cast<KaxTracks *>(element));
             } else if (EbmlId(*element) == EBML_ID(KaxTags)) {
                 element->Read(*d->stream, EBML_CONTEXT(element), up, dummy, true);
@@ -1325,6 +1565,10 @@ bool Reader::begin(const QString &fileName, QString &error, FILE *stream)
             } else if (EbmlId(*element) == EBML_ID(KaxAttachments)) {
                 element->Read(*d->stream, EBML_CONTEXT(element), up, dummy, true);
                 d->readAttachments(*static_cast<KaxAttachments *>(element));
+            } else if (EbmlId(*element) == EBML_ID(EbmlVoid)) {
+                // The room that follows the tracks (for them to change, or for others to be added, without moving the data)
+                if (d->tracksAt != 0 && element->GetElementPosition() == d->tracksAt + d->tracksLength) d->voidLength = element->GetSize() + element->HeadSize();
+                element->SkipData(*d->stream, EBML_CONTEXT(element));
             } else {
                 element->SkipData(*d->stream, EBML_CONTEXT(element));
             }
@@ -1420,6 +1664,9 @@ QVector<Reader::BlockRef> Reader::blockRefs() const
     }
     return refs;
 }
+
+quint64 Reader::tracksPosition() const { return d->tracksAt; }
+quint64 Reader::tracksSpace() const { return d->tracksLength + d->voidLength; }
 
 quint64 Reader::cuesPosition() const
 {

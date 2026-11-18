@@ -248,7 +248,7 @@ bool LdxStream::openStdin(QString &error)
         return false;
     }
     for (const Ldx::Track &track: d.reader.tracks()) {
-        if (track.kind == Ldx::Kind::Metadata && (track.parameters.value("track").toInt(0) == static_cast<int>(d.video.number)
+        if (Ldx::isCaptureMetadata(track) && (track.parameters.value("track").toInt(0) == static_cast<int>(d.video.number)
                                                   || (!track.parameters.contains("track") && d.metadataTrack == 0))) {
             d.metadataTrack = track.number;
         }
@@ -273,7 +273,7 @@ QJsonArray LdxStream::history() const { return d->reader.history(); }
 VideoSystem LdxStream::system() const
 {
     const QString name = d->video.parameters.value("system").toString();
-    return name == "PAL" ? PAL : (name == "NTSC" ? NTSC : PAL_M);
+    return videoSystemOfName(name);
 }
 
 QString LdxStream::videoName() const { return d->video.name; }

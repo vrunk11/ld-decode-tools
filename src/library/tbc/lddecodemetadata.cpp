@@ -113,6 +113,38 @@ bool parseVideoSystemName(QString name, VideoSystem &system)
     return false;
 }
 
+bool parseVideoSystemVariant(QString name, VideoSystem &system, QString &variant)
+{
+    const QString lower = name.trimmed().toLower();
+    variant.clear();
+    if (lower == "secam") {
+        system = PAL;
+        variant = "secam";
+        return true;
+    }
+    if (lower == "ntsc-vhd" || lower == "ntsc_vhd") {
+        system = NTSC;
+        variant = "ntsc-vhd";
+        return true;
+    }
+    return parseVideoSystemName(name.trimmed().toUpper(), system);
+}
+
+QString videoSystemFileName(VideoSystem system, const QString &variant)
+{
+    if (variant == "secam" && system == PAL) return "SECAM";
+    if (variant == "ntsc-vhd" && system == NTSC) return "NTSC-VHD";
+    return system == PAL_M ? "PAL-M" : VIDEO_SYSTEM_DEFAULTS[system].name;
+}
+
+VideoSystem videoSystemOfName(const QString &name)
+{
+    VideoSystem system;
+    QString variant;
+    if (parseVideoSystemVariant(name, system, variant)) return system;
+    return PAL_M;
+}
+
 // Read Vbi from JSON
 void LdDecodeMetaData::Vbi::read(JsonReader &reader)
 {
@@ -204,7 +236,7 @@ void LdDecodeMetaData::VideoParameters::read(JsonReader &reader)
             if (fieldHeight < 300) system = PAL_M;
             else system = PAL;
         } else system = NTSC;
-    } else if (!parseVideoSystemName(QString::fromStdString(systemString), system)) {
+    } else if (!parseVideoSystemVariant(QString::fromStdString(systemString), system, systemVariant)) {
         reader.throwError("unknown value for videoParameters.system");
     }
 
@@ -245,7 +277,7 @@ void LdDecodeMetaData::VideoParameters::write(JsonWriter &writer) const
     writer.writeMember("numberOfSequentialFields", numberOfSequentialFields);
     writer.writeMember("sampleRate", sampleRate);
     // JSON spells PAL_M as "PAL-M", as every JSON reader expects
-    writer.writeMember("system", system == PAL_M ? "PAL-M" : VIDEO_SYSTEM_DEFAULTS[system].name);
+    writer.writeMember("system", videoSystemFileName(system, systemVariant));
     writer.writeMember("white16bIre", white16bIre);
 	if(tapeFormat != "") {
 		writer.writeMember("tapeFormat", tapeFormat);
@@ -1496,6 +1528,9 @@ bool LdDecodeMetaData::readSqlite(QString fileName)
         bool isSigned, isLittleEndian;
         double audioSampleRate;
         QByteArray decodingJson;
+        QByteArray variantText;
+        // (SECAM and NTSC-VHD: the table system_variant, which only a file that says it has, as the schema of the column system has the three systems of ld-decode)
+        if (reader.readJsonTable(captureId, "system_variant", "variant", variantText)) videoParameters.systemVariant = QString::fromUtf8(variantText).trimmed();
         if (reader.readJsonTable(captureId, "decoding", "parameters", decodingJson)) {
             DecodingParameters parameters;
             QString decodingError;
@@ -1627,6 +1662,12 @@ bool LdDecodeMetaData::writeSqlite(QString fileName, unsigned tables) const
                 writer.rollbackTransaction();
                 return false;
             }
+        }
+
+        // SECAM or NTSC-VHD (the table only a file that says it has: taken away from the file if the metadata say none)
+        if (!partial && !writer.writeJsonTable(captureId, "system_variant", "variant", videoParameters.systemVariant.toUtf8())) {
+            writer.rollbackTransaction();
+            return false;
         }
 
         // How the capture is decoded to colour (taken away from the file if the metadata have none)

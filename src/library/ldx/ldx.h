@@ -40,11 +40,30 @@ struct Track {
     int depth = 16;                 // the useful bits of a sample (16, 10, 8) or 0 for text
     QString name;
     QJsonObject parameters;         // what the tools know of the stream: system, sample rate, field size...
+    double headerRate = 0.0;        // read: the sampling frequency the header of an audio track declares (what a player plays it at), 0 when it is not audio
+    // read: the size of the image of a video track, and the size it is shown at (the shape) that its header declares; 0 when there is none
+    quint64 headerPixelWidth = 0, headerPixelHeight = 0, headerDisplayWidth = 0, headerDisplayHeight = 0;
 
     // Given when the track is added (writing) or read (reading)
     quint32 number = 0;             // the number of the track in the file, from 1
     quint64 uid = 0;
 };
+
+// The size a video track is shown at when its parameters say a shape (displayAspect "4:3" or "16:9"): what the header of the track holds then. False when
+// they do not say one (the image is shown whole, 1:1). `width` and `height` are the size of the image (a field of a TBC, the frame of a CVBS capture).
+bool displayShape(const Track &track, int width, int height, int *displayWidth, int *displayHeight);
+
+// Whether the system a track says has the 625 lines of PAL: PAL, and SECAM (NTSC, PAL-M and NTSC-VHD have 525)
+inline bool has625Lines(const QString &system) { return system == QLatin1String("PAL") || system == QLatin1String("SECAM"); }
+
+// Whether a track is the metadata of a capture (the ld-decode metadata, namespace "ldx.tbcmetadata", which a track with no namespace is taken to be), and not other metadata of
+// a namespace of its own (section 8.4: ldx.rfsource says where the capture comes from)
+inline bool isCaptureMetadata(const Track &track)
+{
+    if (track.kind != Kind::Metadata) return false;
+    const QString space = track.parameters.value("namespace").toString();
+    return space.isEmpty() || space == QLatin1String("ldx.tbcmetadata");
+}
 
 struct Block {
     quint32 track = 0;              // the number of its track
@@ -69,6 +88,7 @@ public:
 
     // A file kept in the LDX file (the session of a stack, for instance), written before the data
     void addAttachment(const QString &name, const QString &mediaType, const QByteArray &data);
+    // (in a file that is added to, the attachments given are written at the end, and the last one of a name is the one that counts: with no data it takes the file out)
 
     bool open(const QString &fileName, QString &error);
 
@@ -80,6 +100,10 @@ public:
     // end, and the cues are written again. Nothing is moved. Add what is said in the history with addHistory.
     bool openAppend(const QString &fileName, QString &error);
     void addHistory(const QJsonObject &entry);
+    // In a file that is added to (openAppend): change the name or the parameters of a track, or add a track, in the list of tracks of the file itself,
+    // in the room the Void after it leaves (section 2). False, with the reason, when it does not fit: the file has to be written again then.
+    bool replaceTrack(const Track &track, QString &error);
+    bool addTrackInPlace(Track &track, QString &error);
 
     // Blocks are written in the order of their time, all tracks together
     bool writeBlock(quint32 track, qint64 timeNs, const QByteArray &data);
@@ -122,6 +146,8 @@ public:
     QVector<BlockRef> blockRefs() const;
     quint64 cuesPosition() const;                       // in the file, where the cues start
     quint64 segmentPosition() const;                    // in the file, where the segment starts
+    quint64 tracksPosition() const;                     // in the file, where the list of tracks starts
+    quint64 tracksSpace() const;                        // its length, with the Void that follows it (room for the tracks to change)
     qint64 lastTimeNs() const;                          // the time of the last block of any track
 
     struct Attachment {

@@ -44,6 +44,14 @@ enum VideoSystem {
 
 bool parseVideoSystemName(QString name, VideoSystem &system);
 
+// The two systems that have the lines of another (they are named in the files, in the field system): SECAM has the 625 lines of PAL, and NTSC-VHD the 525 lines of NTSC. In memory the
+// system is that of the lines (it decides the geometry and the decoder: there is no SECAM decoder, so a SECAM capture is read as PAL), and `variant` says what the file said ("secam",
+// "ntsc-vhd", empty for the three others). parse takes any of the five names (the case does not count); videoSystemFileName is the name a file spells; videoSystemOfName is the system of
+// the lines for any name, PAL-M for one that is none (as the tools always took it).
+bool parseVideoSystemVariant(QString name, VideoSystem &system, QString &variant);
+QString videoSystemFileName(VideoSystem system, const QString &variant);
+VideoSystem videoSystemOfName(const QString &name);
+
 // The frame rate of the video: 25 frames a second for PAL, 30000 / 1001 for NTSC and PAL-M (the rate of the time of the video, as a fraction and as a number)
 inline qint32 frameRateNumerator(VideoSystem system) { return system == PAL ? 25 : 30000; }
 inline qint32 frameRateDenominator(VideoSystem system) { return system == PAL ? 1 : 1001; }
@@ -92,6 +100,8 @@ public:
 
         bool isMapped = false;
         QString tapeFormat = "";
+        // What the file said the system is when it is SECAM ("secam") or NTSC-VHD ("ntsc-vhd"), which have the lines of PAL and of NTSC: `system` is that of the lines (see parseVideoSystemVariant); empty for the others
+        QString systemVariant;
         QString decoder = "ld-decode";      // what made the capture ("ld-decode" or "vhs-decode"), as the SQLite metadata say
 
         QString gitBranch;

@@ -88,7 +88,7 @@ bool LdxFieldFilter::run(const Options &options, const Process &process, QString
         return false;
     }
     for (const Ldx::Track &track: reader.tracks()) {
-        if (track.kind == Ldx::Kind::Metadata && (track.parameters.value("track").toInt(0) == static_cast<int>(video.number)
+        if (Ldx::isCaptureMetadata(track) && (track.parameters.value("track").toInt(0) == static_cast<int>(video.number)
                                                   || (!track.parameters.contains("track") && metadataTrack == 0))) {
             metadataTrack = track.number;
         }
@@ -168,7 +168,7 @@ bool LdxFieldFilter::run(const Options &options, const Process &process, QString
         if (!parametersSent) {
             if (!haveParameters) {
                 const QString name = video.parameters.value("system").toString();
-                metadata.initialiseDefault(name == "PAL" ? PAL : (name == "NTSC" ? NTSC : PAL_M));
+                metadata.initialiseDefault(videoSystemOfName(name));
             }
             videoParameters = metadata.getVideoParameters();
             const QByteArray json = metadata.parametersJson();

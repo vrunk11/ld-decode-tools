@@ -278,6 +278,8 @@ bool StackedVideo::open(const QString &stackFile, QString &error)
 
         auto source = std::make_unique<Source>();
         source->offset = entry.offset;    // (the position on the timeline is worked out below)
+        source->reference = name;
+        source->original = entry.reference();
 
         LdDecodeMetaData captureMetadata;
         std::shared_ptr<const QVector<qint32>> embeddedTable;
@@ -380,4 +382,18 @@ SourceVideo::Data StackedVideo::stackField(qint32 fieldNumber, qint32 lines)
     StackFrame::stack(core, fields, which, position.frame, mode, project.stacking.smartThreshold, project.stacking.diffDod,
                       project.stacking.passthrough, result);
     return position.isFirst ? result.first : result.second;
+}
+
+QVector<StackAudioSpan> StackedVideo::audioSpans() const
+{
+    QVector<StackAudioSpan> spans;
+    for (const std::unique_ptr<Source> &source: sources) {
+        StackAudioSpan span;
+        span.reference = source->reference;
+        span.original = source->original;
+        span.start = source->offset;
+        span.frames = source->metadata.getNumberOfFrames();
+        spans.append(span);
+    }
+    return spans;
 }

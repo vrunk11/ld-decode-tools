@@ -80,6 +80,9 @@ QJsonObject LdxCapture::historyEntry(const QString &command, const QString &deta
     entry["version"] = QStringLiteral(APP_COMMIT);
 #endif
     entry["command"] = command;
+    // The program that asked for it, when another one ran the tool (ldx-packer runs ld-container): the history says who did what, and through what
+    const QByteArray via = qgetenv("LDX_HISTORY_VIA");
+    if (!via.isEmpty()) entry["via"] = QString::fromUtf8(via);
     entry["time"] = QDateTime::currentDateTimeUtc().toString(Qt::ISODate);
     if (!detail.isEmpty()) entry["detail"] = detail;
     QStringList arguments = QCoreApplication::instance() ? QCoreApplication::arguments() : QStringList();
@@ -107,10 +110,18 @@ QJsonArray LdxCapture::historyOf(const QString &name)
 }
 
 bool LdxCapture::addTrackFromFile(const QString &ldxPath, const QString &kind, const QString &dataFile, const QJsonObject &parameters,
-                                  const QString &trackName, qint32 about, const QJsonObject &historyEntry, QString &error)
+                                  const QString &trackName, qint32 about, const QJsonObject &historyEntry, QString &error, const QString &codec)
 {
 #ifdef LDDECODE_WITH_LDX
     const Ldx::Kind trackKind = Ldx::kindFromName(kind);
+    if (!codec.isEmpty() && codec != QLatin1String("raw") && codec != QLatin1String("flac")) {
+        error = QObject::tr("The codec of an added track is raw or flac, not %1").arg(codec);
+        return false;
+    }
+    if (codec == QLatin1String("flac") && (trackKind != Ldx::Kind::Pcm || !Ldx::flacAvailable())) {
+        error = trackKind != Ldx::Kind::Pcm ? QObject::tr("Only 16-bit audio (pcm) can be kept in FLAC") : QObject::tr("This program was built without ffmpeg, which writes FLAC");
+        return false;
+    }
     if (trackKind != Ldx::Kind::Pcm && trackKind != Ldx::Kind::Efm && trackKind != Ldx::Kind::Ac3 && trackKind != Ldx::Kind::Annotations) {
         error = QObject::tr("A track of kind %1 cannot be added from a file: use pcm, efm, ac3 or annotations").arg(kind);
         return false;
@@ -154,6 +165,7 @@ bool LdxCapture::addTrackFromFile(const QString &ldxPath, const QString &kind, c
     added.kind = trackKind;
     added.depth = trackKind == Ldx::Kind::Pcm ? 16 : (trackKind == Ldx::Kind::Annotations ? 0 : 8);
     added.name = trackName;
+    if (codec == QLatin1String("flac")) added.codec = Ldx::Codec::Flac;
     added.parameters = parameters;
     if (aboutTrack != 0) added.parameters["track"] = static_cast<int>(aboutTrack);
     writer.addTrack(added);
@@ -175,6 +187,7 @@ bool LdxCapture::addTrackFromFile(const QString &ldxPath, const QString &kind, c
     auto putChunk = [&]() {
         if (!writer.writeBlock(added.number, chunkTime(), chunk)) return false;
         position += chunk.size();
+
         chunk = data.read(chunkBytes);
         return true;
     };
@@ -205,7 +218,7 @@ bool LdxCapture::addTrackFromFile(const QString &ldxPath, const QString &kind, c
     }
     return true;
 #else
-    Q_UNUSED(ldxPath); Q_UNUSED(kind); Q_UNUSED(dataFile); Q_UNUSED(parameters); Q_UNUSED(trackName); Q_UNUSED(about); Q_UNUSED(historyEntry);
+    Q_UNUSED(ldxPath); Q_UNUSED(kind); Q_UNUSED(dataFile); Q_UNUSED(parameters); Q_UNUSED(trackName); Q_UNUSED(about); Q_UNUSED(historyEntry); Q_UNUSED(codec);
     error = unsupported();
     return false;
 #endif
@@ -469,6 +482,102 @@ bool LdxCapture::readSession(const QString &path, QByteArray &session, QString &
 #endif
 }
 
+bool LdxCapture::readCover(const QString &path, QByteArray &image, QString &name, QString &error)
+{
+#ifdef LDDECODE_WITH_LDX
+    Ldx::Reader reader;
+    if (!reader.open(path, error) || !reader.buildIndex(error)) return false;       // (the index: a cover changed in its place is at the end of the file)
+    if (reader.profile() < 1) {
+        error = QObject::tr("%1 is not an LDX file").arg(path);
+        return false;
+    }
+    // The cover of the file: the attachment cover.png or cover.jpg (section 9 of the specification)
+    for (const Ldx::Reader::Attachment &attachment: reader.attachments()) {
+        const QString lower = attachment.name.toLower();
+        if (lower == QLatin1String("cover.png") || lower == QLatin1String("cover.jpg") || lower == QLatin1String("cover.jpeg")) {
+            image = attachment.data;
+            name = attachment.name;
+            return true;
+        }
+    }
+    error = QObject::tr("%1 has no cover").arg(path);
+    return false;
+#else
+    Q_UNUSED(path);
+    Q_UNUSED(image);
+    Q_UNUSED(name);
+    error = unsupported();
+    return false;
+#endif
+}
+
+bool LdxCapture::readCoverInfo(const QString &path, CoverInfo &info, QString &error)
+{
+#ifdef LDDECODE_WITH_LDX
+    Ldx::Reader reader;
+    if (!reader.open(path, error) || !reader.buildIndex(error)) return false;
+    if (reader.profile() < 1) {
+        error = QObject::tr("%1 is not an LDX file").arg(path);
+        return false;
+    }
+    for (const Ldx::Reader::Attachment &attachment: reader.attachments()) {
+        const QString lower = attachment.name.toLower();
+        if (lower == QLatin1String("cover.png") || lower == QLatin1String("cover.jpg") || lower == QLatin1String("cover.jpeg")) {
+            info.image = attachment.data;
+            info.imageName = attachment.name;
+        } else if (lower == QLatin1String("cover.url")) {
+            info.source = QString::fromUtf8(attachment.data).trimmed();
+        } else if (lower == QLatin1String("link.url")) {
+            info.link = QString::fromUtf8(attachment.data).trimmed();
+        }
+    }
+    return true;
+#else
+    Q_UNUSED(path); Q_UNUSED(info);
+    error = unsupported();
+    return false;
+#endif
+}
+
+bool LdxCapture::putAttachmentsInPlace(const QString &path, const QVector<AttachmentEdit> &edits, const QJsonObject &historyEntry, QString &error)
+{
+#ifdef LDDECODE_WITH_LDX
+    // What the file has now (an attachment is at the start of the file, or at the end where an earlier change put it)
+    QMap<QString, QString> existing;        // by the lower case name
+    {
+        Ldx::Reader reader;
+        if (!reader.open(path, error) || !reader.buildIndex(error)) return false;
+        for (const Ldx::Reader::Attachment &attachment: reader.attachments()) existing.insert(attachment.name.toLower(), attachment.name);
+    }
+    Ldx::Writer writer;
+    if (!writer.openAppend(path, error)) return false;
+    int written = 0;
+    for (const AttachmentEdit &edit: edits) {
+        if (edit.data.isEmpty()) {
+            // (taking out what is not there is nothing to do)
+            const auto found = existing.find(edit.name.toLower());
+            if (found == existing.end()) continue;
+            writer.addAttachment(found.value(), QString(), QByteArray());
+            existing.erase(found);
+        } else {
+            writer.addAttachment(edit.name, edit.mediaType, edit.data);
+            existing.insert(edit.name.toLower(), edit.name);
+        }
+        ++written;
+    }
+    if (written == 0) {
+        error = QObject::tr("%1 has nothing of that to take out").arg(path);
+        return false;
+    }
+    writer.addHistory(historyEntry);
+    return writer.finish(error);
+#else
+    Q_UNUSED(path); Q_UNUSED(edits); Q_UNUSED(historyEntry);
+    error = unsupported();
+    return false;
+#endif
+}
+
 bool LdxCapture::open(const QString &name, QString &error)
 {
 #ifdef LDDECODE_WITH_LDX
@@ -520,7 +629,7 @@ bool LdxCapture::open(const QString &name, QString &error)
     if (chosen->kind == Ldx::Kind::Cvbs) {
         // Frames: two fields each, of the length of a TBC field
         const QString system = chosen->parameters.value("system").toString();
-        const VideoSystem videoSystem = system == "PAL" ? PAL : (system == "NTSC" ? NTSC : PAL_M);
+        const VideoSystem videoSystem = videoSystemOfName(system);
         d->geometry = Cvbs::geometry(videoSystem);
         if (static_cast<qint64>(chosen->parameters.value("frameSamples").toDouble()) != d->geometry.frameSamples) {
             error = QObject::tr("The frames of track %1 of %2 are not those of %3 CVBS").arg(chosen->number).arg(path, system);
@@ -604,7 +713,7 @@ quint32 LdxCapture::metadataTrackNumber() const
     int count = 0;
     const QVector<Ldx::Track> tracks = d->reader.tracks();
     for (const Ldx::Track &candidate: tracks) {
-        if (candidate.kind != Ldx::Kind::Metadata) continue;
+        if (!Ldx::isCaptureMetadata(candidate)) continue;
         count++;
         if (candidate.parameters.value("track").toInt(0) == d->trackId) return candidate.number;
         if (!chosen && !candidate.parameters.contains("track")) chosen = &candidate;
@@ -712,6 +821,169 @@ bool LdxCapture::writeMetadata(const QString &name, const QByteArray &json, QStr
 #endif
 }
 
+bool LdxCapture::updateTrackInPlace(const QString &ldxPath, qint32 track, const QString &name, bool setName, const QJsonObject &parameters,
+                                    const QStringList &removeParameters, const QJsonObject &historyEntry, QString &error)
+{
+#ifdef LDDECODE_WITH_LDX
+    Ldx::Reader reader;
+    if (!reader.open(ldxPath, error) || !reader.buildIndex(error)) return false;
+    Ldx::Track found;
+    for (const Ldx::Track &candidate: reader.tracks()) {
+        if (static_cast<qint32>(candidate.number) == track) found = candidate;
+    }
+    if (found.number == 0) {
+        error = QObject::tr("There is no track %1 in %2").arg(track).arg(ldxPath);
+        return false;
+    }
+    if (setName) found.name = name;
+    for (auto it = parameters.begin(); it != parameters.end(); ++it) found.parameters[it.key()] = it.value();
+    for (const QString &key: removeParameters) found.parameters.remove(key);
+
+    Ldx::Writer writer;
+    if (!writer.openAppend(ldxPath, error)) return false;
+    if (!writer.replaceTrack(found, error)) return false;
+    writer.addHistory(historyEntry);
+    return writer.finish(error);
+#else
+    Q_UNUSED(ldxPath); Q_UNUSED(track); Q_UNUSED(name); Q_UNUSED(setName); Q_UNUSED(parameters); Q_UNUSED(removeParameters); Q_UNUSED(historyEntry);
+    error = unsupported();
+    return false;
+#endif
+}
+
+bool LdxCapture::addNotesInPlace(const QString &ldxPath, const QByteArray &text, const QString &trackName, qint32 about, const QJsonObject &historyEntry, QString &error)
+{
+#ifdef LDDECODE_WITH_LDX
+    qint64 after = 0;
+    quint32 aboutTrack = static_cast<quint32>(about);
+    {
+        Ldx::Reader reader;
+        if (!reader.open(ldxPath, error) || !reader.buildIndex(error)) return false;
+        after = reader.lastTimeNs() + 1000;
+        if (aboutTrack == 0) {
+            for (const Ldx::Track &track: reader.tracks()) {
+                if ((track.kind == Ldx::Kind::Tbc || track.kind == Ldx::Kind::Cvbs) && track.parameters.value("role").toString() != "chroma") { aboutTrack = track.number; break; }
+            }
+        }
+    }
+    Ldx::Writer writer;
+    if (!writer.openAppend(ldxPath, error)) return false;
+    Ldx::Track notes;
+    notes.kind = Ldx::Kind::Annotations;
+    notes.depth = 0;
+    notes.name = trackName;
+    if (aboutTrack != 0) notes.parameters["track"] = static_cast<int>(aboutTrack);
+    if (!writer.addTrackInPlace(notes, error)) return false;
+    writer.addHistory(historyEntry);
+    // (stamped after everything in the file: the blocks are in the order of their time, and the file is added to at its end)
+    if (!writer.writeBlock(notes.number, after, text)) {
+        error = writer.lastError().isEmpty() ? QObject::tr("Could not add the notes to %1").arg(ldxPath) : writer.lastError();
+        return false;
+    }
+    return writer.finish(error);
+#else
+    Q_UNUSED(ldxPath); Q_UNUSED(text); Q_UNUSED(trackName); Q_UNUSED(about); Q_UNUSED(historyEntry);
+    error = unsupported();
+    return false;
+#endif
+}
+
+// ldx.rfsource (section 8.4): where a capture comes from
+static const char *RfSourceNamespace = "ldx.rfsource";
+
+static bool isRfSourceOf(const Ldx::Track &track, quint32 video)
+{
+    return track.kind == Ldx::Kind::Metadata && track.parameters.value("namespace").toString() == QLatin1String(RfSourceNamespace)
+           && static_cast<quint32>(track.parameters.value("track").toInt(0)) == video;
+}
+
+// The video track of a capture: the one named, or the first that is not a chroma track
+static quint32 videoOf(const QVector<Ldx::Track> &tracks, qint32 about)
+{
+    if (about > 0) return static_cast<quint32>(about);
+    for (const Ldx::Track &track: tracks) {
+        if ((track.kind == Ldx::Kind::Tbc || track.kind == Ldx::Kind::Cvbs) && track.parameters.value("role").toString() != "chroma") return track.number;
+    }
+    return 0;
+}
+
+bool LdxCapture::readRfSource(const QString &ldxPath, qint32 about, QByteArray &json, QString &error)
+{
+#ifdef LDDECODE_WITH_LDX
+    json.clear();
+    Ldx::Reader reader;
+    if (!reader.open(ldxPath, error) || !reader.buildIndex(error)) return false;
+    const quint32 video = videoOf(reader.tracks(), about);
+    for (const Ldx::Track &track: reader.tracks()) {
+        if (!isRfSourceOf(track, video)) continue;
+        // (the last block is the current one; a block that says "deleted" takes it away)
+        const qint64 blocks = reader.blockCount(track.number);
+        Ldx::Block block;
+        if (blocks > 0 && reader.readBlock(track.number, blocks - 1, block)) {
+            const QJsonObject object = QJsonDocument::fromJson(block.data).object();
+            if (!object.isEmpty() && !object.value("deleted").toBool(false)) json = block.data;
+        }
+    }
+    return !json.isEmpty();
+#else
+    Q_UNUSED(ldxPath); Q_UNUSED(about); Q_UNUSED(json);
+    error = unsupported();
+    return false;
+#endif
+}
+
+bool LdxCapture::putRfSourceInPlace(const QString &ldxPath, qint32 about, const QByteArray &json, const QJsonObject &historyEntry, QString &error)
+{
+#ifdef LDDECODE_WITH_LDX
+    qint64 after = 0;
+    quint32 video = 0;
+    quint32 existing = 0;
+    {
+        Ldx::Reader reader;
+        if (!reader.open(ldxPath, error) || !reader.buildIndex(error)) return false;
+        after = reader.lastTimeNs() + 1000;
+        video = videoOf(reader.tracks(), about);
+        for (const Ldx::Track &track: reader.tracks()) {
+            if (isRfSourceOf(track, video)) existing = track.number;
+        }
+    }
+    if (video == 0) {
+        error = QObject::tr("%1 has no video track").arg(ldxPath);
+        return false;
+    }
+    if (existing == 0 && json.isEmpty()) {
+        error = QObject::tr("%1 has nothing of that to take out").arg(ldxPath);
+        return false;
+    }
+    Ldx::Writer writer;
+    if (!writer.openAppend(ldxPath, error)) return false;
+    quint32 number = existing;
+    if (existing == 0) {
+        Ldx::Track track;
+        track.kind = Ldx::Kind::Metadata;
+        track.depth = 0;
+        track.name = QObject::tr("where the capture comes from");
+        track.parameters["namespace"] = QString::fromLatin1(RfSourceNamespace);
+        track.parameters["format"] = QStringLiteral("json");
+        track.parameters["track"] = static_cast<int>(video);
+        if (!writer.addTrackInPlace(track, error)) return false;
+        number = track.number;
+    }
+    writer.addHistory(historyEntry);
+    // (a block stamped after everything in the file: the last one counts; one that says "deleted" takes the information out)
+    const QByteArray data = json.isEmpty() ? QByteArray("{\"deleted\":true}") : json;
+    if (!writer.writeBlock(number, after, data)) {
+        error = writer.lastError().isEmpty() ? QObject::tr("Could not write where the capture comes from to %1").arg(ldxPath) : writer.lastError();
+        return false;
+    }
+    return writer.finish(error);
+#else
+    Q_UNUSED(ldxPath); Q_UNUSED(about); Q_UNUSED(json); Q_UNUSED(historyEntry);
+    error = unsupported();
+    return false;
+#endif
+}
+
 bool LdxCapture::captureTracks(const QString &name, qint32 &video, qint32 &metadata, qint32 &audio)
 {
     video = metadata = audio = 0;
@@ -735,7 +1007,7 @@ bool LdxCapture::captureTracks(const QString &name, qint32 &video, qint32 &metad
     // (as the capture reads them: the metadata that says which capture it is about, else the one that says none)
     quint32 general = 0;
     for (const Ldx::Track &track: tracks) {
-        if (track.kind == Ldx::Kind::Metadata) {
+        if (Ldx::isCaptureMetadata(track)) {
             if (track.parameters.value("track").toInt(0) == video) { metadata = static_cast<qint32>(track.number); break; }
             if (general == 0 && !track.parameters.contains("track")) general = track.number;
         }
@@ -916,4 +1188,24 @@ QByteArray LdxCapture::getAudioBytes(qint64 startSample, qint64 numberOfSamples)
     Q_UNUSED(numberOfSamples);
 #endif
     return samples;
+}
+
+bool LdxCapture::readSaid(const QString &name, Said &said)
+{
+    said = Said();
+#ifdef LDDECODE_WITH_LDX
+    LdxCapture capture;
+    QString error;
+    if (!capture.open(name, error)) return false;
+    const QJsonObject parameters = capture.parameters();
+    said.medium = parameters.value("medium").toString();
+    said.reference = parameters.value("reference").toString();
+    said.face = parameters.value("face").toString();
+    said.copy = parameters.value("copy").toInt(0);
+    said.capture = parameters.value("capture").toInt(0);
+    return said.any();
+#else
+    Q_UNUSED(name);
+    return false;
+#endif
 }

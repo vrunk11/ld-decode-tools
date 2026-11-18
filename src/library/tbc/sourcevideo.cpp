@@ -623,3 +623,11 @@ SourceVideo::Data SourceVideo::blankField(qint32 startFieldLine, qint32 endField
     const qint32 lines = qMax(0, endFieldLine - startFieldLine + 1);
     return Data(lines * lineSamples, 0);
 }
+
+bool SourceVideo::stackAudioSpans(QVector<StackAudioSpan> &spans, qint32 &timelineFrames) const
+{
+    if (!stacked) return false;
+    spans = stacked->audioSpans();
+    timelineFrames = stacked->timelineFrameCount();
+    return true;
+}

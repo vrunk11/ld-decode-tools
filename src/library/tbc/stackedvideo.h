@@ -30,6 +30,14 @@
 // The sources are lined up by the numbers of the disc that their VBI gives (the picture of a CAV disc, the time of a CLV one), and then by their own offsets
 // in addition. The stack goes from the earliest frame of any source that is on to the latest of any of them: where no source has a frame, the frame is a padded one
 // (blank). A source whose VBI gives no number begins at the number 0 of the disc.
+// Where a source of the stack is on its timeline (see StackedVideo::audioSpans)
+struct StackAudioSpan {
+    QString reference;         // what opens the capture the stack reads (its mapping, when it follows one)
+    QString original;          // what opens the capture it was made from
+    qint32 start = 0;          // its first frame on the timeline (from 0)
+    qint32 frames = 0;         // how many frames it has
+};
+
 class StackedVideo
 {
 public:
@@ -44,6 +52,11 @@ public:
 
     qint32 getNumberOfFields();
     qint32 getFieldLength() const { return fieldLength; }
+
+    // The sources that are on, where each begins on the timeline (by the numbers of the disc, then its offset) and how many frames it has: what the audio of the stack
+    // is made from (a source with no numbers begins at the number 0 of the disc, and so does its audio)
+    QVector<StackAudioSpan> audioSpans() const;
+    qint32 timelineFrameCount() const { return timelineFrames; }
 
     // A field of the stack. startLine and endLine (numbered from 1) give the lines wanted, -1 for all of them.
     SourceVideo::Data getField(qint32 fieldNumber, qint32 startLine = -1, qint32 endLine = -1);
@@ -64,6 +77,8 @@ public:
 private:
     struct Source {
         qint32 offset = 0;     // where its first frame is on the timeline
+        QString reference;     // what opened it
+        QString original;      // what opens the capture it was made from
         LdDecodeMetaData metadata;
         SourceVideo video;
     };

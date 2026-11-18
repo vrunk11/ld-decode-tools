@@ -10,6 +10,7 @@
 
 #include <QCoreApplication>
 #include <QCryptographicHash>
+#include <QFile>
 #include <QFileInfo>
 #include <QJsonObject>
 #include <QTemporaryDir>
@@ -20,6 +21,7 @@
 
 #include "ldx.h"
 #include "ldxcodec.h"
+#include "ldxpicture.h"
 
 // assert() is compiled out of release builds, so check explicitly
 #define CHECK(condition) \
@@ -827,6 +829,198 @@ static void testExamples()
 }
 #endif
 
+// A raw TBC is a video track the players show (V_UNCOMPRESSED, a grey 16-bit colour space, the crop and the shape of the active picture), and
+// reads back as the raw TBC track it is
+static void testVideoTrack(const QString &path)
+{
+    std::cerr << "Testing a raw TBC as a video track\n";
+    Ldx::Writer writer;
+    Ldx::Track video;
+    video.kind = Ldx::Kind::Tbc;
+    video.codec = Ldx::Codec::Raw;
+    video.name = "video";
+    video.parameters["system"] = "PAL";
+    video.parameters["fieldWidth"] = 8;
+    video.parameters["fieldHeight"] = 6;
+    video.parameters["activeVideoStart"] = 2;
+    video.parameters["activeVideoEnd"] = 7;
+    video.parameters["firstActiveFieldLine"] = 1;
+    video.parameters["lastActiveFieldLine"] = 5;
+    video.parameters["firstActiveFrameLine"] = 2;
+    video.parameters["lastActiveFrameLine"] = 11;
+    video.parameters["displayAspect"] = "16:9";
+    writer.addTrack(video);
+    QString error;
+    CHECK(writer.open(path, error));
+    const QByteArray field(8 * 6 * 2, 'f');
+    CHECK(writer.writeBlock(video.number, 0, field));
+    CHECK(writer.writeBlock(video.number, 20000000, field));
+    CHECK(writer.finish(error));
+
+    QFile file(path);
+    CHECK(file.open(QIODevice::ReadOnly));
+    const QByteArray bytes = file.readAll();
+    CHECK(bytes.contains("V_UNCOMPRESSED") && !bytes.contains("A_PCM/INT/LIT"));
+    CHECK(bytes.contains(QByteArray("Y1\0\x10", 4)));
+    Ldx::Reader reader;
+    CHECK(reader.open(path, error) && reader.buildIndex(error));
+    const QVector<Ldx::Track> tracks = reader.tracks();
+    CHECK(tracks.size() == 1 && tracks[0].kind == Ldx::Kind::Tbc && tracks[0].codec == Ldx::Codec::Raw && tracks[0].depth == 16);
+    CHECK(reader.blockCount(tracks[0].number) == 2);
+    Ldx::Block block;
+    CHECK(reader.readBlock(tracks[0].number, 1, block) && block.data == field);
+}
+
+// The list of tracks is changed in the file itself, in the room the Void leaves after it: a track renamed and described again, a track added,
+// with the data after it unmoved (the blocks and the cues still find each other)
+static void testTracksInPlace(const QString &path)
+{
+    std::cerr << "Testing the tracks changed in their place\n";
+    {
+        Ldx::Writer writer;
+        Ldx::Track video;
+        video.kind = Ldx::Kind::Tbc;
+        video.codec = Ldx::Codec::Raw;
+        video.name = "before";
+        video.parameters["system"] = "PAL";
+        video.parameters["fieldWidth"] = 4;
+        video.parameters["fieldHeight"] = 2;
+        writer.addTrack(video);
+        QString error;
+        CHECK(writer.open(path, error));
+        for (int i = 0; i < 3; ++i) CHECK(writer.writeBlock(video.number, i * 20000000LL, QByteArray(16, static_cast<char>('a' + i))));
+        CHECK(writer.finish(error));
+    }
+    const qint64 size = QFileInfo(path).size();
+    QString error;
+    Ldx::Writer writer;
+    CHECK(writer.openAppend(path, error));
+    Ldx::Track changed;
+    changed.number = 1;
+    changed.name = "after";
+    changed.parameters["system"] = "PAL";
+    changed.parameters["fieldWidth"] = 4;
+    changed.parameters["fieldHeight"] = 2;
+    changed.parameters["displayAspect"] = "16:9";
+    CHECK(writer.replaceTrack(changed, error));
+    Ldx::Track notes;
+    notes.kind = Ldx::Kind::Annotations;
+    notes.depth = 0;
+    notes.name = "notes";
+    notes.parameters["track"] = 1;
+    CHECK(writer.addTrackInPlace(notes, error) && notes.number == 2);
+    CHECK(writer.writeBlock(notes.number, 50000000, QByteArray("a note")));
+    CHECK(writer.finish(error));
+    CHECK(QFileInfo(path).size() > size && QFileInfo(path).size() < size + 4000);
+
+    Ldx::Reader reader;
+    CHECK(reader.open(path, error) && reader.buildIndex(error));
+    const QVector<Ldx::Track> tracks = reader.tracks();
+    CHECK(tracks.size() == 2 && tracks[0].name == "after" && tracks[0].parameters.value("displayAspect").toString() == "16:9");
+    CHECK(tracks[1].kind == Ldx::Kind::Annotations && tracks[1].name == "notes");
+    CHECK(reader.blockCount(1) == 3 && reader.blockCount(2) == 1);
+    Ldx::Block block;
+    CHECK(reader.readBlock(1, 2, block) && block.data == QByteArray(16, 'c'));
+    CHECK(reader.readBlock(2, 0, block) && block.data == "a note");
+    // too much for the room: refused, before anything is written
+    Ldx::Writer again;
+    CHECK(again.openAppend(path, error));
+    Ldx::Track big = tracks[0];
+    big.parameters["long"] = QString(5000, 'x');
+    CHECK(!again.replaceTrack(big, error) && !error.isEmpty());
+}
+
+// The pictures of the cover: encoded as PNG and as JPEG, decoded again, and scaled down (ffmpeg; nothing to try without it)
+static void testPictures()
+{
+    std::cerr << "Testing the pictures of the cover\n";
+    Ldx::Picture picture;
+    picture.width = 90;
+    picture.height = 60;
+    picture.rgba.resize(90 * 60 * 4);
+    for (int y = 0; y < 60; ++y) {
+        for (int x = 0; x < 90; ++x) {
+            unsigned char *p = reinterpret_cast<unsigned char *>(picture.rgba.data()) + (y * 90 + x) * 4;
+            p[0] = static_cast<unsigned char>(x * 255 / 89);
+            p[1] = static_cast<unsigned char>(y * 255 / 59);
+            p[2] = 128;
+            p[3] = 255;
+        }
+    }
+    QString error;
+    QByteArray png, jpeg;
+    CHECK(Ldx::encodePicture(picture, false, 90, png, error) && Ldx::pictureFormat(png) == "png");
+    // (a PNG is made and read by the library itself; JPEG and the other formats are ffmpeg's, when this build has it)
+    const bool withJpeg = Ldx::pictureAvailable();
+    CHECK(!withJpeg || (Ldx::encodePicture(picture, true, 90, jpeg, error) && Ldx::pictureFormat(jpeg) == "jpeg"));
+    Ldx::Picture fromPng, fromJpeg;
+    CHECK(Ldx::decodePicture(png, fromPng, error) && fromPng.width == 90 && fromPng.height == 60 && fromPng.rgba == picture.rgba);
+    CHECK(!withJpeg || (Ldx::decodePicture(jpeg, fromJpeg, error) && fromJpeg.width == 90 && fromJpeg.height == 60));
+    // (a JPEG is not the same pixels, but near: the mean difference is a few levels)
+    qint64 difference = 0;
+    for (int i = 0; i < picture.rgba.size(); i += 4) {
+        for (int c = 0; c < 3; ++c) difference += std::abs(static_cast<unsigned char>(picture.rgba[i + c]) - static_cast<unsigned char>(fromJpeg.rgba[i + c]));
+    }
+    CHECK(!withJpeg || difference / (90 * 60 * 3) < 8);
+    // scaled down keeping the shape, and left alone when it is not higher
+    const Ldx::Picture small = Ldx::scaledToHeight(picture, 30);
+    CHECK(small.height == 30 && small.width == 45 && !small.isNull());
+    CHECK(Ldx::scaledToHeight(picture, 60).rgba == picture.rgba);
+    CHECK(!Ldx::decodePicture(QByteArray("not a picture"), fromPng, error) && !error.isEmpty());
+}
+
+// Attachments added at the end of a file, in its place: the last of a name is the one that counts, and one with no data takes it out
+static void testEndAttachments(const QString &path)
+{
+    std::cerr << "Testing the attachments added at the end of a file\n";
+    {
+        Ldx::Writer writer;
+        Ldx::Track video;
+        video.kind = Ldx::Kind::Tbc;
+        video.codec = Ldx::Codec::Raw;
+        video.parameters["system"] = "PAL";
+        video.parameters["fieldWidth"] = 4;
+        video.parameters["fieldHeight"] = 2;
+        writer.addTrack(video);
+        writer.addAttachment("note.txt", "text/plain", "at the start");
+        QString error;
+        CHECK(writer.open(path, error));
+        CHECK(writer.writeBlock(video.number, 0, QByteArray(16, 'a')));
+        CHECK(writer.finish(error));
+    }
+    const auto names = [&path]() {
+        Ldx::Reader reader;
+        QString error;
+        CHECK(reader.open(path, error) && reader.buildIndex(error));
+        QStringList list;
+        for (const Ldx::Reader::Attachment &attachment : reader.attachments()) list << attachment.name + "=" + QString::fromUtf8(attachment.data);
+        return list;
+    };
+    CHECK(names() == QStringList({ "note.txt=at the start" }));
+    {
+        Ldx::Writer writer;
+        QString error;
+        CHECK(writer.openAppend(path, error));
+        writer.addAttachment("note.txt", "text/plain", "changed at the end");
+        writer.addAttachment("cover.png", "image/png", "picture");
+        CHECK(writer.finish(error));
+    }
+    CHECK(names() == QStringList({ "note.txt=changed at the end", "cover.png=picture" }));
+    {
+        Ldx::Writer writer;
+        QString error;
+        CHECK(writer.openAppend(path, error));
+        writer.addAttachment("note.txt", QString(), QByteArray());
+        CHECK(writer.finish(error));
+    }
+    CHECK(names() == QStringList({ "cover.png=picture" }));
+    // the blocks are still where the index says
+    Ldx::Reader reader;
+    QString error;
+    Ldx::Block block;
+    CHECK(reader.open(path, error) && reader.buildIndex(error) && reader.blockCount(1) == 1 && reader.readBlock(1, 0, block) && block.data == QByteArray(16, 'a'));
+}
+
 int main(int argc, char *argv[])
 {
     QCoreApplication application(argc, argv);
@@ -844,6 +1038,10 @@ int main(int argc, char *argv[])
     testCvbsTracks(directory.path());
     testStream(directory.filePath("stream.ldx"));
     testSameTime(directory.filePath("sametime.ldx"));
+    testPictures();
+    testVideoTrack(directory.filePath("video.ldx"));
+    testTracksInPlace(directory.filePath("inplace.ldx"));
+    testEndAttachments(directory.filePath("attachments.ldx"));
     testNotAnLdxFile(directory.filePath("garbage.ldx"));
 #ifdef LDX_EXAMPLES_DIR
     testExamples();
