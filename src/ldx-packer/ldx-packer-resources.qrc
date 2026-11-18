@@ -1,0 +1,7 @@
+<RCC>
+    <!-- The icon of the program: a green cardboard box with LD on its side (Graphics/, in several sizes for the system: the .ico of Windows,
+         the .icns of macOS and the icons of Linux). -->
+    <qresource prefix="/icons">
+        <file>Graphics/256-ldx-packer.png</file>
+    </qresource>
+</RCC>

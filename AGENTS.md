@@ -69,6 +69,7 @@ and command lines working (see §2 and §10).
 | --- | --- | --- |
 | `src/ld-analyse/` | `ld-analyse` | Qt GUI: TBC inspection, scopes, SNR/dropout analysis |
 | `src/ld-stacker-gui/` | `ld-stacker-gui` | Qt GUI: stack several captures of a disc, with a live preview and a `.stack` session |
+| `src/ldx-packer/` | `ldx-packer` | Qt GUI: make an `.ldx` file from captures, or open one and change its captures and tracks (runs `ld-container`) |
 | `src/gui-common/` | `lddecode-gui` (static) | What the two windows share: themes and their menus, dropout drawing, aspect ratio |
 | `src/ld-container/` | `ld-container` | Pack, add, extract and stack the tracks of an `.ldx` container |
 | `src/ld-chroma-decoder/` | `ld-chroma-decoder`, `ld-chroma-encoder` | PAL/NTSC colour decoding to RGB/YUV; test encoder |

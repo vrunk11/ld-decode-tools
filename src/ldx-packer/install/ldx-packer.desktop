@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=ldx-packer
+Comment=Make .ldx files from captures and edit them
+Exec=ldx-packer %f
+Icon=ldx-packer
+Terminal=false
+Categories=AudioVideo;Video;Utility;
