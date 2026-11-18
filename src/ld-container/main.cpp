@@ -33,11 +33,13 @@
 #include <vector>
 
 #include "ldx.h"
+#include "captureinfo.h"
 #include "ldxcapture.h"
 #include "cvbs.h"
 #include "cvbsaudio.h"
 #include "tbcfiles.h"
 #include "lddecodemetadata.h"
+#include "ldxpicture.h"
 #include "tbc/logging.h"
 
 namespace {
@@ -344,7 +346,15 @@ void addCaptureOptions(QCommandLineParser &parser)
     parser.addOption(QCommandLineOption("start", "First field to pack (default 0)", "field", "0"));
     parser.addOption(QCommandLineOption("fields", "Number of fields to pack (default all)", "count", "0"));
     parser.addOption(QCommandLineOption("name", "Name of the capture (default: the name of the file)", "name"));
+    parser.addOption(QCommandLineOption("no-chroma", "Leave out the chroma file of a Y/C capture that is beside the luma file (it can be added later with addchroma)"));
     parser.addOption(QCommandLineOption("codec", "How the video and the audio are kept: raw (default), flac (TBC and audio), ffv1 (CVBS), or auto (the best for each)", "codec", "raw"));
+    // What a person says of the capture (as ld-container tag does later): the words of the .rfx archives of RF-tools
+    parser.addOption(QCommandLineOption("medium", "What was captured: ld, vhs, vhd or cvbs", "medium"));
+    parser.addOption(QCommandLineOption("reference", "A reference of the disc or the tape (a catalogue number, a title...)", "text"));
+    parser.addOption(QCommandLineOption("copy", "The number of the physical copy of the disc, 1 or more", "n"));
+    parser.addOption(QCommandLineOption("capture-number", "The number of the capture, 1 or more", "n"));
+    parser.addOption(QCommandLineOption("face", "The face of the disc: A, B, AB or BA", "face"));
+    parser.addOption(QCommandLineOption("system", "The system, when the metadata do not say it: PAL, NTSC, PAL-M, SECAM (the 625 lines of PAL) or NTSC-VHD (the 525 lines of NTSC)", "system"));
 }
 
 // The codec a track of a kind is kept in, for the codec asked for: raw; flac for the tracks of 16-bit samples; ffv1 for CVBS;
@@ -369,11 +379,52 @@ struct CaptureOptions {
     QString codec = "raw";      // how the video and the audio are kept
     bool live = false;          // the metadata of the fields go before their video, one block each (see the pipes of the specification)
     bool asChroma = false;      // the file is the chroma file of a Y/C capture (read for the track about the luma)
+    // What a person said of the capture (empty, and 0: not said): parameters of the video track
+    QString medium, reference, face;
+    QString system;             // the system as the files spell it (PAL, NTSC, PAL-M, SECAM, NTSC-VHD); empty: what the metadata say
+    int copy = 0, captureNumber = 0;
+    bool invalid = false;       // an option said it wrongly (the reason is written)
 };
 
 CaptureOptions captureOptions(const QCommandLineParser &parser)
 {
     CaptureOptions options;
+    const auto number = [&](const char *option, int &value) {
+        if (!parser.isSet(option)) return;
+        bool ok = false;
+        value = parser.value(option).toInt(&ok);
+        if (!ok || value < 1) {
+            err << "--" << option << " is a number, 1 or more\n";
+            options.invalid = true;
+        }
+    };
+    if (parser.isSet("medium") && !CaptureInfo::parseMedium(parser.value("medium"), options.medium)) {
+        err << "--medium is ld, vhs, vhd or cvbs\n";
+        options.invalid = true;
+    }
+    if (parser.isSet("system")) {
+        VideoSystem asked;
+        QString variant;
+        if (!parseVideoSystemVariant(parser.value("system"), asked, variant)) {
+            err << "--system is PAL, NTSC, PAL-M, SECAM or NTSC-VHD\n";
+            options.invalid = true;
+        } else {
+            options.system = videoSystemFileName(asked, variant);
+        }
+    }
+    if (parser.isSet("face") && !CaptureInfo::parseFace(parser.value("face"), options.face)) {
+        err << "--face is A, B, AB or BA\n";
+        options.invalid = true;
+    }
+    if (parser.isSet("reference")) {
+        options.reference = parser.value("reference").trimmed();
+        if (options.reference.contains('\n')) {
+            err << "--reference is one line\n";
+            options.invalid = true;
+        }
+    }
+    number("copy", options.copy);
+    number("capture-number", options.captureNumber);
     options.start = parser.value("start").toLongLong();
     options.fields = parser.value("fields").toLongLong();
     options.pcm = parser.value("pcm");
@@ -498,6 +549,21 @@ bool readCapture(const CaptureOptions &options, const QString &input, Capture &c
         return false;
     }
     capture.metadataJson = jsonFile.readAll();
+    // The system a person said (what the metadata of the file say is kept when none is given): it can be one that has the lines of the capture
+    if (!options.system.isEmpty()) {
+        VideoSystem asked;
+        QString variant;
+        parseVideoSystemVariant(options.system, asked, variant);
+        if ((asked == PAL) != (video.system == PAL)) {
+            err << "--system " << options.system << " has " << (asked == PAL ? 625 : 525) << " lines, and the capture has " << (video.system == PAL ? 625 : 525) << "\n";
+            return false;
+        }
+        QJsonObject root = QJsonDocument::fromJson(capture.metadataJson).object();
+        QJsonObject videoParameters = root.value("videoParameters").toObject();
+        videoParameters["system"] = options.system;
+        root["videoParameters"] = videoParameters;
+        capture.metadataJson = QJsonDocument(root).toJson(QJsonDocument::Compact);
+    }
 
     const QString name = !options.name.isEmpty() ? options.name : QFileInfo(input).fileName();
     Ldx::Codec videoCodec, audioCodec;
@@ -510,10 +576,26 @@ bool readCapture(const CaptureOptions &options, const QString &input, Capture &c
     capture.video.depth = capture.cvbs ? 10 : 16;
     capture.video.codec = videoCodec;
     capture.video.name = name;
-    capture.video.parameters["system"] = systemName(video.system);
+    capture.video.parameters["system"] = !options.system.isEmpty() ? options.system : videoSystemFileName(video.system, video.systemVariant);
     capture.video.parameters["sampleRate"] = video.sampleRate;
     capture.video.parameters["fieldWidth"] = video.fieldWidth;
     capture.video.parameters["fieldHeight"] = video.fieldHeight;
+    // What a person said of the capture (section 3.1)
+    if (!options.medium.isEmpty()) capture.video.parameters["medium"] = options.medium;
+    if (!options.reference.isEmpty()) capture.video.parameters["reference"] = options.reference;
+    if (options.copy > 0) capture.video.parameters["copy"] = options.copy;
+    if (options.captureNumber > 0) capture.video.parameters["capture"] = options.captureNumber;
+    if (!options.face.isEmpty()) capture.video.parameters["face"] = options.face;
+    // The active area of the capture, as the metadata say it (the shape of the video track in its header does not use it; it is what a tool shows the active area with): the same
+    // parameters ld-analyse shows the active area with (the shape is only written when it is chosen: ld-container display, or ldx-packer)
+    if (video.activeVideoStart >= 0 && video.activeVideoEnd > video.activeVideoStart) {
+        capture.video.parameters["activeVideoStart"] = video.activeVideoStart;
+        capture.video.parameters["activeVideoEnd"] = video.activeVideoEnd;
+        capture.video.parameters["firstActiveFieldLine"] = video.firstActiveFieldLine;
+        capture.video.parameters["lastActiveFieldLine"] = video.lastActiveFieldLine;
+        capture.video.parameters["firstActiveFrameLine"] = video.firstActiveFrameLine;
+        capture.video.parameters["lastActiveFrameLine"] = video.lastActiveFrameLine;
+    }
     if (capture.cvbs) {
         // What a frame is (the length of a line, and its samples) is what the codec needs, and what is needed to give the file back
         capture.video.parameters["lineWidth"] = geometry.lineWidth;
@@ -713,6 +795,17 @@ bool openForRewrite(Rewrite &rewrite, const QString &fileName)
     rewrite.tracks = rewrite.reader.tracks();
     rewrite.attachments = rewrite.reader.attachments();
     rewrite.history = rewrite.reader.history();
+    // What was added at the end of the file by changes made in its place (the history, the tracks as they are now, the attachments): they are read with the index, by another
+    // reader, since this one goes on to read the blocks in order. A pipe is read once, and has none of it.
+    if (!isStdio(fileName)) {
+        Ldx::Reader current;
+        QString problem;
+        if (current.open(fileName, problem) && current.buildIndex(problem)) {
+            rewrite.tracks = current.tracks();
+            rewrite.attachments = current.attachments();
+            rewrite.history = current.history();
+        }
+    }
     return true;
 }
 
@@ -767,10 +860,11 @@ int pack(const QStringList &arguments)
 
     Capture capture;
     CaptureOptions captured = captureOptions(parser);
+    if (captured.invalid) return 1;
     captured.live = parser.isSet("live-metadata");
     if (!readCapture(captured, input, capture)) return 1;
     ChromaPart chroma;
-    if (!readChroma(captured, input, chroma)) return 1;
+    if (!parser.isSet("no-chroma") && !readChroma(captured, input, chroma)) return 1;
 
     Ldx::Writer writer;
     addCaptureTracks(writer, capture);
@@ -866,9 +960,10 @@ int addStream(const QStringList &arguments)
     if (!openForRewrite(rewrite, source)) return 1;
     Capture capture;
     const CaptureOptions addOptions = captureOptions(parser);
+    if (addOptions.invalid) return 1;
     if (!readCapture(addOptions, input, capture)) return 1;
     ChromaPart chroma;
-    if (!readChroma(addOptions, input, chroma)) return 1;
+    if (!parser.isSet("no-chroma") && !readChroma(addOptions, input, chroma)) return 1;
 
     // A mapping says which capture of the file it is the mapping of (section 7.4 of the specification): a video track that is there, and not a chroma one
     if (parser.isSet("mapped-from")) {
@@ -917,6 +1012,114 @@ int addStream(const QStringList &arguments)
     return 0;
 }
 
+// ld-container addchroma file.ldx --about id --input chroma.tbc|chroma.cvbsc -o output.ldx
+//
+// The chroma file of a Y/C capture whose luma is in the file already (section 7.3 of the specification): a track with the role chroma, about the luma track,
+// with as many units as the luma has, at the same times. The file is written again, to the output.
+int addChroma(const QStringList &arguments)
+{
+    QCommandLineParser parser;
+    parser.setApplicationDescription("Add the chroma file of a Y/C capture (_chroma.tbc, .tbcc or .cvbsc) to an LDX file, as the chroma track of a capture that is in it as\n"
+                                     "its luma. The file is written again, to the output.");
+    parser.addHelpOption();
+    parser.addVersionOption();
+    addStandardDebugOptions(parser);
+    parser.addPositionalArgument("file", "The LDX file");
+    parser.addOption(QCommandLineOption("about", "The id of the luma (video) track of the capture (default: the first)", "id", "0"));
+    parser.addOption(QCommandLineOption("input", "The chroma file", "file"));
+    parser.addOption(QCommandLineOption("codec", "How the chroma is kept: raw (default), flac, ffv1 (CVBS) or auto", "codec", "raw"));
+    parser.addOption(QCommandLineOption({ "o", "output" }, "The LDX file to write", "file"));
+    parser.process(arguments);
+    processStandardDebugOptions(parser);
+    if (parser.positionalArguments().size() != 1 || !parser.isSet("input") || !parser.isSet("output")) {
+        err << parser.helpText();
+        return 1;
+    }
+    const QString source = parser.positionalArguments().first();
+    const QString input = parser.value("input");
+    const QString output = parser.value("output");
+    if (sameFile(source, output) || isStdio(output) || isStdio(source)) {
+        err << "The output must be a file, and not the one that is read\n";
+        return 1;
+    }
+
+    Rewrite rewrite;
+    if (!openForRewrite(rewrite, source)) return 1;
+    int luma = parser.value("about").toInt();
+    for (const Ldx::Track &track: rewrite.tracks) {
+        const bool video = (track.kind == Ldx::Kind::Tbc || track.kind == Ldx::Kind::Cvbs) && track.parameters.value("role").toString() != "chroma";
+        if (video && (luma == 0 || static_cast<int>(track.number) == luma)) { luma = static_cast<int>(track.number); break; }
+    }
+    const Ldx::Track *lumaTrack = nullptr;
+    for (const Ldx::Track &track: rewrite.tracks) {
+        if (static_cast<int>(track.number) == luma) lumaTrack = &track;
+        if (track.parameters.value("role").toString() == "chroma" && track.parameters.value("track").toInt(0) == luma) {
+            err << "The capture of track " << luma << " has a chroma track already (" << track.number << "): take it out first\n";
+            return 1;
+        }
+    }
+    if (!lumaTrack || (lumaTrack->kind != Ldx::Kind::Tbc && lumaTrack->kind != Ldx::Kind::Cvbs) || lumaTrack->parameters.value("role").toString() == "chroma") {
+        err << "There is no video track " << parser.value("about") << " in " << source << "\n";
+        return 1;
+    }
+    if (lumaTrack->codec == Ldx::Codec::Unknown) {
+        err << "The luma track is coded in a way this program does not know\n";
+        return 1;
+    }
+    // As many fields as the luma has
+    qint64 lumaFields = 0;
+    {
+        Ldx::Reader counting;
+        QString problem;
+        if (!counting.open(source, problem) || !counting.buildIndex(problem)) {
+            err << problem << "\n";
+            return 1;
+        }
+        lumaFields = counting.blockCount(static_cast<quint32>(luma)) * (lumaTrack->kind == Ldx::Kind::Cvbs ? 2 : 1);
+    }
+
+    CaptureOptions options;
+    options.codec = parser.value("codec");
+    options.fields = lumaFields;
+    options.asChroma = Cvbs::isDataFileName(input);
+    Capture capture;
+    if (!readCapture(options, input, capture)) return 1;
+    if ((lumaTrack->kind == Ldx::Kind::Cvbs) != capture.cvbs) {
+        err << "The chroma file " << input << " is not " << (capture.cvbs ? "TBC" : "CVBS") << " like the luma of the capture\n";
+        return 1;
+    }
+    if (capture.fields != lumaFields) {
+        err << "The chroma file has " << capture.fields << " fields and the luma of track " << luma << " has " << lumaFields << ": a chroma has as many as its luma\n";
+        return 1;
+    }
+
+    ChromaPart part;
+    part.capture = std::move(capture);
+    part.present = true;
+    Ldx::Writer writer;
+    prepareWriter(rewrite, writer, {});
+    addChromaTrack(writer, part, static_cast<quint32>(luma));
+    rewrite.history.append(historyEntry("addchroma", QString("%1 is the chroma of track %2").arg(QFileInfo(input).fileName()).arg(luma)));
+    writer.setHistory(rewrite.history);
+    QString error;
+    if (!writer.open(output, error)) {
+        err << error << "\n";
+        return 1;
+    }
+    LdxSource old(rewrite.reader, {});
+    Capture dummy;
+    std::vector<BlockSource *> sources { &old };
+    part.source = std::make_unique<FieldSource>(*part.capture.tbc, part.capture.video.number, part.capture.system, part.capture.unitBytes, 0, lumaFields, part.capture.unitFields,
+                                                part.capture.convert);
+    sources.push_back(part.source.get());
+    if (!mergeInto(writer, sources) || !writer.finish(error)) {
+        if (!error.isEmpty()) err << error << "\n";
+        return 1;
+    }
+    out << "Added " << QFileInfo(input).fileName() << " as the chroma of track " << luma << ", written to " << output << "\n";
+    return 0;
+}
+
 // ld-container remove file.ldx --id x -o output.ldx
 int removeStream(const QStringList &arguments)
 {
@@ -958,7 +1161,8 @@ int removeStream(const QStringList &arguments)
     }
     skip.insert(id);
     for (const Ldx::Track &track: rewrite.tracks) {
-        if ((track.kind == Ldx::Kind::Metadata || track.kind == Ldx::Kind::Annotations || track.kind == Ldx::Kind::Pcm)
+        const bool chromaOf = (track.kind == Ldx::Kind::Tbc || track.kind == Ldx::Kind::Cvbs) && track.parameters.value("role").toString() == "chroma";
+        if ((track.kind == Ldx::Kind::Metadata || track.kind == Ldx::Kind::Annotations || track.kind == Ldx::Kind::Pcm || chromaOf)
             && track.parameters.value("track").toInt(0) == static_cast<int>(id)) {
             skip.insert(track.number);
             out << "  also removing track " << track.number << " (" << Ldx::kindName(track.kind) << ", about track " << id << ")\n";
@@ -1239,7 +1443,9 @@ int addTrack(const QStringList &arguments)
     parser.addOption(QCommandLineOption("name", "The name of the track (default: the name of the file)", "name"));
     parser.addOption(QCommandLineOption("rate", "Sample rate of pcm audio (default 44100)", "hertz", "44100"));
     parser.addOption(QCommandLineOption("source", "For pcm: where the audio comes from, efm for the digital audio decoded from EFM (default: the analogue audio)", "source"));
+    parser.addOption(QCommandLineOption("codec", "For pcm: raw (default) or flac", "codec"));
     parser.addOption(QCommandLineOption({ "o", "output" }, "Write to another file instead of in place", "file"));
+    parser.addOption(QCommandLineOption("update", "For annotations: add the notes in the file itself, in the room the list of tracks has (no copy of the file, stamped after everything in it)"));
     parser.process(arguments);
     processStandardDebugOptions(parser);
     if (parser.positionalArguments().size() != 1 || !parser.isSet("kind") || !parser.isSet("input")) {
@@ -1254,6 +1460,26 @@ int addTrack(const QStringList &arguments)
         }
         target = parser.value("output");
     }
+    if (parser.isSet("update")) {
+        if (parser.value("kind") != "annotations") {
+            err << "--update is for annotations: the other tracks have data all along the capture, and the file is written again\n";
+            return 1;
+        }
+        QFile notes(parser.value("input"));
+        if (!notes.open(QIODevice::ReadOnly)) {
+            err << "Could not open " << parser.value("input") << "\n";
+            return 1;
+        }
+        QString problem;
+        if (!LdxCapture::addNotesInPlace(target, notes.readAll(), parser.isSet("name") ? parser.value("name") : QFileInfo(parser.value("input")).fileName(), parser.value("about").toInt(),
+                                         historyEntry("addtrack", QString("%1 as a annotations track").arg(QFileInfo(parser.value("input")).fileName())), problem)) {
+            err << problem << "\n";
+            if (parser.isSet("output")) QFile::remove(target);
+            return 1;
+        }
+        out << "Added " << QFileInfo(parser.value("input")).fileName() << " as a annotations track to " << target << "\n";
+        return 0;
+    }
     QJsonObject parameters;
     if (parser.value("kind") == "pcm") {
         parameters["sampleRate"] = parser.value("rate").toDouble();
@@ -1264,7 +1490,8 @@ int addTrack(const QStringList &arguments)
     QString error;
     if (!LdxCapture::addTrackFromFile(target, parser.value("kind"), input, parameters,
                                       parser.isSet("name") ? parser.value("name") : QFileInfo(input).fileName(), parser.value("about").toInt(),
-                                      historyEntry("addtrack", QString("%1 as a %2 track").arg(QFileInfo(input).fileName(), parser.value("kind"))), error)) {
+                                      historyEntry("addtrack", QString("%1 as a %2 track").arg(QFileInfo(input).fileName(), parser.value("kind"))), error,
+                                      parser.value("codec"))) {
         err << error << "\n";
         return 1;
     }
@@ -1381,6 +1608,7 @@ int history(const QStringList &arguments)
         const QJsonObject entry = value.toObject();
         out << ++number << ". " << entry.value("time").toString() << "  " << entry.value("tool").toString();
         if (entry.contains("version")) out << " (" << entry.value("version").toString() << ")";
+        if (entry.contains("via")) out << " by " << entry.value("via").toString();
         out << "  " << entry.value("command").toString();
         if (entry.contains("detail")) out << ": " << entry.value("detail").toString();
         out << "\n";
@@ -1459,6 +1687,1369 @@ int extractTrack(const QStringList &arguments)
     }
     if (lastOnly) file.write(last.current());
     file.flush();
+    return 0;
+}
+
+// The blocks of a file with the numbers of their tracks changed
+class RenumberSource : public BlockSource
+{
+public:
+    RenumberSource(Ldx::Reader &reader, const QMap<quint32, quint32> &numbers, const QSet<quint32> &skip = {}) : inner(reader, skip), numbers(numbers) {}
+    bool peek(Ldx::Block &block) override
+    {
+        if (!inner.peek(block)) return false;
+        block.track = numbers.value(block.track, block.track);
+        return true;
+    }
+    void pop() override { inner.pop(); }
+
+private:
+    LdxSource inner;
+    QMap<quint32, quint32> numbers;
+};
+
+// The session of a file with the tracks of this file that it names numbered again (the links to other files are not touched)
+QByteArray sessionRenumbered(const QByteArray &session, const QMap<quint32, quint32> &numbers)
+{
+    QJsonObject root = QJsonDocument::fromJson(session).object();
+    QJsonArray sources;
+    QSet<QString> local;
+    for (const QJsonValue &value: root.value("sources").toArray()) {
+        QJsonObject object = value.toObject();
+        if (object.value("file").toString().isEmpty() && object.contains("track")) {
+            object["track"] = static_cast<int>(numbers.value(static_cast<quint32>(object.value("track").toInt(0)), static_cast<quint32>(object.value("track").toInt(0))));
+            local.insert(object.value("id").toString());
+        }
+        sources.append(object);
+    }
+    root["sources"] = sources;
+    // The streams copied from a source that is a track of this file are tracks of this file
+    QJsonObject stacking = root.value("stacking").toObject();
+    if (stacking.contains("copyStreams")) {
+        QJsonArray streams;
+        for (const QJsonValue &value: stacking.value("copyStreams").toArray()) {
+            QJsonObject entry = value.toObject();
+            if (local.contains(entry.value("source").toString())) {
+                const quint32 track = static_cast<quint32>(entry.value("track").toInt(0));
+                entry["track"] = static_cast<int>(numbers.value(track, track));
+            }
+            streams.append(entry);
+        }
+        stacking["copyStreams"] = streams;
+        root["stacking"] = stacking;
+    }
+    return QJsonDocument(root).toJson(QJsonDocument::Indented);
+}
+
+// ld-container merge file.ldx other.ldx [--id n ...] [--exclude n ...] [--name text] [--codec c] -o output.ldx
+//
+// The captures of another LDX file are put in this one, each with the tracks that go with it (its chroma, metadata, audio, EFM, AC3, notes): they are given ids
+// of their own, and what names a track (the tracks about a capture, the mapping of a capture) follows. The session and the other attachments of the other file are
+// not taken.
+int mergeCommand(const QStringList &arguments)
+{
+    QCommandLineParser parser;
+    parser.setApplicationDescription("Put the captures of another LDX file in this one, each with its tracks (the chroma, the metadata, the audio, the EFM, the AC3 and the\n"
+                                     "notes about it). They get ids of their own, and what names a track follows. The session and the attachments of the other file\n"
+                                     "are not taken. The file is written again, to the output.");
+    parser.addHelpOption();
+    parser.addVersionOption();
+    addStandardDebugOptions(parser);
+    parser.addPositionalArgument("file", "The LDX file");
+    parser.addPositionalArgument("other", "The LDX file whose captures are put in it");
+    parser.addOption(QCommandLineOption("id", "The id of a capture of the other file to take (several times; default: all of them)", "id"));
+    parser.addOption(QCommandLineOption("exclude", "The id of a track of the other file to leave out (several times)", "id"));
+    parser.addOption(QCommandLineOption("name", "The new name of the capture (when one is taken)", "name"));
+    parser.addOption(QCommandLineOption("codec", "How the samples taken are kept: asis (default), raw, flac, ffv1 or auto", "codec", "asis"));
+    parser.addOption(QCommandLineOption({ "o", "output" }, "The LDX file to write", "file"));
+    parser.process(arguments);
+    processStandardDebugOptions(parser);
+    if (parser.positionalArguments().size() != 2 || !parser.isSet("output")) {
+        err << parser.helpText();
+        return 1;
+    }
+    const QString source = parser.positionalArguments().at(0);
+    const QString otherName = parser.positionalArguments().at(1);
+    const QString output = parser.value("output");
+    if (sameFile(source, output) || sameFile(otherName, output) || isStdio(output) || isStdio(source) || isStdio(otherName)) {
+        err << "The output must be a file of its own, and the files that are read are not the standard input\n";
+        return 1;
+    }
+    const QString asked = parser.value("codec");
+    Ldx::Codec ignored;
+    if (asked != "asis" && !codecFor(asked, Ldx::Kind::Tbc, ignored)) {
+        err << "The codec is asis, raw, flac, ffv1 or auto\n";
+        return 1;
+    }
+
+    Rewrite rewrite;
+    if (!openForRewrite(rewrite, source)) return 1;
+    Rewrite other;
+    if (!openForRewrite(other, otherName)) return 1;
+    const auto isVideo = [](const Ldx::Track &track) {
+        return (track.kind == Ldx::Kind::Tbc || track.kind == Ldx::Kind::Cvbs) && track.parameters.value("role").toString() != "chroma";
+    };
+    QList<quint32> videos;
+    for (const Ldx::Track &track: other.tracks) {
+        if (isVideo(track)) videos.append(track.number);
+    }
+    if (videos.isEmpty()) {
+        err << otherName << " holds no capture\n";
+        return 1;
+    }
+    QList<quint32> taken;
+    for (const QString &text: parser.values("id")) {
+        const quint32 id = text.toUInt();
+        if (!videos.contains(id)) {
+            err << "There is no capture " << text << " in " << otherName << " (its captures are the video tracks that are not chroma)\n";
+            return 1;
+        }
+        if (!taken.contains(id)) taken.append(id);
+    }
+    if (taken.isEmpty()) taken = videos;
+    if (parser.isSet("name") && taken.size() != 1) {
+        err << "--name is for one capture: give --id\n";
+        return 1;
+    }
+    QSet<quint32> excluded;
+    for (const QString &text: parser.values("exclude")) excluded.insert(text.toUInt());
+
+    // The tracks of each capture that is taken: the video, its chroma and the tracks about it (without "track" they are about the first video of the file)
+    const quint32 first = videos.first();
+    const auto aboutOf = [&](const Ldx::Track &track) -> quint32 {
+        if (isVideo(track)) return 0;
+        if (track.parameters.contains("track")) return static_cast<quint32>(track.parameters.value("track").toInt(0));
+        const bool companion = track.kind == Ldx::Kind::Metadata || track.kind == Ldx::Kind::Annotations || track.kind == Ldx::Kind::Pcm
+                               || track.kind == Ldx::Kind::Efm || track.kind == Ldx::Kind::Ac3;
+        return companion ? first : 0;
+    };
+    quint32 next = rewrite.reader.nextTrackId();
+    QMap<quint32, quint32> numbers;
+    QList<quint32> sequence;
+    for (quint32 video: taken) {
+        sequence.append(video);
+        for (const Ldx::Track &track: other.tracks) {
+            if (!isVideo(track) && aboutOf(track) == video && !excluded.contains(track.number)) sequence.append(track.number);
+        }
+    }
+    for (quint32 old: sequence) numbers.insert(old, next++);
+
+    QVector<Ldx::Track> added;
+    for (quint32 old: sequence) {
+        for (Ldx::Track track: other.tracks) {
+            if (track.number != old) continue;
+            const quint32 about = aboutOf(track);
+            if (about != 0) track.parameters["track"] = static_cast<int>(numbers.value(about, about));
+            if (track.parameters.contains("mappedFrom")) {
+                const quint32 from = static_cast<quint32>(track.parameters.value("mappedFrom").toInt(0));
+                if (numbers.contains(from)) track.parameters["mappedFrom"] = static_cast<int>(numbers.value(from));
+                else track.parameters.remove("mappedFrom");         // (the capture it is the mapping of is not taken)
+            }
+            if (parser.isSet("name") && isVideo(track)) track.name = parser.value("name");
+            if (asked != "asis") {
+                const bool samples = track.kind == Ldx::Kind::Tbc || track.kind == Ldx::Kind::Rf || track.kind == Ldx::Kind::Pcm || track.kind == Ldx::Kind::Cvbs;
+                Ldx::Codec codec;
+                if (samples && codecFor(asked, track.kind, codec, track.depth) && !(codec == Ldx::Codec::Raw && asked != "raw" && asked != "auto")) track.codec = codec;
+            }
+            track.number = numbers.value(old);
+            track.uid = 0;
+            added.append(track);
+        }
+    }
+
+    Ldx::Writer writer;
+    prepareWriter(rewrite, writer, {});
+    for (Ldx::Track &track: added) writer.addTrack(track);
+    writer.setNextTrackId(next);
+    QStringList ids;
+    for (quint32 video: taken) ids << QString::number(video);
+    QStringList mapping;
+    for (quint32 old: sequence) mapping << QString("%1->%2").arg(old).arg(numbers.value(old));
+    rewrite.history.append(historyEntry("merge", QString("the captures %1 of %2, as the tracks %3").arg(ids.join(','), QFileInfo(otherName).fileName(), mapping.join(','))));
+    writer.setHistory(rewrite.history);
+
+    QString error;
+    if (!writer.open(output, error)) {
+        err << error << "\n";
+        return 1;
+    }
+    QSet<quint32> skip;
+    for (const Ldx::Track &track: other.tracks) {
+        if (!numbers.contains(track.number)) skip.insert(track.number);
+    }
+    LdxSource old(rewrite.reader, {});
+    RenumberSource more(other.reader, numbers, skip);
+    if (!mergeInto(writer, { &old, &more }) || !writer.finish(error)) {
+        if (!error.isEmpty()) err << error << "\n";
+        return 1;
+    }
+    out << "Put " << taken.size() << " capture(s) of " << QFileInfo(otherName).fileName() << " in " << output << ", as the tracks:";
+    for (quint32 old: sequence) out << " " << old << "->" << numbers.value(old);
+    out << "\n";
+    return 0;
+}
+
+// The size of a picture, from its header: a PNG (IHDR) or a JPEG (the first start of frame). False when it is neither.
+bool pictureSize(const QByteArray &data, int *width, int *height, QString *mediaType)
+{
+    const auto *p = reinterpret_cast<const quint8 *>(data.constData());
+    const int n = data.size();
+    if (n >= 24 && p[0] == 0x89 && p[1] == 'P' && p[2] == 'N' && p[3] == 'G') {
+        *width = (p[16] << 24) | (p[17] << 16) | (p[18] << 8) | p[19];
+        *height = (p[20] << 24) | (p[21] << 16) | (p[22] << 8) | p[23];
+        *mediaType = "image/png";
+        return *width > 0 && *height > 0;
+    }
+    if (n >= 4 && p[0] == 0xFF && p[1] == 0xD8) {
+        int i = 2;
+        while (i + 9 < n) {
+            if (p[i] != 0xFF) { ++i; continue; }
+            const int marker = p[i + 1];
+            if (marker == 0xFF) { ++i; continue; }
+            if (marker == 0xD8 || (marker >= 0xD0 && marker <= 0xD7) || marker == 0x01) { i += 2; continue; }
+            const int length = (p[i + 2] << 8) | p[i + 3];
+            // (the start of frame markers, but the ones that are not: DHT, JPG, DAC)
+            if (marker >= 0xC0 && marker <= 0xCF && marker != 0xC4 && marker != 0xC8 && marker != 0xCC) {
+                *height = (p[i + 5] << 8) | p[i + 6];
+                *width = (p[i + 7] << 8) | p[i + 8];
+                *mediaType = "image/jpeg";
+                return *width > 0 && *height > 0;
+            }
+            if (length < 2) return false;
+            i += 2 + length;
+        }
+    }
+    return false;
+}
+
+// ld-container cover file.ldx --set picture.png|jpg -o output.ldx | --remove -o output.ldx | --export picture
+//
+// The cover of the file (section 9 of the specification): a picture in the attachment cover.png or cover.jpg, at most 800 pixels high. The attachments come before the
+// data, so putting, changing or taking out the cover writes the file again, to the output.
+int coverCommand(const QStringList &arguments)
+{
+    constexpr int MaxHeight = 800;
+    constexpr qint64 MaxBytes = 2 * 1024 * 1024;
+    QCommandLineParser parser;
+    parser.setApplicationDescription("The cover of an LDX file: a picture of the capture, the disc or the tape, kept in the attachment cover.png or cover.jpg (at most 800 pixels\n"
+                                     "high, any shape). --set puts one in (a PNG or a JPEG), --remove takes it out: the file is written again, to the output. --export\n"
+                                     "writes the one that is there out.");
+    parser.addHelpOption();
+    parser.addVersionOption();
+    addStandardDebugOptions(parser);
+    parser.addPositionalArgument("file", "The LDX file");
+    parser.addOption(QCommandLineOption("set", "Put this PNG or JPEG picture in the file as its cover", "picture"));
+    parser.addOption(QCommandLineOption("remove", "Take the cover out"));
+    parser.addOption(QCommandLineOption("export", "Write the cover out to this file", "picture"));
+    parser.addOption(QCommandLineOption("source", "Keep the picture outside the file: its web address (http or https) or the path of a file, absolute or relative to the folder of the LDX file", "address"));
+    parser.addOption(QCommandLineOption("remove-source", "Take the reference to the picture out"));
+    parser.addOption(QCommandLineOption("link", "A web address (http or https) that opens when the cover is clicked", "address"));
+    parser.addOption(QCommandLineOption("remove-link", "Take the link out"));
+    parser.addOption(QCommandLineOption({ "o", "output" }, "Write another LDX file with the change, instead of changing this one in its place (for --set and --remove)", "file"));
+    parser.process(arguments);
+    processStandardDebugOptions(parser);
+    const int changes = int(parser.isSet("set")) + int(parser.isSet("remove")) + int(parser.isSet("source")) + int(parser.isSet("remove-source")) + int(parser.isSet("link")) + int(parser.isSet("remove-link"));
+    const int actions = parser.isSet("export") ? (changes == 0 ? 1 : 2) : (changes > 0 ? 1 : 0);
+    if (parser.positionalArguments().size() != 1 || actions != 1) {
+        err << parser.helpText();
+        return 1;
+    }
+    const QString source = parser.positionalArguments().first();
+    const auto isCover = [](const QString &name) {
+        const QString lower = name.toLower();
+        return lower == "cover.png" || lower == "cover.jpg" || lower == "cover.jpeg";
+    };
+
+    if (parser.isSet("export")) {
+        QByteArray image;
+        QString name, error;
+        if (!LdxCapture::readCover(source, image, name, error)) {
+            err << error << "\n";
+            return 1;
+        }
+        QFile file(parser.value("export"));
+        if (!file.open(QIODevice::WriteOnly) || file.write(image) != image.size()) {
+            err << "Could not write " << file.fileName() << "\n";
+            return 1;
+        }
+        out << "The cover (" << name << ", " << image.size() << " bytes) is in " << file.fileName() << "\n";
+        return 0;
+    }
+
+    const QString output = parser.value("output");
+    if (parser.isSet("output") && (sameFile(source, output) || isStdio(output) || isStdio(source))) {
+        err << "The output must be a file, and not the one that is read\n";
+        return 1;
+    }
+    if (isStdio(source)) {
+        err << "The file is not the standard input\n";
+        return 1;
+    }
+    QByteArray picture;
+    QString mediaType;
+    QString attachmentName;
+    if (parser.isSet("set")) {
+        QFile file(parser.value("set"));
+        if (!file.open(QIODevice::ReadOnly)) {
+            err << "Could not open " << file.fileName() << "\n";
+            return 1;
+        }
+        picture = file.readAll();
+        const QString format = Ldx::pictureFormat(picture);
+        if (format.isEmpty()) {
+            err << file.fileName() << " is not a JPEG, WebP, PNG, GIF or BMP picture\n";
+            return 1;
+        }
+        int width = 0, height = 0;
+        const bool known = (format == "png" || format == "jpeg") && pictureSize(picture, &width, &height, &mediaType);
+        if (known && height <= MaxHeight && picture.size() <= MaxBytes) {
+            // a PNG or a JPEG that fits is kept as it is
+            attachmentName = mediaType == "image/png" ? "cover.png" : "cover.jpg";
+        } else {
+            // any other format, or one that is too big: read, scaled down to at most 800 pixels high (keeping its shape) and written as a JPEG (a photograph:
+            // JPEG and WebP) or a PNG, by ffmpeg
+            Ldx::Picture decoded;
+            QString problem;
+            if (format != "png" && !Ldx::pictureAvailable()) {
+                err << file.fileName() << ": " << (known ? QString("it is higher than %1 pixels or bigger than %2 bytes: scale it down (this build has no ffmpeg to do it)").arg(MaxHeight).arg(MaxBytes)
+                                                          : QString("a %1 picture is turned into a PNG or a JPEG by ffmpeg, which this build does not have").arg(format)) << "\n";
+                return 1;
+            }
+            if (!Ldx::decodePicture(picture, decoded, problem)) {
+                err << file.fileName() << ": " << problem << "\n";
+                return 1;
+            }
+            const bool jpeg = (format == "jpeg" || format == "webp") && Ldx::pictureAvailable();
+            int target = std::min(decoded.height, MaxHeight);
+            for (;;) {
+                const Ldx::Picture scaled = Ldx::scaledToHeight(decoded, target);
+                QByteArray encoded;
+                if (!Ldx::encodePicture(scaled, jpeg, 88, encoded, problem)) {
+                    err << file.fileName() << ": " << problem << "\n";
+                    return 1;
+                }
+                picture = encoded;
+                if (picture.size() <= MaxBytes || target <= 200) break;
+                target = target * 4 / 5;
+            }
+            mediaType = jpeg ? "image/jpeg" : "image/png";
+            attachmentName = jpeg ? "cover.jpg" : "cover.png";
+            out << "The picture is a " << format << ": it is kept as a " << (jpeg ? "JPEG" : "PNG") << ", " << picture.size() << " bytes\n";
+        }
+        if (picture.size() > MaxBytes) {
+            err << "The picture is " << picture.size() << " bytes: a cover is a megabyte or so, at most " << MaxBytes << "\n";
+            return 1;
+        }
+    }
+
+    // What is to be done to the attachments of the cover (an attachment with no data is taken out): the picture, the reference to a picture kept outside the file, the link
+    QVector<LdxCapture::AttachmentEdit> edits;
+    QStringList said;
+    const auto isTextTarget = [](const QString &name) { return name == "cover.url" || name == "link.url"; };
+    if (parser.isSet("remove") || parser.isSet("set")) {
+        // (the picture that is there goes, whatever its name: the new one may be of another format)
+        for (const QString &name : { QString("cover.png"), QString("cover.jpg"), QString("cover.jpeg") }) edits.append({ name, QString(), QByteArray() });
+        if (parser.isSet("set")) edits.append({ attachmentName, mediaType, picture });
+        said << (parser.isSet("set") ? QString("%1 is the cover").arg(QFileInfo(parser.value("set")).fileName()) : QString("the cover is taken out"));
+    }
+    if (parser.isSet("source")) {
+        const QString text = parser.value("source").trimmed();
+        if (text.isEmpty() || text.contains('\n')) {
+            err << "--source is the address of a picture (http or https) or the path of a file, in one line\n";
+            return 1;
+        }
+        if (text.contains("://") && !text.startsWith("http://", Qt::CaseInsensitive) && !text.startsWith("https://", Qt::CaseInsensitive) && !text.startsWith("file://", Qt::CaseInsensitive)) {
+            err << "--source: a web address is http or https\n";
+            return 1;
+        }
+        edits.append({ "cover.url", "text/plain", text.toUtf8() });
+        said << QString("the picture of the cover is at %1").arg(text);
+    }
+    if (parser.isSet("remove-source")) {
+        edits.append({ "cover.url", QString(), QByteArray() });
+        said << QString("the reference to the picture is taken out");
+    }
+    if (parser.isSet("link")) {
+        const QString text = parser.value("link").trimmed();
+        if (!text.startsWith("http://", Qt::CaseInsensitive) && !text.startsWith("https://", Qt::CaseInsensitive)) {
+            err << "--link is a web address: http or https\n";
+            return 1;
+        }
+        edits.append({ "link.url", "text/plain", text.toUtf8() });
+        said << QString("the link of the cover is %1").arg(text);
+    }
+    if (parser.isSet("remove-link")) {
+        edits.append({ "link.url", QString(), QByteArray() });
+        said << QString("the link is taken out");
+    }
+    Q_UNUSED(isTextTarget);
+
+    // With no output: in the file itself, the attachments written at the end of it (the last of a name counts, section 9), so it is not written again
+    if (!parser.isSet("output")) {
+        QString problem;
+        if (!LdxCapture::putAttachmentsInPlace(source, edits, historyEntry("cover", said.join("; ")), problem)) {
+            err << problem << "\n";
+            return 1;
+        }
+        out << said.join("; ") << ", in " << source << "\n";
+        return 0;
+    }
+
+    Rewrite rewrite;
+    if (!openForRewrite(rewrite, source)) return 1;
+    bool changed = false;
+    for (const LdxCapture::AttachmentEdit &edit : edits) {
+        for (int i = rewrite.attachments.size() - 1; i >= 0; --i) {
+            if (rewrite.attachments[i].name.toLower() == edit.name) {
+                rewrite.attachments.removeAt(i);
+                changed = true;
+            }
+        }
+        if (!edit.data.isEmpty()) {
+            Ldx::Reader::Attachment attachment;
+            attachment.name = edit.name;
+            attachment.mediaType = edit.mediaType;
+            attachment.data = edit.data;
+            rewrite.attachments.append(attachment);
+            changed = true;
+        }
+    }
+    if (!changed) {
+        err << source << " has nothing of that to take out\n";
+        return 1;
+    }
+    Ldx::Writer writer;
+    prepareWriter(rewrite, writer, {});
+    rewrite.history.append(historyEntry("cover", said.join("; ")));
+    writer.setHistory(rewrite.history);
+    QString error;
+    if (!writer.open(output, error)) {
+        err << error << "\n";
+        return 1;
+    }
+    LdxSource old(rewrite.reader, {});
+    if (!mergeInto(writer, { &old }) || !writer.finish(error)) {
+        if (!error.isEmpty()) err << error << "\n";
+        return 1;
+    }
+    out << said.join("; ") << ", written to " << output << "\n";
+    return 0;
+}
+
+// ld-container reorder file.ldx --order 3,1,2 -o output.ldx: the captures in another order, the tracks numbered again to follow it
+int reorder(const QStringList &arguments)
+{
+    QCommandLineParser parser;
+    parser.setApplicationDescription("Write an LDX file again with its captures in another order. The tracks are numbered again from 1 in the new order: each\n"
+                                     "capture (its video track, its chroma track, then the metadata, audio, EFM, AC3 and notes about it), and then the other\n"
+                                     "tracks. What names a track (the tracks about a capture, the mapping of a capture, the sources of the session kept in the\n"
+                                     "file) follows the new numbers. Links to other files are not touched, and nothing else in another file that names a track\n"
+                                     "of this one will find it: it is the one command that gives an id to another track.");
+    parser.addHelpOption();
+    parser.addVersionOption();
+    addStandardDebugOptions(parser);
+    parser.addPositionalArgument("file", "The LDX file");
+    parser.addOption(QCommandLineOption("order", "The ids of all the video tracks (not the chroma ones), in the order they are to have, as 3,1,2", "ids"));
+    parser.addOption(QCommandLineOption({ "o", "output" }, "The LDX file to write", "file"));
+    parser.process(arguments);
+    processStandardDebugOptions(parser);
+    if (parser.positionalArguments().size() != 1 || !parser.isSet("order") || !parser.isSet("output")) {
+        err << parser.helpText();
+        return 1;
+    }
+    const QString source = parser.positionalArguments().first();
+    const QString output = parser.value("output");
+    if (sameFile(source, output) || isStdio(source)) {
+        err << "The output must not be the file that is read, and the file is not the standard input\n";
+        return 1;
+    }
+
+    Rewrite rewrite;
+    if (!openForRewrite(rewrite, source)) return 1;
+    const auto isVideo = [](const Ldx::Track &track) {
+        return (track.kind == Ldx::Kind::Tbc || track.kind == Ldx::Kind::Cvbs) && track.parameters.value("role").toString() != "chroma";
+    };
+    QList<quint32> videos;
+    for (const Ldx::Track &track: rewrite.tracks) {
+        if (isVideo(track)) videos.append(track.number);
+    }
+    QList<quint32> order;
+    for (const QString &part: parser.value("order").split(',', Qt::SkipEmptyParts)) {
+        bool numeric = false;
+        const quint32 id = part.trimmed().toUInt(&numeric);
+        if (!numeric || !videos.contains(id) || order.contains(id)) {
+            err << "--order: " << part << " is not the id of a video track of " << source << ", or it is there twice\n";
+            return 1;
+        }
+        order.append(id);
+    }
+    if (order.size() != videos.size()) {
+        err << "--order must name all the " << videos.size() << " video tracks of " << source << " (and only the video tracks, not the chroma ones)\n";
+        return 1;
+    }
+
+    // The tracks about a capture: the chroma, and the ones that say "track": id (without it, they are about the first video track)
+    const quint32 first = videos.isEmpty() ? 0 : videos.first();
+    const auto aboutOf = [&](const Ldx::Track &track) -> quint32 {
+        if (isVideo(track)) return 0;
+        if (track.parameters.contains("track")) return static_cast<quint32>(track.parameters.value("track").toInt(0));
+        const bool companion = track.kind == Ldx::Kind::Metadata || track.kind == Ldx::Kind::Annotations || track.kind == Ldx::Kind::Pcm
+                               || track.kind == Ldx::Kind::Efm || track.kind == Ldx::Kind::Ac3;
+        return companion ? first : 0;
+    };
+    QList<quint32> sequence;
+    QSet<quint32> placed;
+    for (quint32 video: order) {
+        sequence.append(video);
+        placed.insert(video);
+        for (const Ldx::Track &track: rewrite.tracks) {
+            if (!isVideo(track) && aboutOf(track) == video && !placed.contains(track.number)) {
+                sequence.append(track.number);
+                placed.insert(track.number);
+            }
+        }
+    }
+    for (const Ldx::Track &track: rewrite.tracks) {
+        if (!placed.contains(track.number)) sequence.append(track.number);
+    }
+    QMap<quint32, quint32> numbers;
+    quint32 next = 1;
+    for (quint32 old: sequence) numbers.insert(old, next++);
+    bool same = true;
+    for (auto it = numbers.begin(); it != numbers.end(); ++it) same = same && it.key() == it.value();
+    if (same) {
+        out << "The captures are in that order already: nothing to change\n";
+        if (!QFile::copy(source, output)) {
+            err << "Could not write " << output << " (it exists already?)\n";
+            return 1;
+        }
+        return 0;
+    }
+
+    // What names a track follows the new numbers
+    QVector<Ldx::Track> tracks;
+    for (quint32 old: sequence) {
+        for (Ldx::Track track: rewrite.tracks) {
+            if (track.number != old) continue;
+            if (track.parameters.contains("track") || (!isVideo(track) && aboutOf(track) != 0)) {
+                const quint32 about = aboutOf(track);
+                track.parameters["track"] = static_cast<int>(numbers.value(about, about));
+            }
+            if (track.parameters.contains("mappedFrom")) {
+                const quint32 from = static_cast<quint32>(track.parameters.value("mappedFrom").toInt(0));
+                track.parameters["mappedFrom"] = static_cast<int>(numbers.value(from, from));
+            }
+            track.number = numbers.value(old);
+            tracks.append(track);
+        }
+    }
+    for (Ldx::Reader::Attachment &attachment: rewrite.attachments) {
+        if (attachment.name == StackAttachment) attachment.data = sessionRenumbered(attachment.data, numbers);
+    }
+
+    Ldx::Writer writer;
+    for (Ldx::Track &track: tracks) writer.addTrack(track);
+    // (the next id only goes up)
+    writer.setNextTrackId(rewrite.reader.nextTrackId());
+    for (const Ldx::Reader::Attachment &attachment: rewrite.attachments) writer.addAttachment(attachment.name, attachment.mediaType, attachment.data);
+    QStringList ids;
+    for (quint32 video: order) ids << QString::number(video);
+    rewrite.history.append(historyEntry("reorder", QString("the video tracks in the order %1, the tracks numbered again").arg(ids.join(','))));
+    writer.setHistory(rewrite.history);
+
+    QString error;
+    if (!openWriter(writer, output, error)) {
+        err << error << "\n";
+        return 1;
+    }
+    RenumberSource old(rewrite.reader, numbers);
+    if (!mergeInto(writer, { &old }) || !writer.finish(error)) {
+        if (!error.isEmpty()) err << error << "\n";
+        return 1;
+    }
+    out << "Written to " << output << " with the tracks numbered again:";
+    for (quint32 oldNumber: sequence) {
+        if (numbers.value(oldNumber) != oldNumber) out << " " << oldNumber << "->" << numbers.value(oldNumber);
+    }
+    out << "\n";
+    return 0;
+}
+
+// ld-container stream file.ldx -o output.ldx: the file as an LDX stream (no cues, nothing written again), to a file or to the standard output
+int streamOut(const QStringList &arguments)
+{
+    QCommandLineParser parser;
+    parser.setApplicationDescription("Write an LDX file as an LDX stream: the segment has no size, there are no cues, and nothing is written again, as for a\n"
+                                     "pipe (section 15 of the specification). The tracks, their codecs and the metadata are kept. A program that opens the\n"
+                                     "result makes its index by reading it once; ld-container recompress writes it with an index again.");
+    parser.addHelpOption();
+    parser.addVersionOption();
+    addStandardDebugOptions(parser);
+    parser.addPositionalArgument("file", "The LDX file");
+    parser.addOption(QCommandLineOption({ "o", "output" }, "The stream to write (- for the standard output)", "file"));
+    parser.process(arguments);
+    processStandardDebugOptions(parser);
+    if (parser.positionalArguments().size() != 1 || !parser.isSet("output")) {
+        err << parser.helpText();
+        return 1;
+    }
+    const QString source = parser.positionalArguments().first();
+    const QString output = parser.value("output");
+    if (sameFile(source, output)) {
+        err << "The output must not be the file that is read\n";
+        return 1;
+    }
+
+    Rewrite rewrite;
+    if (!openForRewrite(rewrite, source)) return 1;
+    Ldx::Writer writer;
+    prepareWriter(rewrite, writer, {});
+    rewrite.history.append(historyEntry("stream", QString("written as a stream, with no index")));
+    writer.setHistory(rewrite.history);
+
+    QString error;
+    FILE *file = nullptr;
+    if (isStdio(output)) {
+        messagesToStderr();
+        file = stdout;
+    } else {
+        file = fopen(QFile::encodeName(output).constData(), "wb");
+        if (!file) {
+            err << "Could not write " << output << "\n";
+            return 1;
+        }
+    }
+    bool ok = writer.openStream(file, error);
+    if (ok) {
+        LdxSource old(rewrite.reader, {});
+        ok = mergeInto(writer, { &old }) && writer.finish(error);
+    }
+    if (file != stdout) fclose(file);
+    if (!ok) {
+        if (!error.isEmpty()) err << error << "\n";
+        if (file != stdout) QFile::remove(output);
+        return 1;
+    }
+    out << "Written as a stream to " << output << "\n";
+    return 0;
+}
+
+// ld-container metadata file.ldx --id n [--export file.json | --input file.json|file.db] [-o output.ldx]
+int metadataCommand(const QStringList &arguments)
+{
+    QCommandLineParser parser;
+    parser.setApplicationDescription("The metadata of a capture of an LDX file: write the current ones out as JSON (--export), or replace them with those of a\n"
+                                     ".json or .db file of ld-decode (--input). The new metadata are a block added at the end of the file, which are the current\n"
+                                     "ones from then on (section 8.3 of the specification); the file is changed in its place, or the output is a copy with them.");
+    parser.addHelpOption();
+    parser.addVersionOption();
+    addStandardDebugOptions(parser);
+    parser.addPositionalArgument("file", "The LDX file");
+    parser.addOption(QCommandLineOption("id", "The id of the video track of the capture (default: the first)", "id", "0"));
+    parser.addOption(QCommandLineOption("export", "Write the current metadata of the capture as JSON to this file", "file"));
+    parser.addOption(QCommandLineOption("input", "Replace the metadata with those of this .json or .db file", "file"));
+    parser.addOption(QCommandLineOption({ "o", "output" }, "With --input: write a copy of the file with the new metadata instead of changing it", "file"));
+    parser.process(arguments);
+    processStandardDebugOptions(parser);
+    if (parser.positionalArguments().size() != 1 || parser.isSet("export") == parser.isSet("input")) {
+        err << parser.helpText();
+        return 1;
+    }
+    QString target = parser.positionalArguments().first();
+    int id = parser.value("id").toInt();
+    if (id == 0) {
+        Ldx::Reader reader;
+        QString error;
+        if (!reader.open(target, error)) {
+            err << error << "\n";
+            return 1;
+        }
+        for (const Ldx::Track &track: reader.tracks()) {
+            if ((track.kind == Ldx::Kind::Tbc || track.kind == Ldx::Kind::Cvbs) && track.parameters.value("role").toString() != "chroma") { id = static_cast<int>(track.number); break; }
+        }
+    }
+    QString error;
+    if (parser.isSet("export")) {
+        LdxCapture capture;
+        QByteArray json;
+        if (!capture.open(QString("%1#%2").arg(target).arg(id), error) || !capture.readMetadata(json, error)) {
+            err << error << "\n";
+            return 1;
+        }
+        QFile file(parser.value("export"));
+        if (!file.open(QIODevice::WriteOnly) || file.write(json) != json.size()) {
+            err << "Could not write " << file.fileName() << "\n";
+            return 1;
+        }
+        out << "The metadata of track " << id << " are in " << file.fileName() << "\n";
+        return 0;
+    }
+
+    LdDecodeMetaData metadata;
+    if (!metadata.read(parser.value("input"))) {
+        err << "Could not read the metadata of " << parser.value("input") << "\n";
+        return 1;
+    }
+    QTemporaryDir temporary;
+    const QString jsonPath = temporary.filePath("metadata.json");
+    QFile jsonFile(jsonPath);
+    if (!metadata.write(jsonPath) || !jsonFile.open(QIODevice::ReadOnly)) {
+        err << "Could not write the metadata out as JSON\n";
+        return 1;
+    }
+    const QByteArray json = jsonFile.readAll();
+    if (parser.isSet("output")) {
+        if (sameFile(target, parser.value("output")) || !QFile::copy(target, parser.value("output"))) {
+            err << "Could not write " << parser.value("output") << " (it exists already, or it is the file that is read?)\n";
+            return 1;
+        }
+        target = parser.value("output");
+    }
+    if (!LdxCapture::writeMetadata(QString("%1#%2").arg(target).arg(id), json, error)) {
+        err << error << "\n";
+        if (parser.isSet("output")) QFile::remove(target);
+        return 1;
+    }
+    out << "The metadata of track " << id << " are those of " << QFileInfo(parser.value("input")).fileName() << " (" << metadata.getNumberOfFields() << " fields), in " << target << "\n";
+    return 0;
+}
+
+// ld-container unstack file.ldx -o output.ldx: the file without its session
+int unstack(const QStringList &arguments)
+{
+    QCommandLineParser parser;
+    parser.setApplicationDescription("Write an LDX file again without its session (the attachment session.stack). The captures it names stay in the file.");
+    parser.addHelpOption();
+    parser.addVersionOption();
+    addStandardDebugOptions(parser);
+    parser.addPositionalArgument("file", "The LDX file");
+    parser.addOption(QCommandLineOption({ "o", "output" }, "The LDX file to write", "file"));
+    parser.process(arguments);
+    processStandardDebugOptions(parser);
+    if (parser.positionalArguments().size() != 1 || !parser.isSet("output")) {
+        err << parser.helpText();
+        return 1;
+    }
+    const QString source = parser.positionalArguments().first();
+    const QString output = parser.value("output");
+    if (sameFile(source, output) || isStdio(output)) {
+        err << "The output must be a file, and not the one that is read\n";
+        return 1;
+    }
+    Rewrite rewrite;
+    if (!openForRewrite(rewrite, source)) return 1;
+    bool had = false;
+    for (int i = rewrite.attachments.size() - 1; i >= 0; --i) {
+        if (rewrite.attachments[i].name == StackAttachment) {
+            rewrite.attachments.removeAt(i);
+            had = true;
+        }
+    }
+    if (!had) {
+        err << source << " has no session\n";
+        return 1;
+    }
+    Ldx::Writer writer;
+    prepareWriter(rewrite, writer, {});
+    rewrite.history.append(historyEntry("unstack", QString("the session is taken out")));
+    writer.setHistory(rewrite.history);
+    QString error;
+    if (!writer.open(output, error)) {
+        err << error << "\n";
+        return 1;
+    }
+    LdxSource old(rewrite.reader, {});
+    if (!mergeInto(writer, { &old }) || !writer.finish(error)) {
+        if (!error.isEmpty()) err << error << "\n";
+        return 1;
+    }
+    out << "The session is taken out, written to " << output << "\n";
+    return 0;
+}
+
+// The metadata of a capture say isWidescreen as the shape that was chosen, as a block that is the current one from then on (when they do not already)
+static bool syncWidescreen(const QString &path, int id, const QString &aspect, QString &error)
+{
+    if (aspect == "none") return true;
+    LdxCapture capture;
+    QByteArray json;
+    const QString name = QString("%1#%2").arg(path).arg(id);
+    if (!capture.open(name, error) || !capture.readMetadata(json, error)) return true;      // (no metadata to keep in agreement)
+    QJsonObject root = QJsonDocument::fromJson(json).object();
+    QJsonObject parameters = root.value("videoParameters").toObject();
+    const bool wide = aspect == "16:9";
+    if (!root.contains("videoParameters") || parameters.value("isWidescreen").toBool(false) == wide) return true;
+    parameters["isWidescreen"] = wide;
+    root["videoParameters"] = parameters;
+    if (!LdxCapture::writeMetadata(name, QJsonDocument(root).toJson(QJsonDocument::Compact), error)) return false;
+    out << "  isWidescreen is now " << (wide ? "true" : "false") << " in the metadata\n";
+    return true;
+}
+
+// ld-container display file.ldx --id n --aspect 4:3|16:9|none -o output.ldx
+int displayCommand(const QStringList &arguments)
+{
+    QCommandLineParser parser;
+    parser.setApplicationDescription("The shape a video track of a capture is shown in by the players (VLC, ffplay, mpv): 4:3 or 16:9, the two width adjustments of ld-analyse applied to the whole image\n"
+                                     "(PAL +103 or -196, NTSC +122 or -150, over the lines of a frame), or none (square pixels: 1:1). It is written in the header of the track, so the file is\n"
+                                     "written again, to the output (or, with no output, changed in the file itself, in the room the list of tracks has, with no copy). With 4:3 or 16:9 the metadata of the capture get isWidescreen to match (a block added at the\n"
+                                     "end, as ld-container metadata does); ld-analyse goes on reading isWidescreen as it did.");
+    parser.addHelpOption();
+    parser.addVersionOption();
+    addStandardDebugOptions(parser);
+    parser.addPositionalArgument("file", "The LDX file");
+    parser.addOption(QCommandLineOption("id", "The id of the video track of the capture (default: the first)", "id", "0"));
+    parser.addOption(QCommandLineOption("aspect", "4:3, 16:9 or none", "shape"));
+    parser.addOption(QCommandLineOption({ "o", "output" }, "The LDX file to write", "file"));
+    parser.process(arguments);
+    processStandardDebugOptions(parser);
+    const QString aspect = parser.value("aspect");
+    if (parser.positionalArguments().size() != 1 || (aspect != "4:3" && aspect != "16:9" && aspect != "none")) {
+        err << parser.helpText();
+        return 1;
+    }
+    const QString source = parser.positionalArguments().first();
+    // With no output: in the file itself, in the room the list of tracks has (no copy of the file)
+    if (!parser.isSet("output")) {
+        int id = parser.value("id").toInt();
+        {
+            Ldx::Reader reader;
+            QString problem;
+            if (!reader.open(source, problem)) {
+                err << problem << "\n";
+                return 1;
+            }
+            for (const Ldx::Track &track: reader.tracks()) {
+                const bool video = (track.kind == Ldx::Kind::Tbc || track.kind == Ldx::Kind::Cvbs) && track.parameters.value("role").toString() != "chroma";
+                if (video && (id == 0 || static_cast<int>(track.number) == id)) { id = static_cast<int>(track.number); break; }
+            }
+        }
+        QString problem;
+        const QString shown = aspect == "none" ? QString("1:1 (the whole image)") : aspect;
+        QJsonObject changes;
+        QStringList removes;
+        if (aspect == "none") removes << "displayAspect";
+        else changes["displayAspect"] = aspect;
+        if (!LdxCapture::updateTrackInPlace(source, id, QString(), false, changes, removes, historyEntry("display", QString("track %1 shown as %2").arg(id).arg(shown)), problem)
+            || !syncWidescreen(source, id, aspect, problem)) {
+            err << problem << "\n";
+            return 1;
+        }
+        out << "Track " << id << " is shown as " << shown << ", in " << source << "\n";
+        return 0;
+    }
+    const QString output = parser.value("output");
+    if (sameFile(source, output) || isStdio(output) || isStdio(source)) {
+        err << "The output must be a file, and not the one that is read\n";
+        return 1;
+    }
+    Rewrite rewrite;
+    if (!openForRewrite(rewrite, source)) return 1;
+    int id = parser.value("id").toInt();
+    for (const Ldx::Track &track: rewrite.tracks) {
+        const bool video = (track.kind == Ldx::Kind::Tbc || track.kind == Ldx::Kind::Cvbs) && track.parameters.value("role").toString() != "chroma";
+        if (video && (id == 0 || static_cast<int>(track.number) == id)) { id = static_cast<int>(track.number); break; }
+    }
+    bool found = false;
+    for (Ldx::Track &track: rewrite.tracks) {
+        if (static_cast<int>(track.number) != id) continue;
+        found = true;
+        if (aspect == "none") track.parameters.remove("displayAspect");
+        else track.parameters["displayAspect"] = aspect;
+    }
+    if (!found) {
+        err << "There is no video track " << parser.value("id") << " in " << source << "\n";
+        return 1;
+    }
+    Ldx::Writer writer;
+    prepareWriter(rewrite, writer, {});
+    rewrite.history.append(historyEntry("display", QString("track %1 shown as %2").arg(id).arg(aspect == "none" ? QString("1:1 (the whole image)") : aspect)));
+    writer.setHistory(rewrite.history);
+    QString error;
+    if (!writer.open(output, error)) {
+        err << error << "\n";
+        return 1;
+    }
+    LdxSource old(rewrite.reader, {});
+    if (!mergeInto(writer, { &old }) || !writer.finish(error)) {
+        if (!error.isEmpty()) err << error << "\n";
+        return 1;
+    }
+
+    if (!syncWidescreen(output, id, aspect, error)) {
+        err << "The shape is written, but not isWidescreen in the metadata: " << error << "\n";
+        return 1;
+    }
+    out << "Track " << id << " is shown as " << (aspect == "none" ? QString("1:1 (the whole image)") : aspect) << ", written to " << output << "\n";
+    return 0;
+}
+
+// The system a video track says (PAL, NTSC, PAL-M, SECAM or NTSC-VHD) is also in the metadata of its capture (videoParameters.system): a tool that reads the metadata reads it from there,
+// so the two are kept to say the same (a block added at the end of the file, as ld-container metadata does). Nothing to do for a capture that has no metadata, or one that says it already.
+static bool syncSystem(const QString &path, int id, const QString &system, QString &error)
+{
+    VideoSystem asked;
+    QString variant;
+    if (!parseVideoSystemVariant(system, asked, variant)) return true;
+    const QString fileName = videoSystemFileName(asked, variant);
+    LdxCapture capture;
+    QByteArray json;
+    const QString name = QString("%1#%2").arg(path).arg(id);
+    if (!capture.open(name, error) || !capture.readMetadata(json, error)) {
+        error.clear();
+        return true;
+    }
+    QJsonObject root = QJsonDocument::fromJson(json).object();
+    QJsonObject videoParameters = root.value("videoParameters").toObject();
+    if (!root.contains("videoParameters") || videoParameters.value("system").toString() == fileName) return true;
+    videoParameters["system"] = fileName;
+    root["videoParameters"] = videoParameters;
+    if (!LdxCapture::writeMetadata(name, QJsonDocument(root).toJson(QJsonDocument::Compact), error)) return false;
+    out << "  the system is now " << fileName << " in the metadata\n";
+    return true;
+}
+
+// ld-container settrack file.ldx --id n [--name text] [--set key=value ...] [--unset key ...] [-o output.ldx]
+//
+// The name and the parameters of a track (the sample rate of the audio, the system or the sample rate of a video, and the like). The value is JSON (a number,
+// true, "text"), or text when it is not. Without an output the file itself is changed, in the room the list of tracks has (no copy of the file); a
+// FLAC track whose sample rate changes is coded again, so that is done with an output.
+int setTrackCommand(const QStringList &arguments)
+{
+    QCommandLineParser parser;
+    parser.setApplicationDescription("Change the name and the parameters of a track of an LDX file: the sample rate of the audio (sampleRate), the system of a video\n"
+                                     "(system: PAL, NTSC or PAL-M), its sample rate, the names. The value of --set is JSON (a number, true, \"text\"), or text.\n"
+                                     "Without an output the file itself is changed, in the room the list of tracks has (no copy of the file). A FLAC track whose\n"
+                                     "sample rate changes is coded again, which is done with an output.");
+    parser.addHelpOption();
+    parser.addVersionOption();
+    addStandardDebugOptions(parser);
+    parser.addPositionalArgument("file", "The LDX file");
+    parser.addOption(QCommandLineOption("id", "The id of the track", "id"));
+    parser.addOption(QCommandLineOption("name", "The new name", "name"));
+    parser.addOption(QCommandLineOption("set", "A parameter to set, as key=value (it can be given several times)", "key=value"));
+    parser.addOption(QCommandLineOption("unset", "A parameter to remove (it can be given several times)", "key"));
+    parser.addOption(QCommandLineOption({ "o", "output" }, "Write another file with the change instead of changing this one", "file"));
+    parser.process(arguments);
+    processStandardDebugOptions(parser);
+    if (parser.positionalArguments().size() != 1 || !parser.isSet("id") || (!parser.isSet("name") && !parser.isSet("set") && !parser.isSet("unset"))) {
+        err << parser.helpText();
+        return 1;
+    }
+    const QString source = parser.positionalArguments().first();
+    const int id = parser.value("id").toInt();
+    QJsonObject changes;
+    for (const QString &assignment: parser.values("set")) {
+        const int equals = assignment.indexOf('=');
+        if (equals < 1) {
+            err << "--set takes key=value, and not " << assignment << "\n";
+            return 1;
+        }
+        const QByteArray text = assignment.mid(equals + 1).toUtf8();
+        const QJsonDocument parsed = QJsonDocument::fromJson("[" + text + "]");
+        changes[assignment.left(equals)] = (parsed.isArray() && parsed.array().size() == 1) ? parsed.array().first() : QJsonValue(QString::fromUtf8(text));
+    }
+    // The system of a video: one of the five names (the lines are those of PAL or of NTSC for SECAM and NTSC-VHD)
+    if (changes.contains("system")) {
+        VideoSystem asked;
+        QString variant;
+        if (!parseVideoSystemVariant(changes.value("system").toString(), asked, variant)) {
+            err << "The system is PAL, NTSC, PAL-M, SECAM or NTSC-VHD, and not " << changes.value("system").toString() << "\n";
+            return 1;
+        }
+        changes["system"] = videoSystemFileName(asked, variant);
+    }
+    const QStringList removes = parser.values("unset");
+    const QString detail = QString("track %1:%2%3%4").arg(id).arg(parser.isSet("name") ? " name " + parser.value("name") : QString())
+                               .arg(changes.isEmpty() ? QString() : " set " + QString::fromUtf8(QJsonDocument(changes).toJson(QJsonDocument::Compact)))
+                               .arg(removes.isEmpty() ? QString() : " unset " + removes.join(","));
+
+    // What the track is now: the room of a FLAC track of audio is for the rate it was coded at
+    Rewrite rewrite;
+    if (!openForRewrite(rewrite, source)) return 1;
+    int index = -1;
+    for (int i = 0; i < rewrite.tracks.size(); ++i) {
+        if (static_cast<int>(rewrite.tracks[i].number) == id) index = i;
+    }
+    if (index < 0) {
+        err << "There is no track " << id << " in " << source << "\n";
+        return 1;
+    }
+    Ldx::Track &track = rewrite.tracks[index];
+    const bool rateChanges = changes.contains("sampleRate") && changes.value("sampleRate").toDouble() != track.parameters.value("sampleRate").toDouble();
+
+    if (!parser.isSet("output")) {
+        if (track.codec == Ldx::Codec::Flac && track.kind == Ldx::Kind::Pcm && rateChanges) {
+            err << "The audio of track " << id << " is FLAC, coded at its sample rate: changing it needs the file to be written again (give an output)\n";
+            return 1;
+        }
+        QString error;
+        if (!LdxCapture::updateTrackInPlace(source, id, parser.value("name"), parser.isSet("name"), changes, removes, historyEntry("settrack", detail), error)) {
+            err << error << "\n";
+            return 1;
+        }
+        out << "Track " << id << " changed in " << source << "\n";
+        if (changes.contains("system") && !syncSystem(source, id, changes.value("system").toString(), error)) {
+            err << error << "\n";
+            return 1;
+        }
+        return 0;
+    }
+
+    const QString output = parser.value("output");
+    if (sameFile(source, output) || isStdio(output)) {
+        err << "The output must be a file, and not the one that is read\n";
+        return 1;
+    }
+    if (parser.isSet("name")) track.name = parser.value("name");
+    for (auto it = changes.begin(); it != changes.end(); ++it) track.parameters[it.key()] = it.value();
+    for (const QString &key: removes) track.parameters.remove(key);
+    Ldx::Writer writer;
+    prepareWriter(rewrite, writer, {});
+    rewrite.history.append(historyEntry("settrack", detail));
+    writer.setHistory(rewrite.history);
+    QString error;
+    if (!writer.open(output, error)) {
+        err << error << "\n";
+        return 1;
+    }
+    LdxSource old(rewrite.reader, {});
+    if (!mergeInto(writer, { &old }) || !writer.finish(error)) {
+        if (!error.isEmpty()) err << error << "\n";
+        return 1;
+    }
+    out << "Track " << id << " changed, written to " << output << "\n";
+    if (changes.contains("system") && !syncSystem(output, id, changes.value("system").toString(), error)) {
+        err << error << "\n";
+        return 1;
+    }
+    return 0;
+}
+
+// The text of a value as JSON (a string stays one, even when it looks like a number): what --set of settrack takes
+static QString jsonText(const QJsonValue &value)
+{
+    QString text = QString::fromUtf8(QJsonDocument(QJsonArray{ value }).toJson(QJsonDocument::Compact));
+    return text.mid(1, text.size() - 2);
+}
+
+// The video track of a capture: the one named, or the first that is not a chroma track (0 if there is none)
+static int videoTrackOf(const QString &path, int id)
+{
+    Ldx::Reader reader;
+    QString problem;
+    if (!reader.open(path, problem)) return 0;
+    for (const Ldx::Track &track: reader.tracks()) {
+        const bool video = (track.kind == Ldx::Kind::Tbc || track.kind == Ldx::Kind::Cvbs) && track.parameters.value("role").toString() != "chroma";
+        if (video && (id == 0 || static_cast<int>(track.number) == id)) return static_cast<int>(track.number);
+    }
+    return 0;
+}
+
+// ld-container tag file.ldx [--id n] [--medium ld|vhs|vhd|cvbs] [--reference text] [--copy n] [--capture-number n] [--face A|B|AB|BA] [--system sys] [-o output.ldx]
+//
+// What a person says of a capture (section 3.1 and 8.1 of the specification): the medium, the reference, the number of the copy and of the capture, the face (parameters of
+// the video track), and the system (SECAM and NTSC-VHD too: the track and the metadata of the capture say it). An empty text, or 0 for a number, takes the value away.
+int tagCommand(const QStringList &arguments)
+{
+    QCommandLineParser parser;
+    parser.setApplicationDescription("Say what a capture is, as a person knows it: what was captured (--medium: ld, vhs, vhd or cvbs), a reference of the disc (--reference), the number of the\n"
+                                     "physical copy (--copy) and of the capture (--capture-number), the face (--face: A, B, AB or BA) and the system (--system: PAL, NTSC, PAL-M,\n"
+                                     "SECAM or NTSC-VHD: the track and the metadata of the capture both say it). An empty text, or 0 for a number, takes the value away. Without an output the file\n"
+                                     "itself is changed, in the room the list of tracks has (no copy of the file).");
+    parser.addHelpOption();
+    parser.addVersionOption();
+    addStandardDebugOptions(parser);
+    parser.addPositionalArgument("file", "The LDX file");
+    parser.addOption(QCommandLineOption("id", "The id of the video track of the capture (default: the first)", "id", "0"));
+    parser.addOption(QCommandLineOption("medium", "ld, vhs, vhd or cvbs", "medium"));
+    parser.addOption(QCommandLineOption("reference", "A reference of the disc or the tape (a catalogue number, a title...)", "text"));
+    parser.addOption(QCommandLineOption("copy", "The number of the physical copy of the disc, 1 or more (0: none)", "n"));
+    parser.addOption(QCommandLineOption("capture-number", "The number of the capture, 1 or more (0: none)", "n"));
+    parser.addOption(QCommandLineOption("face", "A, B, AB or BA", "face"));
+    parser.addOption(QCommandLineOption("system", "PAL, NTSC, PAL-M, SECAM or NTSC-VHD (the track and the metadata of the capture both say it)", "system"));
+    parser.addOption(QCommandLineOption({ "o", "output" }, "Write another file with the change instead of changing this one", "file"));
+    parser.process(arguments);
+    processStandardDebugOptions(parser);
+    const bool any = parser.isSet("medium") || parser.isSet("reference") || parser.isSet("copy") || parser.isSet("capture-number") || parser.isSet("face") || parser.isSet("system");
+    if (parser.positionalArguments().size() != 1 || !any) {
+        err << parser.helpText();
+        return 1;
+    }
+    const QString source = parser.positionalArguments().first();
+    const int id = videoTrackOf(source, parser.value("id").toInt());
+    if (id == 0) {
+        err << "There is no video track " << parser.value("id") << " in " << source << "\n";
+        return 1;
+    }
+
+    // What is said, as the parameters of the track (the system is also in the metadata of the capture, which settrack keeps in agreement)
+    QStringList sets, unsets;
+    const auto put = [&](const QString &key, const QString &value) {
+        if (value.isEmpty()) unsets << key;
+        else sets << key + "=" + jsonText(value);
+    };
+    const auto putNumber = [&](const QString &key, const QString &option) -> bool {
+        bool ok = false;
+        const int number = parser.value(option).trimmed().isEmpty() ? 0 : parser.value(option).toInt(&ok);
+        if (!parser.value(option).trimmed().isEmpty() && (!ok || number < 0)) {
+            err << "--" << option << " is a number, 1 or more (0 takes it away)\n";
+            return false;
+        }
+        if (number == 0) unsets << key;
+        else sets << key + "=" + QString::number(number);
+        return true;
+    };
+    QString value;
+    if (parser.isSet("medium")) {
+        if (!CaptureInfo::parseMedium(parser.value("medium"), value)) {
+            err << "--medium is ld, vhs, vhd or cvbs\n";
+            return 1;
+        }
+        put("medium", value);
+    }
+    if (parser.isSet("reference")) {
+        const QString text = parser.value("reference").trimmed();
+        if (text.contains('\n')) {
+            err << "--reference is one line\n";
+            return 1;
+        }
+        put("reference", text);
+    }
+    if (parser.isSet("copy") && !putNumber("copy", "copy")) return 1;
+    if (parser.isSet("capture-number") && !putNumber("capture", "capture-number")) return 1;
+    if (parser.isSet("face")) {
+        if (!CaptureInfo::parseFace(parser.value("face"), value)) {
+            err << "--face is A, B, AB or BA\n";
+            return 1;
+        }
+        put("face", value);
+    }
+    if (parser.isSet("system")) {
+        VideoSystem asked;
+        QString variant;
+        if (!parseVideoSystemVariant(parser.value("system"), asked, variant)) {
+            err << "--system is PAL, NTSC, PAL-M, SECAM or NTSC-VHD\n";
+            return 1;
+        }
+        // (the track says it, and the metadata of the capture, which settrack makes say the same)
+        sets << "system=" + jsonText(videoSystemFileName(asked, variant));
+    }
+
+    QString target = source;
+    if (parser.isSet("output")) {
+        const QString output = parser.value("output");
+        if (sameFile(source, output) || isStdio(output)) {
+            err << "The output must be a file, and not the one that is read\n";
+            return 1;
+        }
+        if (sets.isEmpty() && unsets.isEmpty()) {
+            // (nothing for the track to change: a copy)
+            if (!QFile::copy(source, output)) {
+                err << "Could not write " << output << " (it exists already?)\n";
+                return 1;
+            }
+        }
+        target = output;
+    }
+    if (!sets.isEmpty() || !unsets.isEmpty()) {
+        QStringList settings = { arguments.first(), source, "--id", QString::number(id) };
+        for (const QString &set: sets) settings << "--set" << set;
+        for (const QString &unset: unsets) settings << "--unset" << unset;
+        if (parser.isSet("output")) settings << "-o" << target;
+        if (setTrackCommand(settings) != 0) return 1;
+    }
+    return 0;
+}
+
+// ld-container rfsource file.ldx [--id n] [--set file.json | --export | --remove] [-o output.ldx]
+//
+// Where a capture comes from (the track ldx.rfsource, section 8.4): what is known of the RF file it was decoded from. It is information for people, with no other use.
+int rfSourceCommand(const QStringList &arguments)
+{
+    QCommandLineParser parser;
+    parser.setApplicationDescription("Where a capture comes from: what is known of the RF file it was decoded from (its name, size, sha256, sample rate, bits, date, the files that were beside it, and the signal),\n"
+                                     "kept in the track of metadata ldx.rfsource (section 8.4 of the specification) as the entry of the capture in an .rfx archive of RF-tools spells it. It is\n"
+                                     "information to trace the capture, and has no other use. With no option the track is shown; --set puts the JSON of a file in, --export writes it out and\n"
+                                     "--remove takes it away. It is put in the file itself, at its end (no copy of the file), or in a copy with -o.");
+    parser.addHelpOption();
+    parser.addVersionOption();
+    addStandardDebugOptions(parser);
+    parser.addPositionalArgument("file", "The LDX file");
+    parser.addOption(QCommandLineOption("id", "The id of the video track of the capture (default: the first)", "id", "0"));
+    parser.addOption(QCommandLineOption("set", "Put the JSON object of this file in", "file"));
+    parser.addOption(QCommandLineOption("export", "Write the JSON out to this file (- for the standard output)", "file"));
+    parser.addOption(QCommandLineOption("remove", "Take it out"));
+    parser.addOption(QCommandLineOption({ "o", "output" }, "Write a copy with the change instead of changing the file", "file"));
+    parser.process(arguments);
+    processStandardDebugOptions(parser);
+    if (parser.positionalArguments().size() != 1 || (parser.isSet("set") + parser.isSet("export") + parser.isSet("remove")) > 1) {
+        err << parser.helpText();
+        return 1;
+    }
+    const QString source = parser.positionalArguments().first();
+    const int id = videoTrackOf(source, parser.value("id").toInt());
+    if (id == 0) {
+        err << "There is no video track " << parser.value("id") << " in " << source << "\n";
+        return 1;
+    }
+    if (!parser.isSet("set") && !parser.isSet("remove")) {
+        QByteArray json;
+        QString error;
+        if (!LdxCapture::readRfSource(source, id, json, error)) {
+            if (!error.isEmpty()) err << error << "\n";
+            else out << "Track " << id << " has no information on where it comes from\n";
+            return error.isEmpty() ? 0 : 1;
+        }
+        if (parser.isSet("export")) {
+            const QString target = parser.value("export");
+            if (target == "-") {
+                out << QJsonDocument::fromJson(json).toJson(QJsonDocument::Indented);
+                return 0;
+            }
+            QFile file(target);
+            if (!file.open(QIODevice::WriteOnly)) {
+                err << "Could not write " << target << "\n";
+                return 1;
+            }
+            file.write(QJsonDocument::fromJson(json).toJson(QJsonDocument::Indented));
+            out << "Written to " << target << "\n";
+            return 0;
+        }
+        // (what is shown: the members, and the size of the files that sat beside it)
+        const QJsonObject object = QJsonDocument::fromJson(json).object();
+        out << "Track " << id << " comes from:\n";
+        for (auto it = object.begin(); it != object.end(); ++it) {
+            if (it.key() == "sidecars") {
+                for (const QJsonValue &sidecar: it.value().toArray()) {
+                    const QJsonObject entry = sidecar.toObject();
+                    out << "  beside it: " << entry.value("name").toString() << " (" << entry.value("data").toArray().size() << " bytes)\n";
+                }
+            } else if (it.key() == "tail") {
+                continue;
+            } else {
+                out << "  " << it.key() << ": " << (it.value().isString() ? it.value().toString() : jsonText(it.value())) << "\n";
+            }
+        }
+        return 0;
+    }
+
+    QByteArray json;
+    if (parser.isSet("set")) {
+        QFile file(parser.value("set"));
+        if (!file.open(QIODevice::ReadOnly)) {
+            err << "Could not open " << parser.value("set") << "\n";
+            return 1;
+        }
+        QJsonParseError parseError;
+        const QJsonDocument document = QJsonDocument::fromJson(file.readAll(), &parseError);
+        if (!document.isObject() || document.object().isEmpty()) {
+            err << parser.value("set") << " is not a JSON object" << (parseError.error != QJsonParseError::NoError ? ": " + parseError.errorString() : QString()) << "\n";
+            return 1;
+        }
+        json = document.toJson(QJsonDocument::Compact);
+    }
+    QString target = source;
+    if (parser.isSet("output")) {
+        const QString output = parser.value("output");
+        if (sameFile(source, output) || isStdio(output)) {
+            err << "The output must be a file, and not the one that is read\n";
+            return 1;
+        }
+        if (!QFile::copy(source, output)) {
+            err << "Could not write " << output << " (it exists already?)\n";
+            return 1;
+        }
+        target = output;
+    }
+    QString error;
+    if (!LdxCapture::putRfSourceInPlace(target, id, json, historyEntry("rfsource", json.isEmpty() ? QString("track %1: where it comes from taken out").arg(id) : QString("track %1: where it comes from put in").arg(id)), error)) {
+        err << error << "\n";
+        return 1;
+    }
+    out << (json.isEmpty() ? "Taken out for track " : "Put in for track ") << id << ", in " << target << "\n";
+    return 0;
+}
+
+// ld-container rename file.ldx --id n --name text [-o output.ldx]
+int renameCommand(const QStringList &arguments)
+{
+    QCommandLineParser parser;
+    parser.setApplicationDescription("Change the name of a track (the capture it names, for a video track). It is in the header of the track, changed in the file itself, in\n"
+                                     "the room the list of tracks has (no copy of the file); with -o the output is a copy that has it.");
+    parser.addHelpOption();
+    parser.addVersionOption();
+    addStandardDebugOptions(parser);
+    parser.addPositionalArgument("file", "The LDX file");
+    parser.addOption(QCommandLineOption("id", "The id of the track", "id"));
+    parser.addOption(QCommandLineOption("name", "The new name", "name"));
+    parser.addOption(QCommandLineOption({ "o", "output" }, "Write a copy of the file with the new name instead of changing it", "file"));
+    parser.process(arguments);
+    processStandardDebugOptions(parser);
+    if (parser.positionalArguments().size() != 1 || !parser.isSet("id") || !parser.isSet("name")) {
+        err << parser.helpText();
+        return 1;
+    }
+    QString target = parser.positionalArguments().first();
+    if (parser.isSet("output")) {
+        if (sameFile(target, parser.value("output")) || isStdio(parser.value("output")) || !QFile::copy(target, parser.value("output"))) {
+            err << "Could not write " << parser.value("output") << " (it exists already, or it is the file that is read?)\n";
+            return 1;
+        }
+        target = parser.value("output");
+    }
+    QString error;
+    const int id = parser.value("id").toInt();
+    if (!LdxCapture::updateTrackInPlace(target, id, parser.value("name"), true, QJsonObject(), QStringList(),
+                                        historyEntry("rename", QString("track %1 is now %2").arg(id).arg(parser.value("name"))), error)) {
+        err << error << "\n";
+        if (parser.isSet("output")) QFile::remove(target);
+        return 1;
+    }
+    out << "Track " << id << " is now called " << parser.value("name") << ", in " << target << "\n";
+    return 0;
+}
+
+// ld-container index file.ldx -o output.ldx: a stream that was saved as it came (no cues), written again with its index
+int indexOut(const QStringList &arguments)
+{
+    QCommandLineParser parser;
+    parser.setApplicationDescription("Write an LDX file again with its index (the cues), as a file: what a stream that was saved as it came (ld-container stream, or\n"
+                                     "a producer writing to a pipe) needs for a program to open it without reading it all first. Nothing else changes.");
+    parser.addHelpOption();
+    parser.addVersionOption();
+    addStandardDebugOptions(parser);
+    parser.addPositionalArgument("file", "The LDX file");
+    parser.addOption(QCommandLineOption({ "o", "output" }, "The LDX file to write", "file"));
+    parser.process(arguments);
+    processStandardDebugOptions(parser);
+    if (parser.positionalArguments().size() != 1 || !parser.isSet("output") || isStdio(parser.value("output"))) {
+        err << parser.helpText();
+        return 1;
+    }
+    const QString source = parser.positionalArguments().first();
+    const QString output = parser.value("output");
+    if (sameFile(source, output)) {
+        err << "The output must not be the file that is read\n";
+        return 1;
+    }
+    Rewrite rewrite;
+    if (!openForRewrite(rewrite, source)) return 1;
+    Ldx::Writer writer;
+    prepareWriter(rewrite, writer, {});
+    rewrite.history.append(historyEntry("index", QString("written as a file, with its index")));
+    writer.setHistory(rewrite.history);
+    QString error;
+    if (!writer.open(output, error)) {
+        err << error << "\n";
+        return 1;
+    }
+    LdxSource old(rewrite.reader, {});
+    if (!mergeInto(writer, { &old }) || !writer.finish(error)) {
+        if (!error.isEmpty()) err << error << "\n";
+        return 1;
+    }
+    out << "Written with its index to " << output << "\n";
     return 0;
 }
 
@@ -1711,11 +3302,11 @@ int unpack(const QStringList &arguments)
         }
         else if (track.kind == Ldx::Kind::Efm) suffix = ".efm";
         else if (track.kind == Ldx::Kind::Ac3) suffix = ".ac3";
-        else if (track.kind == Ldx::Kind::Metadata) suffix = ".json";
+        else if (track.kind == Ldx::Kind::Metadata) suffix = Ldx::isCaptureMetadata(track) ? ".json" : ".rfsource.json";      // (the metadata of the capture, or other metadata of a namespace of its own)
         else if (track.kind == Ldx::Kind::Annotations) suffix = ".annotations.json";
         // The files are told apart by the id of their track. What is about a CVBS capture is named as its companion: <data file>.json
-        QString name = QString("%1.%2%3").arg(base).arg(fileId).arg(track.kind == Ldx::Kind::Metadata ? ".tbc" + suffix : suffix);
-        if (track.kind == Ldx::Kind::Metadata) {
+        QString name = QString("%1.%2%3").arg(base).arg(fileId).arg(Ldx::isCaptureMetadata(track) ? ".tbc" + suffix : suffix);
+        if (Ldx::isCaptureMetadata(track)) {
             const quint32 about = static_cast<quint32>(track.parameters.value("track").toInt(0));
             for (const Ldx::Track &other: reader.tracks()) {
                 if (other.number == about && other.kind == Ldx::Kind::Cvbs) name = QString("%1.%2.cvbs.json").arg(base).arg(about);
@@ -1729,7 +3320,7 @@ int unpack(const QStringList &arguments)
         if (track.kind == Ldx::Kind::Cvbs) {
             // The samples go back to the words the file had, whatever the encoding
             const QString system = track.parameters.value("system").toString();
-            const VideoSystem videoSystem = system == "PAL" ? PAL : (system == "NTSC" ? NTSC : PAL_M);
+            const VideoSystem videoSystem = videoSystemOfName(system);
             Cvbs::SampleEncoding encoding = Cvbs::SampleEncoding::U10_4FSC;
             Cvbs::parseSampleEncodingName(track.parameters.value("sampleEncoding").toString(), encoding);
             converters[track.number] = std::make_shared<Cvbs::SampleConverter>(encoding, videoSystem);
@@ -1742,8 +3333,11 @@ int unpack(const QStringList &arguments)
     // (the current metadata are the last block of their track: what was added to the file is more recent than what was there)
     std::map<quint32, LdxMetadataMerger> current;
     QSet<quint32> keepLast;
+    QSet<quint32> otherMetadata;
+    QMap<quint32, QByteArray> otherLast;
     for (const Ldx::Track &track: reader.tracks()) {
-        if (track.kind == Ldx::Kind::Metadata) keepLast.insert(track.number);
+        if (Ldx::isCaptureMetadata(track)) keepLast.insert(track.number);
+        else if (track.kind == Ldx::Kind::Metadata) otherMetadata.insert(track.number);      // (what a tool wrote of its own: the last block is the current one)
     }
     Ldx::Block block;
     while (reader.nextBlock(block)) {
@@ -1754,7 +3348,9 @@ int unpack(const QStringList &arguments)
         }
         const auto found = files.find(block.track);
         if (found == files.end()) continue;
-        if (keepLast.contains(block.track)) {
+        if (otherMetadata.contains(block.track)) {
+            otherLast[block.track] = block.data;
+        } else if (keepLast.contains(block.track)) {
             current[block.track].add(block.data);
         } else if (converters.count(block.track)) {
             // The 10-bit values of a frame, as the words of the file
@@ -1770,6 +3366,7 @@ int unpack(const QStringList &arguments)
         }
     }
     for (const auto &kept: current) files[kept.first]->write(kept.second.current());
+    for (auto it = otherLast.constBegin(); it != otherLast.constEnd(); ++it) files[it.key()]->write(it.value());
 
     for (auto &wavOut: wavTracks) {
         if (!wavOut.second.writer->close()) {
@@ -1823,10 +3420,23 @@ int main(int argc, char *argv[])
                "  pack     pack a .tbc, its metadata and its audio into an .ldx file\n"
                "  add      add a capture to an .ldx file, as a track of its own\n"
                "  remove   remove the track with an id (and what is about it) from an .ldx file\n"
+               "  addchroma add the chroma file of a Y/C capture to the capture that is in an .ldx file as its luma\n"
                "  stack    keep a stacking session in an .ldx file, its sources being tracks\n"
                "  unpack   write the tracks and attachments of an .ldx file out as separate files\n"
                "  info     show what an .ldx file holds\n"
                "  recompress  keep the tracks of samples as flac, ffv1 or raw\n"
+               "  reorder  write an .ldx file with its captures in another order (the tracks are numbered again)\n"
+               "  merge    put the captures of another .ldx file in this one, with their tracks\n"
+               "  cover    put a picture in an .ldx file as its cover, take it out, or write it out\n"
+               "  stream   write an .ldx file as a stream (no index), to a file or to the standard output\n"
+               "  index    write a stream that was saved as it came again with its index\n"
+               "  display  set the shape (4:3, 16:9 or none) a capture is shown in by video players, and isWidescreen with it\n"
+               "  rename   change the name of a track, in the file itself\n"
+               "  settrack change the name and the parameters of a track (the sample rate of the audio, the system of a video...)\n"
+               "  tag      say what a capture is: medium, reference, copy, capture, face, colour standard\n"
+               "  rfsource show, put in or take out where a capture comes from (the RF file it was decoded from)\n"
+               "  metadata write the metadata of a capture out as JSON, or replace them with those of a .json or .db file\n"
+               "  unstack  write an .ldx file again without its session (session.stack)\n"
                "  verify   check that every block of an .ldx file reads back the same, in order and by place\n"
                "  extract  write the data of one track as it is, to a file or to the standard output (to be piped)\n\n"
                "Use ld-container <command> --help for the options of a command.\n"
@@ -1840,6 +3450,7 @@ int main(int argc, char *argv[])
     if (command == "pack") return pack(arguments);
     if (command == "add") return addStream(arguments);
     if (command == "remove") return removeStream(arguments);
+    if (command == "addchroma") return addChroma(arguments);
     if (command == "stack") return setStack(arguments);
     if (command == "unpack") return unpack(arguments);
     if (command == "info") return info(arguments);
@@ -1848,6 +3459,18 @@ int main(int argc, char *argv[])
     if (command == "wav") return wav(arguments);
     if (command == "verify") return verify(arguments);
     if (command == "recompress") return recompress(arguments);
+    if (command == "stream") return streamOut(arguments);
+    if (command == "index") return indexOut(arguments);
+    if (command == "display") return displayCommand(arguments);
+    if (command == "rename") return renameCommand(arguments);
+    if (command == "settrack") return setTrackCommand(arguments);
+    if (command == "tag") return tagCommand(arguments);
+    if (command == "rfsource") return rfSourceCommand(arguments);
+    if (command == "metadata") return metadataCommand(arguments);
+    if (command == "unstack") return unstack(arguments);
+    if (command == "reorder") return reorder(arguments);
+    if (command == "merge") return mergeCommand(arguments);
+    if (command == "cover") return coverCommand(arguments);
     if (command == "extract") return extractTrack(arguments);
     err << "Unknown command " << command << "\n";
     return 1;
