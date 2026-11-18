@@ -20,6 +20,7 @@
 #include <cassert>
 #include <complex>
 #include <cstddef>
+#include <mutex>
 #include <vector>
 
 // A loop whose iterations do not depend on each other, for the compiler to vectorise (OpenMP simd: -fopenmp-simd, which needs no OpenMP runtime).
@@ -40,17 +41,19 @@ namespace detail {
 
 // The planes are big (a field is a megabyte or two of floats, and the decoder makes some fifty of them for each), and the heap gives blocks of that size
 // back to the system when they are freed and asks for them again, zeroed, at the next allocation: the page faults that follow, in every thread, were
-// what stopped the decoder from going faster with more threads. Each thread keeps the blocks it has freed, to give them out again.
+// what stopped the decoder from going faster with more threads. The blocks that are freed are kept, to be given out again.
+//
+// The cache is one for all the threads, and it is never destroyed. It was once a thread_local of each thread: with MinGW the destructors of the thread_locals run when the
+// thread ends, from a callback of the system, and a thread that ended while the others went on freeing (the pool of ld-chroma-decoder ends its threads one by one) corrupted
+// the heap there (0xc0000374, in the free that comes after the destructor). Planes are some fifty for each field, so a lock for each of them costs nothing next to the decoding.
 class BlockCache {
  public:
   BlockCache() = default;
   BlockCache(const BlockCache&) = delete;
   BlockCache& operator=(const BlockCache&) = delete;
-  ~BlockCache() {
-    for (auto& kept : blocks_) ::operator delete(kept.pointer);
-  }
 
   void* Take(size_t bytes) {
+    std::lock_guard<std::mutex> lock(mutex_);
     for (size_t i = 0; i < blocks_.size(); ++i) {
       if (blocks_[i].bytes == bytes) {
         void* pointer = blocks_[i].pointer;
@@ -64,33 +67,36 @@ class BlockCache {
   }
 
   bool Keep(void* pointer, size_t bytes) {
+    std::lock_guard<std::mutex> lock(mutex_);
     if (cached_ + bytes > kMaxCached) return false;
     blocks_.push_back({pointer, bytes});
     cached_ += bytes;
     return true;
   }
 
-  // Blocks under this size are the heap's to manage as it does; what a thread keeps is bounded (about what one field takes at its peak)
+  // Blocks under this size are the heap's to manage as it does; what is kept is bounded (about what the threads take at their peak)
   static constexpr size_t kMinPooled = 64 * 1024;
-  static constexpr size_t kMaxCached = 192u * 1024u * 1024u;
+  static constexpr size_t kMaxCached = 1024u * 1024u * 1024u;
 
  private:
   struct Block {
     void* pointer;
     size_t bytes;
   };
+  std::mutex mutex_;
   std::vector<Block> blocks_;
   size_t cached_ = 0;
 };
 
-inline BlockCache& ThreadCache() {
-  thread_local BlockCache cache;
-  return cache;
+// (made once, and left: what is freed after the end of the program, or of a thread, finds it there)
+inline BlockCache& SharedCache() {
+  static BlockCache* cache = new BlockCache;
+  return *cache;
 }
 
 }  // namespace detail
 
-// An allocator for the storage of the planes: the blocks of a thread are kept for the next plane of the same size
+// An allocator for the storage of the planes: the blocks that are freed are kept for the next plane of the same size
 template <typename T>
 struct PlaneAllocator {
   using value_type = T;
@@ -102,14 +108,14 @@ struct PlaneAllocator {
   T* allocate(size_t n) {
     const size_t bytes = n * sizeof(T);
     if (bytes >= detail::BlockCache::kMinPooled) {
-      if (void* kept = detail::ThreadCache().Take(bytes)) return static_cast<T*>(kept);
+      if (void* kept = detail::SharedCache().Take(bytes)) return static_cast<T*>(kept);
     }
     return static_cast<T*>(::operator new(bytes));
   }
 
   void deallocate(T* pointer, size_t n) {
     const size_t bytes = n * sizeof(T);
-    if (bytes >= detail::BlockCache::kMinPooled && detail::ThreadCache().Keep(pointer, bytes)) return;
+    if (bytes >= detail::BlockCache::kMinPooled && detail::SharedCache().Keep(pointer, bytes)) return;
     ::operator delete(pointer);
   }
 
