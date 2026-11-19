@@ -444,7 +444,7 @@ MainWindow::MainWindow()
     companionButtons->addWidget(m_metadata);
     m_rfSource = new QPushButton(tr("Where from…"), infoBody);
     m_rfSource->setObjectName(QStringLiteral("editRfSource"));
-    m_rfSource->setToolTip(tr("Where the capture comes from: what is known of the RF file it was decoded from (its name, size, rate, bits, date, the files beside it, the signal). Information to trace the capture, with no other use"));
+    m_rfSource->setToolTip(tr("Where the capture comes from: what is known of the RF file it was decoded from (its name, size, rate, bits, date, the files beside it). Information to trace the capture, with no other use"));
     companionButtons->addWidget(m_rfSource);
     m_videoParameters = new QPushButton(tr("Parameters…"), infoBody);
     m_videoParameters->setObjectName(QStringLiteral("videoParameters"));

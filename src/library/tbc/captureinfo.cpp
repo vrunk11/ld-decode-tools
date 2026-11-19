@@ -101,7 +101,6 @@ QVector<Row> rfSourceRows(const QString &ldxName)
     if (object.contains("archive")) rows.append({ tr("In the archive"), object.value("archive").toString() });
     if (object.value("rate_hz").toDouble() > 0) rows.append({ tr("RF sample rate"), tr("%1 MHz").arg(QString::number(object.value("rate_hz").toDouble() / 1.0e6, 'f', 3)) });
     if (object.value("bits").toInt() > 0) rows.append({ tr("RF bits"), QString::number(object.value("bits").toInt()) });
-    if (!object.value("signal").toString().isEmpty()) rows.append({ tr("RF signal"), object.value("signal").toString() == QLatin1String("yc") ? QStringLiteral("Y/C") : QStringLiteral("CVBS") });
     if (!object.value("file_time").toString().isEmpty()) {
         const QDateTime when = QDateTime::fromString(object.value("file_time").toString(), Qt::ISODate);
         rows.append({ tr("RF file date"), when.isValid() ? when.toLocalTime().toString(Qt::ISODate).replace('T', ' ') : object.value("file_time").toString() });

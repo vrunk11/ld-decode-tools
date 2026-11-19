@@ -49,7 +49,6 @@ private:
     QLineEdit *m_fileTime = nullptr;
     QLineEdit *m_origin = nullptr;
     QLineEdit *m_archive = nullptr;
-    QComboBox *m_signal = nullptr;
     QListWidget *m_sidecars = nullptr;
     QJsonArray m_sidecarArray;      // the files that were beside the RF file (they can be taken out, not changed)
 };

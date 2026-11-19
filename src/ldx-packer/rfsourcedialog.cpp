@@ -73,11 +73,6 @@ RfSourceDialog::RfSourceDialog(const QByteArray &json, const QString &captureNam
     m_archive = new QLineEdit(this);
     m_archive->setPlaceholderText(tr("the .rfx archive it came from"));
     form->addRow(tr("Archive"), m_archive);
-    m_signal = new QComboBox(this);
-    m_signal->addItem(tr("Not said"), QString());
-    m_signal->addItem(tr("Composite (CVBS)"), QStringLiteral("cvbs"));
-    m_signal->addItem(tr("Separate luma and chroma (Y/C)"), QStringLiteral("yc"));
-    form->addRow(tr("Signal"), m_signal);
     layout->addLayout(form);
 
     layout->addWidget(new QLabel(tr("Files that were beside the RF file"), this));
@@ -123,7 +118,6 @@ void RfSourceDialog::display(const QJsonObject &object)
     m_fileTime->setText(object.value("file_time").toString());
     m_origin->setText(object.value("origin").toString());
     m_archive->setText(object.value("archive").toString());
-    m_signal->setCurrentIndex(std::max(0, m_signal->findData(object.value("signal").toString())));
     m_sidecarArray = object.value("sidecars").toArray();
     m_sidecars->clear();
     for (const QJsonValue &sidecar : m_sidecarArray) {
@@ -162,7 +156,6 @@ QJsonObject RfSourceDialog::collect() const
     putText("origin", m_origin->text());
     putText("archive", m_archive->text());
     putText("fmt", m_format->currentData().toString());
-    putText("signal", m_signal->currentData().toString());
     bool ok = false;
     const qint64 size = m_size->text().trimmed().toLongLong(&ok);
     if (ok && size >= 0) object["size"] = static_cast<double>(size);

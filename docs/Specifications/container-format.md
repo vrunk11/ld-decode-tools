@@ -220,7 +220,6 @@ A track of kind `metadata` or `annotations` that is not `ldx.tbcmetadata` declar
 | `rate_hz` | the sample rate of the **RF** capture in Hz (not the `sampleRate` of the video track, which is that of the TBC) |
 | `file_time` | when that file was last changed, UTC, ISO 8601 (`"2023-05-16T18:03:54Z"`) |
 | `origin` | the name of the compressed file (`.flac`, `.ldf`) it was itself made from, if it was |
-| `signal` | what was captured: `"cvbs"` (composite) or `"yc"` (separate luma and chroma), as a person said it when the RF file was packed |
 | `position`, `noise` | where it stood in the archive, and the noise estimate that ordered it (informative) |
 | `sidecars` | files that sat beside it, kept whole, as an array of `{ "name", "sha256", "data" }` (`data` an array of bytes), at most 1 MiB in all (the `.yaml` of the Domesday Duplicator, which says when the capture was made) |
 | `archive` | the name of the `.rfx` file it came from, and `track`: its number in it (from 0) |

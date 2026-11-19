@@ -563,7 +563,7 @@ static void testSaidAndSource(const QString &directory)
     const QString path = directory + "/said.ldx";
     QFile::copy(directory + "/two.ldx", path);
     QString error;
-    const QJsonObject rf{ { "name", "cap.s16" }, { "rate_hz", 75000000.0 }, { "bits", 10 }, { "signal", "cvbs" } };
+    const QJsonObject rf{ { "name", "cap.s16" }, { "rate_hz", 75000000.0 }, { "bits", 10 } };
     CHECK(LdxCapture::putRfSourceInPlace(path, 1, QJsonDocument(rf).toJson(QJsonDocument::Compact), LdxCapture::historyEntry("rfsource", "put in"), error));
     QByteArray json;
     CHECK(LdxCapture::readRfSource(path, 1, json, error) && QJsonDocument::fromJson(json).object().value("name").toString() == "cap.s16");

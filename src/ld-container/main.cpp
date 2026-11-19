@@ -2868,7 +2868,7 @@ int tagCommand(const QStringList &arguments)
 int rfSourceCommand(const QStringList &arguments)
 {
     QCommandLineParser parser;
-    parser.setApplicationDescription("Where a capture comes from: what is known of the RF file it was decoded from (its name, size, sha256, sample rate, bits, date, the files that were beside it, and the signal),\n"
+    parser.setApplicationDescription("Where a capture comes from: what is known of the RF file it was decoded from (its name, size, sha256, sample rate, bits, date, the files that were beside it),\n"
                                      "kept in the track of metadata ldx.rfsource (section 8.4 of the specification) as the entry of the capture in an .rfx archive of RF-tools spells it. It is\n"
                                      "information to trace the capture, and has no other use. With no option the track is shown; --set puts the JSON of a file in, --export writes it out and\n"
                                      "--remove takes it away. It is put in the file itself, at its end (no copy of the file), or in a copy with -o.");
