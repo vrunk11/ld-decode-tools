@@ -980,8 +980,13 @@ void MainWindow::togglePlayback()
 
     // Start decoding ahead; the clock starts once the first image is ready
     playbackStartPosition = isFieldView || weaveActive ? currentFieldNumber : currentFrameNumber;
-    // (a live stream plays on at its end: there is more to come)
-    if (playbackStartPosition >= lastPosition && !isLive) playbackStartPosition = firstPosition;
+    // At the end, play again from the start. The end is the last image on show, whatever the view: in the field view
+    // the first field of the last frame is on it too (its position is one before the last one, and the clock would have played
+    // that one field and stopped). A live stream plays on at its end: there is more to come, unless it has ended.
+    const bool byFields = isFieldView || weaveActive;
+    const qint32 lastFrame = byFields ? (lastPosition + 1) / 2 : lastPosition;
+    const bool atEnd = playbackStartPosition >= lastPosition || (!isLive && currentFrameNumber >= lastFrame);
+    if (atEnd && (!isLive || tbcSource.getIsLiveEnded())) playbackStartPosition = firstPosition;
     playbackStartPosition = qMax(playbackStartPosition, firstPosition);
     playbackDue = playbackStartPosition;
     renderGeneration = tbcSource.getSettingsGeneration();
