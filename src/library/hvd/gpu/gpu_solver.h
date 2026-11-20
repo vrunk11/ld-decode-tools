@@ -16,6 +16,7 @@
 #include <string>
 #include <vector>
 
+#include "engine/motion.h"
 #include "engine/plane.h"
 #include "engine/variational.h"
 
@@ -111,6 +112,10 @@ class Window {
   bool SolveField(int j, const FieldJob& job, const SolveParameters& p);
   // The luma and the chroma of the field j, from the device
   bool GetField(int j, Plane* y, ComplexPlane* chi);
+  // The search for the motion between the luma of two fields that are on the device (EstimateMotion and VerifyMotion of engine/motion.h, the reference being the field k and the
+  // current one the field j)
+  bool EstimateMotion(int k, int j, int tile, int search, MotionField* out);
+  bool VerifyMotion(int k, int j, const Plane& pdy, const Plane& pdx, int tile, MotionField* out);
   bool Debug(int j, const FieldJob& job, WindowDebug* out);
 
  private:

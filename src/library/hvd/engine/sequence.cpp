@@ -689,7 +689,7 @@ std::vector<DecodedField> DecodeFieldWindowWithInits(
     if (!win) return;
     std::lock_guard<std::mutex> lk(fresh_mu);
     if (host_fresh[k]) return;
-    if (!win->GetField(k, &Ys[k], &chis[k])) gpu_failed = true;
+    if (!win->GetField(k, (ccfg.output_fidelity && !verify_gpu) ? nullptr : &Ys[k], &chis[k])) gpu_failed = true;
     host_fresh[k] = 1;
   };
   if (ccfg.use_gpu && has_temporal && ccfg.fast && !ccfg.psi_init && ccfg.cg_iterations > 0 && nf > 1) {
@@ -741,9 +741,29 @@ std::vector<DecodedField> DecodeFieldWindowWithInits(
           } else if (!ccfg.trajectory_fit ||
                      std::find(full_os.begin(), full_os.end(), o) !=
                          full_os.end()) {
-            ensure_fresh(k);
-            ensure_fresh(j);
-            mf = EstimateMotion(Ys[k], Ys[j], ccfg.mc_tile, ccfg.mc_search);
+            if (win) {
+              if (gpu_failed || !win->EstimateMotion(k, j, ccfg.mc_tile, ccfg.mc_search, &mf)) {
+                gpu_failed = true;
+                return;
+              }
+            } else {
+              mf = EstimateMotion(Ys[k], Ys[j], ccfg.mc_tile, ccfg.mc_search);
+            }
+            if (win && verify_gpu) {
+              // the check of the search for the motion: the device against this code, on the same luma
+              ensure_fresh(k);
+              ensure_fresh(j);
+              const MotionField ref = EstimateMotion(Ys[k], Ys[j], ccfg.mc_tile, ccfg.mc_search);
+              size_t tiles_off = 0;
+              double worst_v = 0.0, worst_c = 0.0;
+              for (size_t i = 0; i < ref.dy.size(); ++i) {
+                const double dv = std::max(std::fabs(static_cast<double>(ref.dy[i]) - mf.dy[i]), std::fabs(static_cast<double>(ref.dx[i]) - mf.dx[i]));
+                worst_v = std::max(worst_v, dv);
+                worst_c = std::max(worst_c, std::fabs(static_cast<double>(ref.confidence[i]) - mf.confidence[i]));
+                if (dv > 1e-3) ++tiles_off;
+              }
+              std::fprintf(stderr, "verify motion field %d from %d: vectors differ on %zu of %zu tiles (largest %.4g px), confidence by %.3g\n", j, k, tiles_off, ref.dy.size(), worst_v, worst_c);
+            }
             cache_put(j, k, mf);
             pair_motion[o] = std::move(mf);
           }
@@ -784,9 +804,14 @@ std::vector<DecodedField> DecodeFieldWindowWithInits(
               pdy[i] = static_cast<float>(o) * vym0[i] + ho;
               pdx[i] = static_cast<float>(o) * vxm0[i];
             }
-            ensure_fresh(k);
-            ensure_fresh(j);
-            mf = VerifyMotion(Ys[k], Ys[j], pdy, pdx, ccfg.mc_tile);
+            if (win) {
+              if (gpu_failed || !win->VerifyMotion(k, j, pdy, pdx, ccfg.mc_tile, &mf)) {
+                gpu_failed = true;
+                return;
+              }
+            } else {
+              mf = VerifyMotion(Ys[k], Ys[j], pdy, pdx, ccfg.mc_tile);
+            }
             cache_put(j, k, mf);
             pair_motion[o] = std::move(mf);
           }
@@ -850,9 +875,10 @@ std::vector<DecodedField> DecodeFieldWindowWithInits(
             if (k == j || k < 0 || k >= nf) continue;
             MotionField mo;
             if (!cache_get(j, k, &mo)) {
-              ensure_fresh(k);
-              ensure_fresh(j);
-              mo = EstimateMotion(Ys[k], Ys[j], ccfg.mc_tile, ccfg.mc_search);
+              if (!win->EstimateMotion(k, j, ccfg.mc_tile, ccfg.mc_search, &mo)) {
+                gpu_failed = true;
+                return;
+              }
               cache_put(j, k, mo);
             }
             gpu::AnchorSpec spec;
