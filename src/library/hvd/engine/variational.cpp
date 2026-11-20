@@ -1249,4 +1249,36 @@ RefineResult VariationalRefineJoint(const Plane& s, const ComplexPlane& carrier,
   return out;
 }
 
+namespace gpu {
+
+// The parameters of a solve as VariationalRefine and VariationalRefineJoint resolve them (the same formulas), for the solves of a window on the device
+SolveParameters ResolveSolveParameters(const ComplexPlane& chi0, const HvdConfig& cfg, bool has_neighbors) {
+  const float aniso = ResolveChromaAniso(chi0, cfg);
+  float mu_h = cfg.lambda_c * aniso;
+  float mu_v = cfg.lambda_c;
+  float mu_d = cfg.lambda_c * cfg.diag_prior * 0.5F;
+  {
+    const float tot0 = cfg.lambda_c * (1.0F + aniso);
+    const float scale = mu_d > 0.0F ? tot0 / (tot0 + 2.0F * mu_d) : 1.0F;
+    mu_h *= scale;
+    mu_v *= scale;
+    mu_d *= scale;
+  }
+  SolveParameters gp;
+  gp.eps = cfg.charbonnier_eps;
+  gp.eps_c = cfg.chroma_eps;
+  gp.eps_t = cfg.temporal_eps;
+  gp.mu_h = mu_h;
+  gp.mu_v = mu_v;
+  gp.mu_d = mu_d;
+  gp.k = cfg.structure_coupling;
+  gp.nu = has_neighbors ? cfg.temporal_strength : 0.0F;
+  gp.irls_outer = std::max(1, cfg.irls_outer);
+  gp.n_inner = std::max(1, (cfg.fast ? cfg.cg_iterations * 2 / 3 : cfg.cg_iterations) / gp.irls_outer);
+  gp.cg_tol = cfg.cg_tol > 0.0F ? cfg.cg_tol : (cfg.fast ? 0.10F : 0.02F);
+  return gp;
+}
+
+}  // namespace gpu
+
 }  // namespace hvd

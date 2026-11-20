@@ -12,6 +12,7 @@
 #ifndef LDDECODE_HVD_GPU_GPU_SOLVER_H_
 #define LDDECODE_HVD_GPU_GPU_SOLVER_H_
 
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -37,6 +38,9 @@ struct SolveParameters {
   float cg_tol = 0.0F;
 };
 
+// The parameters of a solve resolved from the configuration, as VariationalRefine and VariationalRefineJoint do (defined in engine/variational.cpp, with them)
+SolveParameters ResolveSolveParameters(const ComplexPlane& chi0, const HvdConfig& cfg, bool has_neighbors);
+
 // Whether the build has OpenCL and a device was found (the first call looks; it can take a moment)
 bool Available();
 
@@ -50,6 +54,70 @@ bool Solve(const Plane& s, const ComplexPlane& carrier, const SolveParameters& p
 // The joint solve of the passes with the anchor (VariationalRefineJoint): the luma `y` is an unknown as well as `chi`, and nu_a the weight of the anchor (0 = none)
 bool SolveJoint(const Plane& s, const ComplexPlane& carrier, const SolveParameters& p, float nu_a, const std::vector<NeighborTerm>& neighbors, const AnchorTerm* anchor,
                 Plane* y, ComplexPlane* chi);
+
+// ---- A window of fields that stays on the device ----------------------------------------------------------------------------------------------
+// The sequence decoder (engine/sequence.cpp) decodes a window of fields in passes. With a Window the fields are sent to the device once, the neighbours of a
+// field are made there (the warps and the gates of their confidence), and so is the anchor of the later passes; each solve leaves its luma and chroma there.
+// The host asks for a field only when it needs it (the search for the motion, the end of the window).
+
+// A neighbour of the field: the tile grids of its motion (cleaned of their outliers by the host: SnapTileVectors), those of its confidence squared and
+// cleaned, and whether its offset is odd (the neighbour is of the other parity)
+struct NeighbourSpec {
+  int k = 0;
+  Plane mdy, mdx, conf;
+  bool odd = false;
+};
+
+// A neighbour of the anchor: the same grids, the confidence being the one of the motion as it is, and the offset of the line between the parities
+struct AnchorSpec {
+  int k = 0;
+  Plane mdy, mdx, conf;
+  float rowOffset = 0.0F;
+};
+
+// What a solve of one field needs besides the field itself
+struct FieldJob {
+  int tile = 32;
+  std::vector<NeighbourSpec> neighbours;
+  bool anyOdd = false;         // the vertical envelope and the floor of the gate of the odd neighbours are wanted
+  bool gateOn = false;         // the coherence gate of the confidence
+  float coherence = 0.0F;      // its strength
+  float temporalEps = 0.0F;    // the robust scale of the neighbours
+  float oddFloorMax = 0.0F;    // the ceiling of the floor of the gate of the odd neighbours
+  bool joint = false;          // the passes with the anchor
+  float anchorStrength = 0.0F;
+  float nrEps = 0.0F;
+  std::vector<AnchorSpec> anchor;
+};
+
+// What the device made of the neighbours and the anchor of a field, read back (for the tests and for the check of the decoder against the CPU)
+struct WindowDebug {
+  std::vector<float> comp, conf, vgrad, lapsm, ay, aw;
+  std::vector<Complex> car, ac;
+};
+
+class Window {
+ public:
+  // The fields of a window, as many as `fields` with `height` x `width` planes; null when there is no device or no room on it (the CPU decodes then).
+  // It holds a worker of the device until it is destroyed: the threads that open one when they are all taken wait for it.
+  static std::unique_ptr<Window> Open(int height, int width, int fields);
+  ~Window();
+  Window(const Window&) = delete;
+  Window& operator=(const Window&) = delete;
+
+  // The field j: the composite, its carrier, and the luma and chroma it starts from
+  bool SetField(int j, const Plane& s, const ComplexPlane& carrier, const Plane& y, const ComplexPlane& chi);
+  // The neighbours of the field j, the anchor if the job is joint, and the solve; the new luma and chroma stay on the device
+  bool SolveField(int j, const FieldJob& job, const SolveParameters& p);
+  // The luma and the chroma of the field j, from the device
+  bool GetField(int j, Plane* y, ComplexPlane* chi);
+  bool Debug(int j, const FieldJob& job, WindowDebug* out);
+
+ private:
+  Window();
+  struct Impl;
+  std::unique_ptr<Impl> impl_;
+};
 
 }  // namespace gpu
 }  // namespace hvd

@@ -7,9 +7,11 @@
 #include "engine/sequence.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdint>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <utility>
 
@@ -19,6 +21,7 @@
 #include "engine/motion.h"
 #include "engine/temporal.h"
 #include "engine/variational.h"
+#include "gpu/gpu_solver.h"
 
 namespace hvd {
 
@@ -672,6 +675,30 @@ std::vector<DecodedField> DecodeFieldWindowWithInits(
   std::mutex mcache_mu;  // guards the shared fast-mode cache during the
                          // colored parallel sweep (see below)
 
+  // ---- The window on a GPU -------------------------------------------------------------------------------------------------------------------------
+  // With the GPU asked for, the fast mode and the temporal terms, the fields of the window go to the device once; the neighbours of a field, its anchor and
+  // its solve are made there from the fields that are there, and each solve leaves its luma and chroma there. The host reads a field back only when it
+  // needs it (the motion of a pair that is not in the cache, the anisotropy of the chroma, the end of the window). If the device fails the window is decoded
+  // again by the CPU from the start, so nothing of a failed decode is kept.
+  std::unique_ptr<gpu::Window> win;
+  const bool verify_gpu = std::getenv("HVD_GPU_VERIFY") != nullptr;
+  std::atomic<bool> gpu_failed{false};
+  std::vector<char> host_fresh(static_cast<size_t>(nf), 1);  // Ys[j] and chis[j] are the same as on the device
+  std::mutex fresh_mu;
+  auto ensure_fresh = [&](int k) {
+    if (!win) return;
+    std::lock_guard<std::mutex> lk(fresh_mu);
+    if (host_fresh[k]) return;
+    if (!win->GetField(k, &Ys[k], &chis[k])) gpu_failed = true;
+    host_fresh[k] = 1;
+  };
+  if (ccfg.use_gpu && has_temporal && ccfg.fast && !ccfg.psi_init && ccfg.cg_iterations > 0 && nf > 1) {
+    win = gpu::Window::Open(fields[0].s.height(), fields[0].s.width(), nf);
+    for (int j = 0; win && j < nf; ++j) {
+      if (!win->SetField(j, fields[j].s, fields[j].carrier, Ys[j], chis[j])) win.reset();
+    }
+  }
+
   for (int pass = 0; pass < n_passes; ++pass) {
     std::map<std::pair<int, int>, MotionField> mcache_pass;  // slow mode
     auto& mcache = ccfg.fast ? mcache_fast : mcache_pass;
@@ -714,6 +741,8 @@ std::vector<DecodedField> DecodeFieldWindowWithInits(
           } else if (!ccfg.trajectory_fit ||
                      std::find(full_os.begin(), full_os.end(), o) !=
                          full_os.end()) {
+            ensure_fresh(k);
+            ensure_fresh(j);
             mf = EstimateMotion(Ys[k], Ys[j], ccfg.mc_tile, ccfg.mc_search);
             cache_put(j, k, mf);
             pair_motion[o] = std::move(mf);
@@ -755,6 +784,8 @@ std::vector<DecodedField> DecodeFieldWindowWithInits(
               pdy[i] = static_cast<float>(o) * vym0[i] + ho;
               pdx[i] = static_cast<float>(o) * vxm0[i];
             }
+            ensure_fresh(k);
+            ensure_fresh(j);
             mf = VerifyMotion(Ys[k], Ys[j], pdy, pdx, ccfg.mc_tile);
             cache_put(j, k, mf);
             pair_motion[o] = std::move(mf);
@@ -777,6 +808,77 @@ std::vector<DecodedField> DecodeFieldWindowWithInits(
           TrajectorySnap(&pm);
           for (OffsetMotion& m : pm) pair_motion[m.offset] = std::move(m.field);
         }
+      }
+
+      gpu::FieldJob verify_job;
+      bool have_verify = false;
+      // ---- on the device: the window is there, the neighbours, the anchor and the solve are made from its fields ----
+      if (win) {
+        if (gpu_failed) return;  // (the window is decoded again by the CPU at the end)
+        gpu::FieldJob job;
+        job.tile = ccfg.mc_tile;
+        bool any_odd = false;
+        for (int o : offs) {
+          const int k = j + o;
+          if (k >= 0 && k < nf && ((o & 1) != 0)) any_odd = true;
+        }
+        job.anyOdd = any_odd;
+        job.gateOn = ccfg.coherence_gate > 0.0F && !(ccfg.fast && pass == 0);
+        job.coherence = ccfg.coherence_gate;
+        job.temporalEps = ccfg.temporal_eps;
+        job.oddFloorMax = std::clamp(ccfg.odd_gate_floor, 0.0F, 1.0F);
+        for (int o : offs) {
+          const int k = j + o;
+          if (k < 0 || k >= nf) continue;
+          const MotionField& mo = pair_motion.at(o);
+          gpu::NeighbourSpec spec;
+          spec.k = k;
+          SnapTileVectors(mo.dy, mo.dx, &spec.mdy, &spec.mdx);
+          // the confidence of the fast upsampling: its square, taken through the same cleaning of the outliers
+          Plane squared(mo.confidence.height(), mo.confidence.width());
+          for (size_t i = 0; i < squared.size(); ++i) squared[i] = mo.confidence[i] * mo.confidence[i];
+          Plane unused;
+          SnapTileVectors(squared, squared, &spec.conf, &unused);
+          spec.odd = (o & 1) != 0;
+          job.neighbours.push_back(std::move(spec));
+        }
+        job.joint = pass >= 1 && ccfg.nr_anchor > 0.0F && nf > 1;
+        if (job.joint) {
+          job.anchorStrength = ccfg.nr_anchor;
+          job.nrEps = ccfg.nr_eps;
+          for (int k = j - ccfg.nr_radius; k <= j + ccfg.nr_radius; ++k) {
+            if (k == j || k < 0 || k >= nf) continue;
+            MotionField mo;
+            if (!cache_get(j, k, &mo)) {
+              ensure_fresh(k);
+              ensure_fresh(j);
+              mo = EstimateMotion(Ys[k], Ys[j], ccfg.mc_tile, ccfg.mc_search);
+              cache_put(j, k, mo);
+            }
+            gpu::AnchorSpec spec;
+            spec.k = k;
+            SnapTileVectors(mo.dy, mo.dx, &spec.mdy, &spec.mdx);
+            spec.conf = mo.confidence;
+            spec.rowOffset = (static_cast<float>(parities[j]) - static_cast<float>(parities[k])) / 2.0F;
+            job.anchor.push_back(std::move(spec));
+          }
+        }
+        // (the chroma of the field is on the host as the solver sees it: its anisotropy is measured on it)
+        ensure_fresh(j);
+        if (verify_gpu && pass >= 1) {
+          for (int kk = 0; kk < nf; ++kk) ensure_fresh(kk);  // (the host reads the state that the device has made)
+          verify_job = job;
+          have_verify = true;
+        } else {
+        const gpu::SolveParameters sp = gpu::ResolveSolveParameters(chis[j], ccfg, !job.neighbours.empty());
+        if (win->SolveField(j, job, sp)) {
+          std::lock_guard<std::mutex> lk(fresh_mu);
+          host_fresh[j] = 0;
+        } else {
+          gpu_failed = true;
+        }
+        }
+        if (!have_verify) return;
       }
 
       // ---- neighbour equations -------------------------------------------
@@ -1032,6 +1134,48 @@ std::vector<DecodedField> DecodeFieldWindowWithInits(
         }
       }
 
+      if (have_verify) {
+        // The check against the CPU (HVD_GPU_VERIFY): what the device made of the neighbours and of the anchor, and what this code made of them
+        gpu::WindowDebug dbg;
+        if (win->Debug(j, verify_job, &dbg)) {
+          const size_t pixels = S.size();
+          auto compare = [&](const char* name, const float* a, const float* b, size_t count) {
+            double worst = 0.0;
+            size_t big = 0;
+            for (size_t i = 0; i < count; ++i) {
+              const double d = std::fabs(static_cast<double>(a[i]) - b[i]);
+              worst = std::max(worst, d);
+              if (d > 1e-3 * (1.0 + std::fabs(static_cast<double>(a[i])))) ++big;
+            }
+            std::fprintf(stderr, "verify pass %d field %d %-10s max difference %.6g, %zu of %zu differ\n", pass, j, name, worst, big, count);
+          };
+          for (size_t idx = 0; idx < neighbors.size(); ++idx) {
+            char name[32];
+            std::snprintf(name, sizeof name, "comp[%zu]", idx);
+            compare(name, neighbors[idx].composite.data(), dbg.comp.data() + idx * pixels, pixels);
+            std::snprintf(name, sizeof name, "conf[%zu]", idx);
+            compare(name, neighbors[idx].confidence.data(), dbg.conf.data() + idx * pixels, pixels);
+            std::snprintf(name, sizeof name, "car[%zu]", idx);
+            compare(name, reinterpret_cast<const float*>(neighbors[idx].carrier.data()), reinterpret_cast<const float*>(dbg.car.data()) + 2 * idx * pixels, 2 * pixels);
+          }
+          if (!vgrad.empty()) {
+            compare("vgrad", vgrad.data(), dbg.vgrad.data(), pixels);
+            compare("lapsm", lapsm.data(), dbg.lapsm.data(), pixels);
+          }
+          const AnchorTerm cpu_anchor = SynthReference(j, Ys, chis, fields, ccfg, parities, &mcache_fast, &mcache_mu);
+          compare("anchor Y", cpu_anchor.luma.data(), dbg.ay.data(), pixels);
+          compare("anchor w", cpu_anchor.weight.data(), dbg.aw.data(), pixels);
+          compare("anchor chi", reinterpret_cast<const float*>(cpu_anchor.chroma.data()), reinterpret_cast<const float*>(dbg.ac.data()), 2 * pixels);
+        }
+        const gpu::SolveParameters sp_v = gpu::ResolveSolveParameters(chis[j], ccfg, !verify_job.neighbours.empty());
+        if (win->SolveField(j, verify_job, sp_v)) {
+          std::lock_guard<std::mutex> lk(fresh_mu);
+          host_fresh[j] = 0;
+        } else {
+          gpu_failed = true;
+        }
+        return;
+      }
       if (pass == 0 && ccfg.psi_init && !neighbors.empty()) {
         chis[j] = PsiClosedForm(S, carrier, neighbors, chis[j]);
       }
@@ -1099,6 +1243,25 @@ std::vector<DecodedField> DecodeFieldWindowWithInits(
     } else {
       for (int j = 0; j < nf; ++j) solve_field(j);
     }
+  }
+
+  if (win) {
+    if (gpu_failed) {
+      // The device failed in the middle of the window: nothing of it is kept, the CPU decodes it from the start
+      win.reset();
+      HvdConfig cpu_cfg = cfg_in;
+      cpu_cfg.use_gpu = false;
+      return DecodeFieldWindowWithInits(fields, inits, g, cpu_cfg, diag);
+    }
+    // The fields come back from the device (the luma too: without the purist output it is the one of the solve)
+    for (int j = 0; j < nf; ++j) ensure_fresh(j);
+    if (gpu_failed) {
+      win.reset();
+      HvdConfig cpu_cfg = cfg_in;
+      cpu_cfg.use_gpu = false;
+      return DecodeFieldWindowWithInits(fields, inits, g, cpu_cfg, diag);
+    }
+    win.reset();
   }
 
   for (int j = 0; j < nf; ++j) {

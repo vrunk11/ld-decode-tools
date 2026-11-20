@@ -42,11 +42,7 @@ Plane Median3(const Plane& v) {
 
 }  // namespace
 
-PerPixelMotion VectorsPerPixel(const Plane& mdy_in, const Plane& mdx_in,
-                               int tile, int out_h, int out_w) {
-  const int th = mdy_in.height();
-  const int tw = mdy_in.width();
-
+void SnapTileVectors(const Plane& mdy_in, const Plane& mdx_in, Plane* mdy_out, Plane* mdx_out) {
   // Outlier-snap: a vector disagreeing with its own 3x3 median by more than
   // 3px is replaced by that median (isolated flat-tile garbage squashed
   // before interpolation can spread it; coherent motion clusters pass
@@ -62,6 +58,18 @@ PerPixelMotion VectorsPerPixel(const Plane& mdy_in, const Plane& mdx_in,
       mdx[i] = mx[i];
     }
   }
+  *mdy_out = std::move(mdy);
+  *mdx_out = std::move(mdx);
+}
+
+PerPixelMotion VectorsPerPixel(const Plane& mdy_in, const Plane& mdx_in,
+                               int tile, int out_h, int out_w) {
+  const int th = mdy_in.height();
+  const int tw = mdy_in.width();
+
+  Plane mdy;
+  Plane mdx;
+  SnapTileVectors(mdy_in, mdx_in, &mdy, &mdx);
 
   // Bracket pixel row/col y/x between tile centres cy[t] = (t + 0.5) * tile
   // (an evenly-spaced arithmetic sequence, so the bracketing index reduces

@@ -10,6 +10,7 @@
 
 #include "check.h"
 #include "engine/ntsc_geometry.h"
+#include "engine/sequence.h"
 #include "engine/variational.h"
 #include "gpu/gpu_solver.h"
 
@@ -87,6 +88,54 @@ std::vector<hvd::NeighborTerm> MakeNeighbours(const Scene& sc, const FieldGeomet
   return out;
 }
 
+
+// A window of fields decoded on the CPU and with the window on the device (the neighbours, the anchor and the solves made there): the same decode.
+// The scene moves, so the motion search, the warps and the gates of the confidence all have something to do.
+void WindowTest() {
+  const int nf = 8;
+  const int h = 64;
+  const int w = 96;
+  FieldGeometry g;
+  g.active_video_start = 0;
+  g.active_video_end = w;
+  std::vector<hvd::FieldObs> fields(nf);
+  std::vector<hvd::DecodedField> inits(nf);
+  for (int f = 0; f < nf; ++f) {
+    std::vector<float> theta(h);
+    for (int r = 0; r < h; ++r) theta[r] = 2.0F * 3.14159265F * (0.75F * static_cast<float>(f) + 0.5F * static_cast<float>(r));
+    fields[f].carrier = hvd::MakeCarrier(theta, g);
+    fields[f].parity = f % 2;
+    fields[f].s = Plane(h, w);
+    inits[f].chroma = ComplexPlane(h, w);
+    const int shift = f;  // the picture moves a pixel a field
+    for (int r = 0; r < h; ++r) {
+      for (int c = 0; c < w; ++c) {
+        const float x = static_cast<float>(c - shift);
+        const float y = 40.0F + 25.0F * std::sin(0.21F * x) * std::cos(0.13F * static_cast<float>(r)) + 6.0F * std::sin(0.9F * x + 0.3F * static_cast<float>(r));
+        const Complex chi{12.0F * std::sin(0.11F * x + 0.05F * static_cast<float>(r)), -7.0F * std::cos(0.09F * x)};
+        const float noise = 0.4F * std::sin(1.7F * static_cast<float>(r * w + c) + static_cast<float>(f));
+        fields[f].s.at(r, c) = y + (chi * fields[f].carrier.at(r, c)).real() + noise;
+      }
+    }
+  }
+  HvdConfig cpu;
+  cpu.fast = true;
+  cpu.passes = 2;
+  cpu.cg_iterations = 30;
+  cpu.temporal_strength = 0.5F;
+  HvdConfig gpu = cpu;
+  gpu.use_gpu = true;
+  const std::vector<hvd::DecodedField> a = hvd::DecodeFieldWindowWithInits(fields, inits, g, cpu);
+  const std::vector<hvd::DecodedField> b = hvd::DecodeFieldWindowWithInits(fields, inits, g, gpu);
+  double worst = 0.0;
+  for (int f = 0; f < nf; ++f) {
+    worst = std::fmax(worst, RmsDiff(a[f].chroma, b[f].chroma));
+    worst = std::fmax(worst, RmsDiff(a[f].luma, b[f].luma));
+  }
+  std::fprintf(stderr, "window: the worst RMS difference between the CPU and the device is %.5f\n", worst);
+  CHECK(worst < 5e-2);
+}
+
 }  // namespace
 
 void RunTests() {
@@ -145,6 +194,7 @@ void RunTests() {
     CHECK(RmsDiff(a.chroma, b.chroma) < tolerance);
     CHECK(RmsDiff(a.luma, b.luma) < tolerance);
   }
+  WindowTest();
   // joint: neighbours and an anchor
   {
     const std::vector<hvd::NeighborTerm> nb = MakeNeighbours(sc, g, h, w);

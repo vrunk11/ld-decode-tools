@@ -28,6 +28,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <stdexcept>
 #include <string>
@@ -379,6 +380,294 @@ __kernel void k_jdupdate(__global float* dY, __global float2* dC, __global const
 }
 )CLC";
 
+
+const char* const kSourceWindow = R"CLC(
+// ---- The planes of a window on the device: the motion compensation of the neighbours, the gates of their confidence, the anchor ---------------------
+
+// The tile that brackets a pixel row or column, and the weight between the two tile centres (VectorsPerPixel of temporal.cpp)
+inline void bracket(int coord, int n, int tile, int* lo, float* frac) {
+  if (n > 1) {
+    const float rel = (float)coord / (float)tile - 0.5f;
+    const int l = clamp((int)floor(rel), 0, n - 2);
+    const float centre = ((float)l + 0.5f) * (float)tile;
+    *lo = l;
+    *frac = clamp(((float)coord - centre) / (float)tile, 0.0f, 1.0f);
+  } else {
+    *lo = 0;
+    *frac = 0.0f;
+  }
+}
+
+inline float interp_tile(__global const float* v, int iy, int ix, int iy1, int ix1, int tw, float fy, float fx) {
+  const float v00 = v[iy * tw + ix];
+  const float v10 = v[iy1 * tw + ix];
+  const float v01 = v[iy * tw + ix1];
+  const float v11 = v[iy1 * tw + ix1];
+  return v00 * (1 - fy) * (1 - fx) + v10 * fy * (1 - fx) + v01 * (1 - fy) * fx + v11 * fy * fx;
+}
+
+// The two tile grids of vectors (already cleaned of their outliers by the host) to a vector at each pixel
+__kernel void k_interp2(__global const float* tiles, int oy, int ox, __global float* ody, __global float* odx, int th, int tw, int tile, int H, int W) {
+  __global const float* mdy = tiles + oy;
+  __global const float* mdx = tiles + ox;
+  const int i = get_global_id(0);
+  if (i >= H * W) return;
+  const int y = i / W;
+  const int x = i % W;
+  int iy, ix;
+  float fy, fx;
+  bracket(y, th, tile, &iy, &fy);
+  bracket(x, tw, tile, &ix, &fx);
+  const int iy1 = min(iy + 1, th - 1);
+  const int ix1 = min(ix + 1, tw - 1);
+  ody[i] = interp_tile(mdy, iy, ix, iy1, ix1, tw, fy, fx);
+  odx[i] = interp_tile(mdx, iy, ix, iy1, ix1, tw, fy, fx);
+}
+
+__kernel void k_interp1(__global const float* tiles, int off, __global float* out, int th, int tw, int tile, int H, int W, int base) {
+  __global const float* grid = tiles + off;
+  const int i = get_global_id(0);
+  if (i >= H * W) return;
+  const int y = i / W;
+  const int x = i % W;
+  int iy, ix;
+  float fy, fx;
+  bracket(y, th, tile, &iy, &fy);
+  bracket(x, tw, tile, &ix, &fx);
+  out[base + i] = interp_tile(grid, iy, ix, min(iy + 1, th - 1), min(ix + 1, tw - 1), tw, fy, fx);
+}
+
+// The confidence of a tile, squared, at each pixel by the tile it is in (the first step of UpsampleConfidence)
+__kernel void k_conf_nearest(__global const float* tiles, int off, __global float* out, int th, int tw, int tile, int H, int W) {
+  __global const float* grid = tiles + off;
+  const int i = get_global_id(0);
+  if (i >= H * W) return;
+  const int y = i / W;
+  const int x = i % W;
+  const float c = grid[min(y / tile, th - 1) * tw + min(x / tile, tw - 1)];
+  out[i] = c * c;
+}
+
+// The raw warp: the pixel at the vector rounded to the nearest whole pixel
+__kernel void k_warp_int(__global const float* src, __global const float* vdy, __global const float* vdx, __global float* dst, int H, int W, int base) {
+  const int i = get_global_id(0);
+  if (i >= H * W) return;
+  const int y = i / W;
+  const int x = i % W;
+  const int sy = clamp(y - (int)round(vdy[i]), 0, H - 1);
+  const int sx = clamp(x - (int)round(vdx[i]), 0, W - 1);
+  dst[base + i] = src[sy * W + sx];
+}
+
+__kernel void k_warp_int_c(__global const float2* src, __global const float* vdy, __global const float* vdx, __global float2* dst, int H, int W, int base) {
+  const int i = get_global_id(0);
+  if (i >= H * W) return;
+  const int y = i / W;
+  const int x = i % W;
+  const int sy = clamp(y - (int)round(vdy[i]), 0, H - 1);
+  const int sx = clamp(x - (int)round(vdx[i]), 0, W - 1);
+  dst[base + i] = src[sy * W + sx];
+}
+
+// The bilinear warp (WarpBilinearTiles), for a plane and for a complex plane
+__kernel void k_warp_bil(__global const float* src, __global const float* vdy, __global const float* vdx, __global float* dst, int H, int W, float row_off) {
+  const int i = get_global_id(0);
+  if (i >= H * W) return;
+  const int y = i / W;
+  const int x = i % W;
+  float sy = (float)y - vdy[i] + row_off;
+  float sx = (float)x - vdx[i];
+  sy = clamp(sy, 0.0f, (float)H - 1.001f);
+  sx = clamp(sx, 0.0f, (float)W - 1.001f);
+  const int y0 = (int)sy;
+  const int x0 = (int)sx;
+  const float fy = sy - (float)y0;
+  const float fx = sx - (float)x0;
+  const int y1 = min(y0 + 1, H - 1);
+  const int x1 = min(x0 + 1, W - 1);
+  dst[i] = src[y0 * W + x0] * (1 - fy) * (1 - fx) + src[y1 * W + x0] * fy * (1 - fx) + src[y0 * W + x1] * (1 - fy) * fx + src[y1 * W + x1] * fy * fx;
+}
+
+__kernel void k_warp_bil_c(__global const float2* src, __global const float* vdy, __global const float* vdx, __global float2* dst, int H, int W, float row_off) {
+  const int i = get_global_id(0);
+  if (i >= H * W) return;
+  const int y = i / W;
+  const int x = i % W;
+  float sy = (float)y - vdy[i] + row_off;
+  float sx = (float)x - vdx[i];
+  sy = clamp(sy, 0.0f, (float)H - 1.001f);
+  sx = clamp(sx, 0.0f, (float)W - 1.001f);
+  const int y0 = (int)sy;
+  const int x0 = (int)sx;
+  const float fy = sy - (float)y0;
+  const float fx = sx - (float)x0;
+  const int y1 = min(y0 + 1, H - 1);
+  const int x1 = min(x0 + 1, W - 1);
+  dst[i] = src[y0 * W + x0] * (1 - fy) * (1 - fx) + src[y1 * W + x0] * fy * (1 - fx) + src[y0 * W + x1] * (1 - fy) * fx + src[y1 * W + x1] * fy * fx;
+}
+
+// The box blur of radius r, zero-padded, the sum over the clipped window times 1/(2r+1): along the columns of the picture (vertical) and along its rows
+__kernel void k_box_v(__global const float* src, __global float* dst, int H, int W, int r) {
+  const int i = get_global_id(0);
+  if (i >= H * W) return;
+  const int y = i / W;
+  const int x = i % W;
+  const int y0 = max(y - r, 0);
+  const int y1 = min(y + r + 1, H);
+  float acc = 0.0f;
+  for (int yy = y0; yy < y1; ++yy) acc += src[yy * W + x];
+  dst[i] = acc * (1.0f / (float)(2 * r + 1));
+}
+
+__kernel void k_box_h(__global const float* src, __global float* dst, int H, int W, int r) {
+  const int i = get_global_id(0);
+  if (i >= H * W) return;
+  const int y = i / W;
+  const int x = i % W;
+  const int x0 = max(x - r, 0);
+  const int x1 = min(x + r + 1, W);
+  float acc = 0.0f;
+  for (int xx = x0; xx < x1; ++xx) acc += src[y * W + xx];
+  dst[i] = acc * (1.0f / (float)(2 * r + 1));
+}
+
+// ComplexCoherence: the planes to blur, and the coherence from the blurred ones
+__kernel void k_coh_prep(__global const float2* z1, __global const float2* z2, __global float* cre, __global float* cim, __global float* m1, __global float* m2, int N) {
+  const int i = get_global_id(0);
+  if (i >= N) return;
+  const float2 a = z1[i];
+  const float2 b = z2[i];
+  cre[i] = a.x * b.x + a.y * b.y;  // Re[z1 conj(z2)]
+  cim[i] = a.y * b.x - a.x * b.y;  // Im[z1 conj(z2)]
+  m1[i] = a.x * a.x + a.y * a.y;
+  m2[i] = b.x * b.x + b.y * b.y;
+}
+
+__kernel void k_coh_fin(__global const float* bre, __global const float* bim, __global const float* b1, __global const float* b2, __global float* out, int N) {
+  const int i = get_global_id(0);
+  if (i >= N) return;
+  const float num = sqrt(bre[i] * bre[i] + bim[i] * bim[i]);
+  const float den = sqrt(max(0.0f, b1[i] * b2[i])) + 1e-6f;
+  out[i] = clamp(num / den, 0.0f, 1.0f);
+}
+
+// conf *= (1 - a) + a gamma
+__kernel void k_conf_gate(__global float* conf, __global const float* gamma, float a, int N, int base) {
+  const int i = get_global_id(0);
+  if (i >= N) return;
+  conf[base + i] *= (1.0f - a) + a * gamma[i];
+}
+
+// conf *= max(floor_i, e2 / (e2 + vgrad^2)), the floor being the ceiling of the configuration times the multiplier of the pixel
+__kernel void k_conf_odd(__global float* conf, __global const float* vgrad, __global const float* lapsm, float e2, float floor_max, int N, int base) {
+  const int i = get_global_id(0);
+  if (i >= N) return;
+  const float b = vgrad[i];
+  const float floor_i = floor_max * lapsm[i];
+  conf[base + i] *= max(floor_i, e2 / (e2 + b * b));
+}
+
+// The vertical envelope of the field (its luma and chroma): the one-sided maximum of the squared differences, and the squared second difference
+__kernel void k_oddmaps(__global const float* Y, __global const float2* chi, __global float* gmag, __global float* lapmag, int H, int W) {
+  const int i = get_global_id(0);
+  if (i >= H * W) return;
+  const int y = i / W;
+  const int x = i % W;
+  const int ym = max(0, y - 1);
+  const int yp = min(H - 1, y + 1);
+  const int im = ym * W + x;
+  const int ip = yp * W + x;
+  const float dyu = Y[i] - Y[im];
+  const float dyd = Y[ip] - Y[i];
+  const float dcu = length(chi[i] - chi[im]);
+  const float dcd = length(chi[ip] - chi[i]);
+  const float mu = dyu * dyu + dcu * dcu;
+  const float md = dyd * dyd + dcd * dcd;
+  gmag[i] = max(mu, md);
+  const float ly = Y[i] - 0.5f * (Y[im] + Y[ip]);
+  const float lc = length(chi[i] - 0.5f * (chi[im] + chi[ip]));
+  lapmag[i] = ly * ly + lc * lc;
+}
+
+// The smoothing along the row over [x-2, x+2], clipped to the row: the root of the mean
+__kernel void k_smooth_rows(__global const float* src, __global float* dst, int H, int W) {
+  const int i = get_global_id(0);
+  if (i >= H * W) return;
+  const int y = i / W;
+  const int x = i % W;
+  const int lo = max(x - 2, 0);
+  const int hi = min(x + 2, W - 1);
+  float acc = 0.0f;
+  for (int xx = lo; xx <= hi; ++xx) acc += src[y * W + xx];
+  dst[i] = sqrt(acc / (float)(hi - lo + 1));
+}
+
+// Every seventh value of the envelope, for the host to take the median of
+__kernel void k_gather7(__global const float* src, __global float* dst, int N) {
+  const int k = get_global_id(0);
+  const int i = 7 * k;
+  if (i < N) dst[k] = src[i];
+}
+
+// The envelope without its noise floor: sqrt(max(0, v^2 - fl2))
+__kernel void k_floor(__global float* v, float fl2, int N) {
+  const int i = get_global_id(0);
+  if (i >= N) return;
+  v[i] = sqrt(max(0.0f, v[i] * v[i] - fl2));
+}
+
+// The multiplier of the floor of the gate: 1 - t^2, t being the second difference over the gradient (0 where there is no gradient)
+__kernel void k_lapsm(__global const float* traw, __global const float* vgrad, __global float* lapsm, int N) {
+  const int i = get_global_id(0);
+  if (i >= N) return;
+  const float g = vgrad[i];
+  const float t = g > 1e-6f ? clamp(traw[i] / g, 0.0f, 1.0f) : 0.0f;
+  lapsm[i] = 1.0f - t * t;
+}
+
+// ---- the anchor of the passes after the first: the neighbours of the field blended, weighted by their agreement ----------------------------------
+
+__kernel void k_synth_init(__global const float* Y, __global const float2* chi, __global float* accY, __global float2* accC, __global float* accW, int N) {
+  const int i = get_global_id(0);
+  if (i >= N) return;
+  accY[i] = Y[i];
+  accC[i] = chi[i];
+  accW[i] = 1.0f;
+}
+
+// One neighbour: yw and cw are its luma and chroma warped to the field, conf its confidence
+__kernel void k_synth_accum(__global const float* yw, __global const float2* cw, __global const float* Yj, __global const float2* chij, __global const float* conf,
+                            __global float* accY, __global float2* accC, __global float* accW, float eb2, int N) {
+  const int i = get_global_id(0);
+  if (i >= N) return;
+  const float dy = yw[i] - Yj[i];
+  const float2 dc = cw[i] - chij[i];
+  const float d2 = dy * dy + dc.x * dc.x + dc.y * dc.y;
+  const float w = conf[i] * eb2 / (d2 + eb2);
+  accY[i] += w * yw[i];
+  accC[i] += w * cw[i];
+  accW[i] += w;
+}
+
+__kernel void k_synth_fin(__global const float* accY, __global const float2* accC, __global const float* accW, __global const float2* car, __global const float* S,
+                          __global float* ay, __global float2* ac, __global float* resid, int N) {
+  const int i = get_global_id(0);
+  if (i >= N) return;
+  const float luma = accY[i] / accW[i];
+  const float2 chroma = accC[i] / accW[i];
+  ay[i] = luma;
+  ac[i] = chroma;
+  const float s_hat = luma + (chroma.x * car[i].x - chroma.y * car[i].y);
+  resid[i] = fabs(S[i] - s_hat);
+}
+
+__kernel void k_synth_weight(__global const float* r, __global float* aw, float eb2, int N) {
+  const int i = get_global_id(0);
+  if (i >= N) return;
+  aw[i] = eb2 / (r[i] * r[i] + eb2);
+}
+)CLC";
+
 struct GpuError : std::runtime_error {
   using std::runtime_error::runtime_error;
 };
@@ -459,6 +748,12 @@ Layout MakeLayout(size_t N, size_t nn, bool joint, bool anchor) {
 }
 
 // The planes packed for a solve, and the way to give the block back once the device has read it (after its first sum came back)
+// The buffers of a resident window that a solve writes: the chroma and the luma of the field
+struct Resident {
+  cl_mem chi = nullptr;
+  cl_mem y = nullptr;
+};
+
 struct Staged {
   unsigned char* ptr = nullptr;
   std::function<void()> release;
@@ -532,8 +827,8 @@ class Device {
     Check(error, "clCreateContext");
     queue_ = clCreateCommandQueue(context_, device_, 0, &error);
     Check(error, "clCreateCommandQueue");
-    const char* source = kSource;
-    program_ = clCreateProgramWithSource(context_, 1, &source, nullptr, &error);
+    const char* sources[2] = {kSource, kSourceWindow};
+    program_ = clCreateProgramWithSource(context_, 2, sources, nullptr, &error);
     Check(error, "clCreateProgramWithSource");
     error = clBuildProgram(program_, 1, &device_, "-cl-mad-enable", nullptr, nullptr);
     if (error != CL_SUCCESS) {
@@ -576,11 +871,19 @@ class Device {
     jneg_ = Kernel("k_jneg");
     jaxpy_ = Kernel("k_jaxpy");
     jdupdate_ = Kernel("k_jdupdate");
+    for (const char* name : {"k_interp2", "k_interp1", "k_conf_nearest", "k_warp_int", "k_warp_int_c", "k_warp_bil", "k_warp_bil_c", "k_box_v", "k_box_h", "k_coh_prep", "k_coh_fin", "k_conf_gate", "k_conf_odd", "k_oddmaps", "k_smooth_rows", "k_gather7", "k_floor", "k_lapsm", "k_synth_init", "k_synth_accum", "k_synth_fin", "k_synth_weight"}) {
+      kernels_[name] = Kernel(name);
+    }
   }
 
   const std::string& description() const { return description_; }
   cl_context context() const { return context_; }
   cl_device_id device() const { return device_; }
+  size_t globalMemory() const {
+    cl_ulong bytes = 0;
+    clGetDeviceInfo(device_, CL_DEVICE_GLOBAL_MEM_SIZE, sizeof bytes, &bytes, nullptr);
+    return static_cast<size_t>(bytes);
+  }
 
   // One solve. The planes are the host's, `chi` goes in with the holographic start and comes out refined.
   // The planes are in the staging block (packed by the caller, see Layout), and go to the device from there.
@@ -605,6 +908,18 @@ class Device {
       Run(makeDc_, global, kGroup, {Arg(b_.car), Arg(b_.cw), Arg(b_.dc), Arg(n), Arg(static_cast<int>(at))});
     }
 
+    IteratePlain(H, W, p, nn, st, nullptr, chi, tp0);
+  }
+
+  // The device holds the state of a solve (the planes and the neighbours, in the buffers of the worker): the IRLS and the conjugate gradient, then the chroma
+  // goes back to the host (`chi`), or to the buffers of a resident window (`out`: its chroma, and the luma that goes with it).
+  void IteratePlain(int H, int W, const SolveParameters& p, int nn, const Staged& st, const Resident* out, ComplexPlane* chi,
+                    std::chrono::steady_clock::time_point tp0) {
+    const size_t N = static_cast<size_t>(H) * static_cast<size_t>(W);
+    const int n = static_cast<int>(N);
+    const bool diag = p.mu_d > 0.0F;
+    const size_t groups = (N + kGroup - 1) / kGroup;
+    const size_t global = groups * kGroup;
     const auto tp1 = std::chrono::steady_clock::now();
     g_uploadNs += std::chrono::duration_cast<std::chrono::nanoseconds>(tp1 - tp0).count();
     const float et2 = p.eps_t * p.eps_t;
@@ -686,6 +1001,11 @@ class Device {
       }
     }
     g_computeNs += std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - tp1).count();
+    if (out) {
+      Check(clEnqueueCopyBuffer(queue_, chiBuf, out->chi, 0, 0, N * sizeof(Complex), 0, nullptr, nullptr), "copy of the chroma");
+      Run(luma_, global, kGroup, {Arg(b_.s), ArgMem(chiBuf), Arg(b_.car), ArgMem(out->y), Arg(n)});  // (the luma of the solve: the signal less the chroma)
+      return;
+    }
     Check(clEnqueueReadBuffer(queue_, chiBuf, CL_TRUE, 0, N * sizeof(Complex), chi->data(), 0, nullptr, nullptr), "read of the chroma");
   }
 
@@ -715,8 +1035,17 @@ class Device {
       WriteAsync(b_.ay, st.ptr + L.ay, N * sizeof(float));
       WriteAsync(b_.ac, st.ptr + L.ac, N * sizeof(Complex));
     }
-    const float anchorStrength = withAnchor ? nu_a : 0.0F;
+    IterateJoint(H, W, p, withAnchor ? nu_a : 0.0F, nn, st, nullptr, y, chi, tp0);
+  }
 
+  // As IteratePlain, for the joint solve: Y and chi are unknowns, the anchor (when its strength is not 0) is in the buffers of the worker.
+  void IterateJoint(int H, int W, const SolveParameters& p, float anchorStrength, int nn, const Staged& st, const Resident* out, Plane* y, ComplexPlane* chi,
+                    std::chrono::steady_clock::time_point tp0) {
+    const size_t N = static_cast<size_t>(H) * static_cast<size_t>(W);
+    const int n = static_cast<int>(N);
+    const bool diag = p.mu_d > 0.0F;
+    const size_t groups = (N + kGroup - 1) / kGroup;
+    const size_t global = groups * kGroup;
     const auto tp1 = std::chrono::steady_clock::now();
     g_uploadNs += std::chrono::duration_cast<std::chrono::nanoseconds>(tp1 - tp0).count();
     const float et2 = p.eps_t * p.eps_t;
@@ -793,10 +1122,291 @@ class Device {
         if (gg < 1e-10 * nPixels) break;
       }
     }
+    if (out) {
+      Check(clEnqueueCopyBuffer(queue_, yBuf, out->y, 0, 0, N * sizeof(float), 0, nullptr, nullptr), "copy of the luma");
+      Check(clEnqueueCopyBuffer(queue_, chiBuf, out->chi, 0, 0, N * sizeof(Complex), 0, nullptr, nullptr), "copy of the chroma");
+      return;
+    }
     Check(clEnqueueReadBuffer(queue_, yBuf, CL_TRUE, 0, N * sizeof(float), y->data(), 0, nullptr, nullptr), "read of the luma");
     g_computeNs += std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - tp1).count();
     Check(clEnqueueReadBuffer(queue_, chiBuf, CL_TRUE, 0, N * sizeof(Complex), chi->data(), 0, nullptr, nullptr), "read of the chroma");
   }
+
+  // ---- A window of fields that stays on the device ------------------------------------------------------------------------------------------------
+  // The fields of a window (the composite, the carrier, the luma and the chroma of each) are sent once. The neighbours of a field are made from them on
+  // the device (the warps, the gates of their confidence), and so is the anchor; the solve keeps its result there. Nothing of the neighbours crosses the
+  // bus any more, and the host reads a field only when it needs it (the search for the motion, the end of the window).
+
+  struct FieldBuffers {
+    Buffer s, car, y, chi;
+  };
+
+  struct TileOffsets {
+    int dy = 0, dx = 0, conf = 0;
+  };
+
+  void OpenWindow(int H, int W, int fields) {
+    CloseWindow();
+    const size_t N = static_cast<size_t>(H) * static_cast<size_t>(W);
+    const size_t f = sizeof(float);
+    const size_t c = sizeof(Complex);
+    win_.H = H;
+    win_.W = W;
+    win_.N = N;
+    for (int j = 0; j < fields; ++j) {
+      win_.field.push_back(std::make_unique<FieldBuffers>());
+      FieldBuffers& b = *win_.field.back();
+      b.s.Allocate(context_, N * f);
+      b.car.Allocate(context_, N * c);
+      b.y.Allocate(context_, N * f);
+      b.chi.Allocate(context_, N * c);
+    }
+    win_.tiles.Allocate(context_, N * sizeof(float));
+    for (Buffer* plane : {&win_.vdy, &win_.vdx, &win_.tileA, &win_.tileB, &win_.tileC, &win_.gmag, &win_.lapmag, &win_.vgrad, &win_.lapsm, &win_.traw, &win_.cre,
+                          &win_.cim, &win_.m1, &win_.m2, &win_.bre, &win_.bim, &win_.b1, &win_.b2, &win_.tmp, &win_.gamma, &win_.yw, &win_.confS, &win_.rr,
+                          &win_.accY, &win_.accW, &win_.resid}) {
+      plane->Allocate(context_, N * f);
+    }
+    for (Buffer* plane : {&win_.cwC, &win_.cwS, &win_.accC}) plane->Allocate(context_, N * c);
+    win_.samples.Allocate(context_, (N / 7 + 2) * f);
+  }
+
+  void CloseWindow() {
+    win_.field.clear();
+    for (Buffer* plane : {&win_.vdy, &win_.vdx, &win_.tileA, &win_.tileB, &win_.tileC, &win_.gmag, &win_.lapmag, &win_.vgrad, &win_.lapsm, &win_.traw, &win_.cre,
+                          &win_.cim, &win_.m1, &win_.m2, &win_.bre, &win_.bim, &win_.b1, &win_.b2, &win_.tmp, &win_.gamma, &win_.yw, &win_.confS, &win_.rr,
+                          &win_.accY, &win_.accW, &win_.resid, &win_.cwC, &win_.cwS, &win_.accC, &win_.samples}) {
+      plane->Release();
+    }
+  }
+
+  void SetField(int j, const Plane& s, const ComplexPlane& carrier, const Plane& y, const ComplexPlane& chi) {
+    FieldBuffers& b = *win_.field.at(static_cast<size_t>(j));
+    const size_t N = win_.N;
+    Write(b.s, s.data(), N * sizeof(float));
+    Write(b.car, carrier.data(), N * sizeof(Complex));
+    Write(b.y, y.data(), N * sizeof(float));
+    Write(b.chi, chi.data(), N * sizeof(Complex));
+  }
+
+  void GetField(int j, Plane* y, ComplexPlane* chi) {
+    FieldBuffers& b = *win_.field.at(static_cast<size_t>(j));
+    const size_t N = win_.N;
+    if (y) Check(clEnqueueReadBuffer(queue_, b.y.get(), CL_TRUE, 0, N * sizeof(float), y->data(), 0, nullptr, nullptr), "read of a luma");
+    if (chi) Check(clEnqueueReadBuffer(queue_, b.chi.get(), CL_TRUE, 0, N * sizeof(Complex), chi->data(), 0, nullptr, nullptr), "read of a chroma");
+  }
+
+  // The neighbours of a field, its anchor if it has one, and the solve; the result is the new luma and chroma of the field, on the device.
+  void SolveField(int j, const FieldJob& job, const SolveParameters& p) {
+    const int H = win_.H;
+    const int W = win_.W;
+    const size_t N = win_.N;
+    const int n = static_cast<int>(N);
+    const size_t groups = (N + kGroup - 1) / kGroup;
+    const size_t global = groups * kGroup;
+    const int nn = p.nu > 0.0F ? static_cast<int>(job.neighbours.size()) : 0;
+    Prepare(N, static_cast<size_t>(nn), groups);
+    const auto tp0 = std::chrono::steady_clock::now();
+    FieldBuffers& F = *win_.field.at(static_cast<size_t>(j));
+    const size_t cb = N * sizeof(Complex);
+    const size_t fb = N * sizeof(float);
+    Check(clEnqueueCopyBuffer(queue_, F.s.get(), b_.s.get(), 0, 0, fb, 0, nullptr, nullptr), "copy");
+    Check(clEnqueueCopyBuffer(queue_, F.car.get(), b_.car.get(), 0, 0, cb, 0, nullptr, nullptr), "copy");
+    Check(clEnqueueCopyBuffer(queue_, F.chi.get(), b_.chi.get(), 0, 0, cb, 0, nullptr, nullptr), "copy");
+    if (job.joint) Check(clEnqueueCopyBuffer(queue_, F.y.get(), b_.yc.get(), 0, 0, fb, 0, nullptr, nullptr), "copy");
+
+    PackTiles(job);
+    if (job.anyOdd) BuildOddMaps(F);
+    for (int idx = 0; idx < nn; ++idx) BuildNeighbour(job, idx, F, job.joint);
+    if (job.joint) BuildAnchor(job, F);
+
+    Resident out;
+    out.chi = F.chi.get();
+    out.y = F.y.get();
+    const Staged none{};
+    if (job.joint) IterateJoint(H, W, p, job.anchorStrength, nn, none, &out, nullptr, nullptr, tp0);
+    else IteratePlain(H, W, p, nn, none, &out, nullptr, tp0);
+    (void)n;
+    (void)global;
+  }
+
+  // For the tests: the neighbours of the field (and its anchor, when the job is joint) as the device makes them, read back
+  void DebugBuild(int j, const FieldJob& job, WindowDebug* out) {
+    const size_t N = win_.N;
+    const size_t groups = (N + kGroup - 1) / kGroup;
+    const int nn = static_cast<int>(job.neighbours.size());
+    Prepare(N, static_cast<size_t>(nn), groups);
+    FieldBuffers& F = *win_.field.at(static_cast<size_t>(j));
+    const size_t cb = N * sizeof(Complex);
+    const size_t fb = N * sizeof(float);
+    Check(clEnqueueCopyBuffer(queue_, F.s.get(), b_.s.get(), 0, 0, fb, 0, nullptr, nullptr), "copy");
+    Check(clEnqueueCopyBuffer(queue_, F.car.get(), b_.car.get(), 0, 0, cb, 0, nullptr, nullptr), "copy");
+    Check(clEnqueueCopyBuffer(queue_, F.chi.get(), b_.chi.get(), 0, 0, cb, 0, nullptr, nullptr), "copy");
+    PackTiles(job);
+    if (job.anyOdd) BuildOddMaps(F);
+    for (int idx = 0; idx < nn; ++idx) BuildNeighbour(job, idx, F, true);
+    if (job.joint) BuildAnchor(job, F);
+    out->comp.resize(static_cast<size_t>(nn) * N);
+    out->conf.resize(static_cast<size_t>(nn) * N);
+    out->car.resize(static_cast<size_t>(nn) * N);
+    if (nn > 0) {
+      Check(clEnqueueReadBuffer(queue_, b_.comp.get(), CL_TRUE, 0, out->comp.size() * sizeof(float), out->comp.data(), 0, nullptr, nullptr), "read");
+      Check(clEnqueueReadBuffer(queue_, b_.conf.get(), CL_TRUE, 0, out->conf.size() * sizeof(float), out->conf.data(), 0, nullptr, nullptr), "read");
+      Check(clEnqueueReadBuffer(queue_, b_.dc.get(), CL_TRUE, 0, out->car.size() * sizeof(Complex), out->car.data(), 0, nullptr, nullptr), "read");
+    }
+    if (job.anyOdd) {
+      out->vgrad.resize(N);
+      out->lapsm.resize(N);
+      Check(clEnqueueReadBuffer(queue_, win_.vgrad.get(), CL_TRUE, 0, fb, out->vgrad.data(), 0, nullptr, nullptr), "read");
+      Check(clEnqueueReadBuffer(queue_, win_.lapsm.get(), CL_TRUE, 0, fb, out->lapsm.data(), 0, nullptr, nullptr), "read");
+    }
+    if (job.joint) {
+      out->ay.resize(N);
+      out->aw.resize(N);
+      out->ac.resize(N);
+      Check(clEnqueueReadBuffer(queue_, b_.ay.get(), CL_TRUE, 0, fb, out->ay.data(), 0, nullptr, nullptr), "read");
+      Check(clEnqueueReadBuffer(queue_, b_.aw.get(), CL_TRUE, 0, fb, out->aw.data(), 0, nullptr, nullptr), "read");
+      Check(clEnqueueReadBuffer(queue_, b_.ac.get(), CL_TRUE, 0, cb, out->ac.data(), 0, nullptr, nullptr), "read");
+    }
+  }
+
+  // The vertical envelope of the field and the multiplier of the floor of the gate of the odd neighbours (the sequence of SolveField in sequence.cpp)
+  void BuildOddMaps(FieldBuffers& F) {
+    const int H = win_.H;
+    const int W = win_.W;
+    const size_t N = win_.N;
+    const int n = static_cast<int>(N);
+    const size_t global = ((N + kGroup - 1) / kGroup) * kGroup;
+    Run(K("k_oddmaps"), global, kGroup, {Arg(F.y), Arg(F.chi), Arg(win_.gmag), Arg(win_.lapmag), Arg(H), Arg(W)});
+    Run(K("k_smooth_rows"), global, kGroup, {Arg(win_.gmag), Arg(win_.vgrad), Arg(H), Arg(W)});
+    const size_t samples = (N + 6) / 7;
+    Run(K("k_gather7"), ((samples + kGroup - 1) / kGroup) * kGroup, kGroup, {Arg(win_.vgrad), Arg(win_.samples), Arg(n)});
+    std::vector<float> sample(samples);
+    Check(clEnqueueReadBuffer(queue_, win_.samples.get(), CL_TRUE, 0, samples * sizeof(float), sample.data(), 0, nullptr, nullptr), "read of the envelope");
+    const float med = MedianOfValues(std::move(sample));
+    const float fl2 = 2.25F * med * med;  // (1.5 * median)^2: the floor of the noise of the envelope
+    Run(K("k_floor"), global, kGroup, {Arg(win_.vgrad), Arg(fl2), Arg(n)});
+    Run(K("k_smooth_rows"), global, kGroup, {Arg(win_.lapmag), Arg(win_.traw), Arg(H), Arg(W)});
+    Run(K("k_lapsm"), global, kGroup, {Arg(win_.traw), Arg(win_.vgrad), Arg(win_.lapsm), Arg(n)});
+  }
+
+  // A box blur of radius r (the rows, then the columns) of `src` into `dst`
+  void Box(const Buffer& src, const Buffer& dst, int r) {
+    const size_t global = ((win_.N + kGroup - 1) / kGroup) * kGroup;
+    Run(K("k_box_v"), global, kGroup, {Arg(src), Arg(win_.tmp), Arg(win_.H), Arg(win_.W), Arg(r)});
+    Run(K("k_box_h"), global, kGroup, {Arg(win_.tmp), Arg(dst), Arg(win_.H), Arg(win_.W), Arg(r)});
+  }
+
+  // The vector at each pixel (vdy, vdx) from the tile grids of a neighbour
+  // (the grids are in win_.tiles, at the offsets that PackTiles made)
+  void PixelVectors(const TileOffsets& at, int th, int tw, int tile) {
+    const size_t global = ((win_.N + kGroup - 1) / kGroup) * kGroup;
+    Run(K("k_interp2"), global, kGroup, {Arg(win_.tiles), Arg(at.dy), Arg(at.dx), Arg(win_.vdy), Arg(win_.vdx), Arg(th), Arg(tw), Arg(tile), Arg(win_.H), Arg(win_.W)});
+  }
+
+  // The tile grids of the neighbours and of the anchor of a job, in one write (the small writes, one for each grid, made the host wait for the device at each of them)
+  std::vector<TileOffsets> nbrTile_, anchorTile_;
+  void PackTiles(const FieldJob& job) {
+    std::vector<float> packed;
+    auto put = [&packed](const Plane& plane) {
+      const int off = static_cast<int>(packed.size());
+      packed.insert(packed.end(), plane.data(), plane.data() + plane.size());
+      return off;
+    };
+    nbrTile_.clear();
+    anchorTile_.clear();
+    for (const NeighbourSpec& spec : job.neighbours) nbrTile_.push_back({put(spec.mdy), put(spec.mdx), put(spec.conf)});
+    for (const AnchorSpec& spec : job.anchor) anchorTile_.push_back({put(spec.mdy), put(spec.mdx), put(spec.conf)});
+    if (packed.size() > win_.N) throw GpuError("the tile grids do not fit");
+    if (!packed.empty()) Write(win_.tiles, packed.data(), packed.size() * sizeof(float));
+  }
+
+  // Neighbour number `idx` of the field: its composite, carrier and confidence, in the buffers that the solve reads
+  void BuildNeighbour(const FieldJob& job, int idx, FieldBuffers& F, bool joint) {
+    const int H = win_.H;
+    const int W = win_.W;
+    const size_t N = win_.N;
+    const int n = static_cast<int>(N);
+    const size_t global = ((N + kGroup - 1) / kGroup) * kGroup;
+    const NeighbourSpec& spec = job.neighbours[static_cast<size_t>(idx)];
+    FieldBuffers& K = *win_.field.at(static_cast<size_t>(spec.k));
+    const int base = static_cast<int>(static_cast<size_t>(idx) * N);
+    PixelVectors(nbrTile_[static_cast<size_t>(idx)], spec.mdy.height(), spec.mdy.width(), job.tile);
+    // the confidence: the squared tile grid (cleaned) at each pixel
+    Run(K_("k_interp1"), global, kGroup, {Arg(win_.tiles), Arg(nbrTile_[static_cast<size_t>(idx)].conf), Arg(b_.conf), Arg(spec.conf.height()), Arg(spec.conf.width()), Arg(job.tile), Arg(H), Arg(W), Arg(base)});
+    Run(K_("k_warp_int"), global, kGroup, {Arg(K.s), Arg(win_.vdy), Arg(win_.vdx), Arg(b_.comp), Arg(H), Arg(W), Arg(base)});
+    if (joint) {
+      Run(K_("k_warp_int_c"), global, kGroup, {Arg(K.car), Arg(win_.vdy), Arg(win_.vdx), Arg(b_.dc), Arg(H), Arg(W), Arg(base)});
+    } else {
+      Run(K_("k_warp_int_c"), global, kGroup, {Arg(K.car), Arg(win_.vdy), Arg(win_.vdx), Arg(b_.cw), Arg(H), Arg(W), Arg(0)});
+      Run(makeDc_, global, kGroup, {Arg(b_.car), Arg(b_.cw), Arg(b_.dc), Arg(n), Arg(base)});
+    }
+    if (job.gateOn) {
+      // the coherence of the chroma of the field with the chroma of the neighbour warped to it
+      Run(K_("k_warp_bil_c"), global, kGroup, {Arg(K.chi), Arg(win_.vdy), Arg(win_.vdx), Arg(win_.cwC), Arg(H), Arg(W), Arg(0.0F)});
+      Run(K_("k_coh_prep"), global, kGroup, {Arg(F.chi), Arg(win_.cwC), Arg(win_.cre), Arg(win_.cim), Arg(win_.m1), Arg(win_.m2), Arg(n)});
+      Box(win_.cre, win_.bre, 6);
+      Box(win_.cim, win_.bim, 6);
+      Box(win_.m1, win_.b1, 6);
+      Box(win_.m2, win_.b2, 6);
+      Run(K_("k_coh_fin"), global, kGroup, {Arg(win_.bre), Arg(win_.bim), Arg(win_.b1), Arg(win_.b2), Arg(win_.gamma), Arg(n)});
+      Run(K_("k_conf_gate"), global, kGroup, {Arg(b_.conf), Arg(win_.gamma), Arg(job.coherence), Arg(n), Arg(base)});
+    }
+    if (spec.odd && job.anyOdd) {
+      const float e2 = job.temporalEps * job.temporalEps;
+      Run(K_("k_conf_odd"), global, kGroup, {Arg(b_.conf), Arg(win_.vgrad), Arg(win_.lapsm), Arg(e2), Arg(job.oddFloorMax), Arg(n), Arg(base)});
+    }
+  }
+
+  // The anchor of the field (SynthReference): in the buffers of the solve
+  void BuildAnchor(const FieldJob& job, FieldBuffers& F) {
+    const int H = win_.H;
+    const int W = win_.W;
+    const size_t N = win_.N;
+    const int n = static_cast<int>(N);
+    const size_t global = ((N + kGroup - 1) / kGroup) * kGroup;
+    const float eb2 = job.nrEps * job.nrEps;
+    Run(K_("k_synth_init"), global, kGroup, {Arg(F.y), Arg(F.chi), Arg(win_.accY), Arg(win_.accC), Arg(win_.accW), Arg(n)});
+    for (size_t ai = 0; ai < job.anchor.size(); ++ai) {
+      const AnchorSpec& spec = job.anchor[ai];
+      FieldBuffers& K = *win_.field.at(static_cast<size_t>(spec.k));
+      PixelVectors(anchorTile_[ai], spec.mdy.height(), spec.mdy.width(), job.tile);
+      // the confidence: the tile grid squared at each pixel, and blurred
+      Run(K_("k_conf_nearest"), global, kGroup, {Arg(win_.tiles), Arg(anchorTile_[ai].conf), Arg(win_.confS), Arg(spec.conf.height()), Arg(spec.conf.width()), Arg(job.tile), Arg(H), Arg(W)});
+      Box(win_.confS, win_.rr, 8);
+      Run(K_("k_warp_bil"), global, kGroup, {Arg(K.y), Arg(win_.vdy), Arg(win_.vdx), Arg(win_.yw), Arg(H), Arg(W), Arg(spec.rowOffset)});
+      Run(K_("k_warp_bil_c"), global, kGroup, {Arg(K.chi), Arg(win_.vdy), Arg(win_.vdx), Arg(win_.cwS), Arg(H), Arg(W), Arg(spec.rowOffset)});
+      Run(K_("k_synth_accum"), global, kGroup, {Arg(win_.yw), Arg(win_.cwS), Arg(F.y), Arg(F.chi), Arg(win_.rr), Arg(win_.accY), Arg(win_.accC), Arg(win_.accW), Arg(eb2), Arg(n)});
+    }
+    Run(K_("k_synth_fin"), global, kGroup, {Arg(win_.accY), Arg(win_.accC), Arg(win_.accW), Arg(F.car), Arg(F.s), Arg(b_.ay), Arg(b_.ac), Arg(win_.resid), Arg(n)});
+    Box(win_.resid, win_.rr, 1);
+    Run(K_("k_synth_weight"), global, kGroup, {Arg(win_.rr), Arg(b_.aw), Arg(eb2), Arg(n)});
+  }
+
+  static float MedianOfValues(std::vector<float> v) {
+    if (v.empty()) return 0.0F;
+    const size_t k = v.size() / 2;
+    std::nth_element(v.begin(), v.begin() + static_cast<long>(k), v.end());
+    float m = v[k];
+    if (v.size() % 2 == 0) {
+      std::nth_element(v.begin(), v.begin() + static_cast<long>(k) - 1, v.begin() + static_cast<long>(k));
+      m = 0.5F * (m + v[k - 1]);
+    }
+    return m;
+  }
+
+  cl_kernel K(const char* name) { return kernels_.at(name); }
+  cl_kernel K_(const char* name) { return kernels_.at(name); }
+
+  struct WindowBuffers {
+    int H = 0, W = 0;
+    size_t N = 0;
+    std::vector<std::unique_ptr<FieldBuffers>> field;
+    Buffer vdy, vdx, tiles, tileA, tileB, tileC, gmag, lapmag, vgrad, lapsm, traw, samples, cwC, cwS, accC, cre, cim, m1, m2, bre, bim, b1, b2, tmp, gamma, yw, confS, rr,
+        accY, accW, resid;
+  };
+  WindowBuffers win_;
+  std::map<std::string, cl_kernel> kernels_;
 
  private:
   // An argument of a kernel: a value, a buffer, or a local memory
@@ -866,7 +1476,8 @@ class Device {
 
   // The buffers for planes of N pixels and nn neighbours (kept for the next solve of the same size, which is every one of a run)
   void Prepare(size_t N, size_t nn, size_t groups) {
-    if (b_ready_ && n_ == N && nn_ == nn) return;
+    if (b_ready_ && n_ == N && nn_ >= nn) return;
+    nn = std::max<size_t>(nn, 8);  // room for the neighbours of any field: the buffers are not made again from a field to the next
     const size_t f = sizeof(float);
     const size_t c = sizeof(Complex);
     b_.s.Allocate(context_, N * f);
@@ -967,7 +1578,9 @@ bool OpenDevice() {
       g_device = new Device;
       if (std::getenv("HVD_OPENCL_STATS")) std::atexit(PrintStats);
       g_free.push_back(g_device);
-      long count = 1;  // (more than one worker gave nothing on the NVIDIA driver: the solves wait on the host side; HVD_OPENCL_QUEUES tries more)
+      // A window holds a worker for as long as it lasts (a few hundred megabytes of the device: its fields and the planes of its solves): as many workers as the
+      // memory of the device allows, up to eight
+      long count = static_cast<long>(g_device->globalMemory() / (700u * 1024u * 1024u));
       if (const char* wanted = std::getenv("HVD_OPENCL_QUEUES")) count = std::strtol(wanted, nullptr, 10);
       count = std::min<long>(std::max<long>(count, 1), 16);
       for (long i = 1; i < count; ++i) {
@@ -1205,6 +1818,95 @@ bool SolveJoint(const Plane& s, const ComplexPlane& carrier, const SolveParamete
   }
 }
 
+
+// ---- Window ----------------------------------------------------------------------------------------------------------------------------------------
+
+struct Window::Impl {
+  Device* worker = nullptr;
+  std::mutex mutex;  // the threads of a window that solve fields at the same time wait for each other: the worker has one set of buffers
+};
+
+Window::Window() = default;
+
+std::unique_ptr<Window> Window::Open(int height, int width, int fields) {
+  const auto tw0 = std::chrono::steady_clock::now();
+  Device* worker = Acquire();
+  g_stats.waitNs += std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - tw0).count();
+  if (!worker) return nullptr;
+  try {
+    worker->OpenWindow(height, width, fields);
+  } catch (const std::exception&) {
+    // no room for it (or no more): the CPU decodes this window, the GPU stays on for the others
+    try {
+      worker->CloseWindow();
+    } catch (const std::exception&) {
+    }
+    Release(worker);
+    return nullptr;
+  }
+  std::unique_ptr<Window> window(new Window);
+  window->impl_ = std::make_unique<Impl>();
+  window->impl_->worker = worker;
+  return window;
+}
+
+Window::~Window() {
+  if (impl_ && impl_->worker) {
+    try {
+      impl_->worker->CloseWindow();
+    } catch (const std::exception&) {
+    }
+    Release(impl_->worker);
+  }
+}
+
+bool Window::SetField(int j, const Plane& s, const ComplexPlane& carrier, const Plane& y, const ComplexPlane& chi) {
+  std::lock_guard<std::mutex> lock(impl_->mutex);
+  try {
+    impl_->worker->SetField(j, s, carrier, y, chi);
+    return true;
+  } catch (const std::exception& e) {
+    Failed(e);
+    return false;
+  }
+}
+
+bool Window::SolveField(int j, const FieldJob& job, const SolveParameters& p) {
+  std::lock_guard<std::mutex> lock(impl_->mutex);
+  try {
+    const auto t0 = std::chrono::steady_clock::now();
+    impl_->worker->SolveField(j, job, p);
+    g_deviceNs += std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - t0).count();
+    ++g_stats.calls;
+    return true;
+  } catch (const std::exception& e) {
+    Failed(e);
+    return false;
+  }
+}
+
+bool Window::Debug(int j, const FieldJob& job, WindowDebug* out) {
+  std::lock_guard<std::mutex> lock(impl_->mutex);
+  try {
+    impl_->worker->DebugBuild(j, job, out);
+    return true;
+  } catch (const std::exception& e) {
+    Failed(e);
+    return false;
+  }
+}
+
+bool Window::GetField(int j, Plane* y, ComplexPlane* chi) {
+  std::lock_guard<std::mutex> lock(impl_->mutex);
+  try {
+    impl_->worker->GetField(j, y, chi);
+    return true;
+  } catch (const std::exception& e) {
+    Failed(e);
+    return false;
+  }
+}
+
 }  // namespace gpu
 }  // namespace hvd
 
@@ -1217,6 +1919,15 @@ bool Available() { return false; }
 std::string DeviceDescription() { return std::string(); }
 bool Solve(const Plane&, const ComplexPlane&, const SolveParameters&, const std::vector<NeighborTerm>&, ComplexPlane*) { return false; }
 bool SolveJoint(const Plane&, const ComplexPlane&, const SolveParameters&, float, const std::vector<NeighborTerm>&, const AnchorTerm*, Plane*, ComplexPlane*) { return false; }
+
+struct Window::Impl {};
+Window::Window() = default;
+std::unique_ptr<Window> Window::Open(int, int, int) { return nullptr; }
+Window::~Window() = default;
+bool Window::SetField(int, const Plane&, const ComplexPlane&, const Plane&, const ComplexPlane&) { return false; }
+bool Window::SolveField(int, const FieldJob&, const SolveParameters&) { return false; }
+bool Window::GetField(int, Plane*, ComplexPlane*) { return false; }
+bool Window::Debug(int, const FieldJob&, WindowDebug*) { return false; }
 
 }  // namespace gpu
 }  // namespace hvd

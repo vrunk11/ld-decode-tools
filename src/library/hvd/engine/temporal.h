@@ -36,6 +36,10 @@ struct PerPixelMotion {
   Plane dy;  // h x w
   Plane dx;  // h x w
 };
+// The first step of VectorsPerPixel: the tile vectors with their isolated outliers replaced by their 3x3 median
+// (the GPU takes the tile grids from here, and makes the vector of each pixel itself)
+void SnapTileVectors(const Plane& mdy, const Plane& mdx, Plane* mdy_out, Plane* mdx_out);
+
 PerPixelMotion VectorsPerPixel(const Plane& mdy, const Plane& mdx, int tile,
                                int out_h, int out_w);
 
