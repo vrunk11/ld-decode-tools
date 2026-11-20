@@ -1022,54 +1022,62 @@ struct Staged {
   }
 };
 
+// The GPUs that OpenCL offers and that can run the kernels, in the order of the platforms (the numbers of HVD_OPENCL_DEVICE and of SelectDevice)
+struct Candidate {
+  cl_device_id id;
+  std::string name;
+  std::string version;
+  double score;
+};
+
+int g_preferred = -1;  // the device that the person chose (g_mutex held to change it); -1 is the strongest
+
+std::vector<Candidate> EnumerateDevices() {
+  std::vector<Candidate> candidates;
+  cl_uint platformCount = 0;
+  if (clGetPlatformIDs(0, nullptr, &platformCount) != CL_SUCCESS || platformCount == 0) return candidates;
+  std::vector<cl_platform_id> platforms(platformCount);
+  if (clGetPlatformIDs(platformCount, platforms.data(), nullptr) != CL_SUCCESS) return candidates;
+  for (cl_platform_id platform : platforms) {
+    cl_uint count = 0;
+    if (clGetDeviceIDs(platform, CL_DEVICE_TYPE_GPU, 0, nullptr, &count) != CL_SUCCESS || count == 0) continue;
+    std::vector<cl_device_id> ids(count);
+    if (clGetDeviceIDs(platform, CL_DEVICE_TYPE_GPU, count, ids.data(), nullptr) != CL_SUCCESS) continue;
+    for (cl_device_id id : ids) {
+      cl_bool available = CL_FALSE;
+      size_t group = 0;
+      cl_ulong local = 0;
+      cl_uint units = 0;
+      cl_uint clock = 0;
+      clGetDeviceInfo(id, CL_DEVICE_AVAILABLE, sizeof available, &available, nullptr);
+      clGetDeviceInfo(id, CL_DEVICE_MAX_WORK_GROUP_SIZE, sizeof group, &group, nullptr);
+      clGetDeviceInfo(id, CL_DEVICE_LOCAL_MEM_SIZE, sizeof local, &local, nullptr);
+      clGetDeviceInfo(id, CL_DEVICE_MAX_COMPUTE_UNITS, sizeof units, &units, nullptr);
+      clGetDeviceInfo(id, CL_DEVICE_MAX_CLOCK_FREQUENCY, sizeof clock, &clock, nullptr);
+      if (!available || group < kGroup || local < kGroup * sizeof(float)) continue;
+      char name[256] = {0};
+      char version[128] = {0};
+      clGetDeviceInfo(id, CL_DEVICE_NAME, sizeof name - 1, name, nullptr);
+      clGetDeviceInfo(id, CL_DEVICE_VERSION, sizeof version - 1, version, nullptr);
+      candidates.push_back({id, name, version, static_cast<double>(units) * std::max<cl_uint>(clock, 1)});
+    }
+  }
+  return candidates;
+}
+
 class Device {
  public:
   // Looks for a GPU, makes the context and the queue, builds the kernels. Throws GpuError when it cannot.
   Device() {
-    cl_uint platformCount = 0;
-    Check(clGetPlatformIDs(0, nullptr, &platformCount), "clGetPlatformIDs");
-    if (platformCount == 0) throw GpuError("no OpenCL platform");
-    std::vector<cl_platform_id> platforms(platformCount);
-    Check(clGetPlatformIDs(platformCount, platforms.data(), nullptr), "clGetPlatformIDs");
-
-    struct Candidate {
-      cl_device_id id;
-      std::string name;
-      std::string version;
-      double score;
-    };
-    std::vector<Candidate> candidates;
-    for (cl_platform_id platform : platforms) {
-      cl_uint count = 0;
-      if (clGetDeviceIDs(platform, CL_DEVICE_TYPE_GPU, 0, nullptr, &count) != CL_SUCCESS || count == 0) continue;
-      std::vector<cl_device_id> ids(count);
-      if (clGetDeviceIDs(platform, CL_DEVICE_TYPE_GPU, count, ids.data(), nullptr) != CL_SUCCESS) continue;
-      for (cl_device_id id : ids) {
-        cl_bool available = CL_FALSE;
-        size_t group = 0;
-        cl_ulong local = 0;
-        cl_uint units = 0;
-        cl_uint clock = 0;
-        clGetDeviceInfo(id, CL_DEVICE_AVAILABLE, sizeof available, &available, nullptr);
-        clGetDeviceInfo(id, CL_DEVICE_MAX_WORK_GROUP_SIZE, sizeof group, &group, nullptr);
-        clGetDeviceInfo(id, CL_DEVICE_LOCAL_MEM_SIZE, sizeof local, &local, nullptr);
-        clGetDeviceInfo(id, CL_DEVICE_MAX_COMPUTE_UNITS, sizeof units, &units, nullptr);
-        clGetDeviceInfo(id, CL_DEVICE_MAX_CLOCK_FREQUENCY, sizeof clock, &clock, nullptr);
-        if (!available || group < kGroup || local < kGroup * sizeof(float)) continue;
-        char name[256] = {0};
-        char version[128] = {0};
-        clGetDeviceInfo(id, CL_DEVICE_NAME, sizeof name - 1, name, nullptr);
-        clGetDeviceInfo(id, CL_DEVICE_VERSION, sizeof version - 1, version, nullptr);
-        candidates.push_back({id, name, version, static_cast<double>(units) * std::max<cl_uint>(clock, 1)});
-      }
-    }
+    const std::vector<Candidate> candidates = EnumerateDevices();
     if (candidates.empty()) throw GpuError("no GPU found by OpenCL");
 
-    // the strongest, unless HVD_OPENCL_DEVICE says which (the order of HVD_OPENCL_VERBOSE)
+    // the strongest, unless the person chose one (SelectDevice), or HVD_OPENCL_DEVICE says which (the order of HVD_OPENCL_VERBOSE)
     size_t chosen = 0;
     for (size_t i = 1; i < candidates.size(); ++i) {
       if (candidates[i].score > candidates[chosen].score) chosen = i;
     }
+    if (g_preferred >= 0 && static_cast<size_t>(g_preferred) < candidates.size()) chosen = static_cast<size_t>(g_preferred);
     if (const char* wanted = std::getenv("HVD_OPENCL_DEVICE")) {
       const long index = std::strtol(wanted, nullptr, 10);
       if (index >= 0 && static_cast<size_t>(index) < candidates.size()) chosen = static_cast<size_t>(index);
@@ -2187,6 +2195,7 @@ std::mutex g_mutex;
 std::condition_variable g_free_changed;
 Device* g_device = nullptr;  // the first worker; made once and never destroyed: the objects of the driver are not to be released from a static destructor
 std::vector<Device*> g_free;  // the workers that nobody is using
+size_t g_worker_count = 0;  // the workers that were made
 bool g_tried = false;
 bool g_failed = false;
 
@@ -2265,6 +2274,7 @@ bool OpenDevice() {
           break;  // the ones that were made are enough
         }
       }
+      g_worker_count = g_free.size();
     } catch (const std::exception& e) {
       g_failed = true;
       if (std::getenv("HVD_OPENCL_VERBOSE")) std::fprintf(stderr, "HVD OpenCL: %s\n", e.what());
@@ -2426,6 +2436,32 @@ bool Available() {
 std::string DeviceDescription() {
   std::lock_guard<std::mutex> lock(g_mutex);
   return OpenDevice() ? g_device->description() : std::string();
+}
+
+std::vector<std::string> Devices() {
+  std::lock_guard<std::mutex> lock(g_mutex);
+  std::vector<std::string> names;
+  for (const Candidate& c : EnumerateDevices()) names.push_back(c.name + " (" + c.version + ")");
+  return names;
+}
+
+bool SelectDevice(int index) {
+  std::unique_lock<std::mutex> lock(g_mutex);
+  index = std::max(index, -1);
+  if (index == g_preferred) return true;
+  g_preferred = index;
+  if (!g_tried) return true;
+  // The device is open: when nobody is using it any more it is let go (its objects are not released, as at the exit) and the next use opens the one chosen
+  g_free_changed.wait(lock, [] { return g_failed || (g_free.size() == g_worker_count && (!g_stage_queue || g_stage_free.size() == 3)); });
+  g_device = nullptr;
+  g_free.clear();
+  g_worker_count = 0;
+  g_stage_queue = nullptr;
+  g_stage_context = nullptr;
+  g_stage_free.clear();
+  g_tried = false;
+  g_failed = false;
+  return true;
 }
 
 bool Solve(const Plane& s, const ComplexPlane& carrier, const SolveParameters& p, const std::vector<NeighborTerm>& neighbors, ComplexPlane* chi) {
@@ -2636,6 +2672,8 @@ namespace gpu {
 
 bool Available() { return false; }
 std::string DeviceDescription() { return std::string(); }
+std::vector<std::string> Devices() { return {}; }
+bool SelectDevice(int) { return false; }
 bool Solve(const Plane&, const ComplexPlane&, const SolveParameters&, const std::vector<NeighborTerm>&, ComplexPlane*) { return false; }
 bool SolveJoint(const Plane&, const ComplexPlane&, const SolveParameters&, float, const std::vector<NeighborTerm>&, const AnchorTerm*, Plane*, ComplexPlane*) { return false; }
 

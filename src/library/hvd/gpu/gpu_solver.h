@@ -45,6 +45,13 @@ SolveParameters ResolveSolveParameters(const ComplexPlane& chi0, const HvdConfig
 // Whether the build has OpenCL and a device was found (the first call looks; it can take a moment)
 bool Available();
 
+// The GPUs that OpenCL offers, by name ("NVIDIA GeForce RTX 5080 Laptop GPU (OpenCL 3.0 CUDA)"), in the order of the numbers that SelectDevice takes; empty if none
+std::vector<std::string> Devices();
+
+// The GPU to use: the number in Devices(), or -1 for the strongest (the default; HVD_OPENCL_DEVICE overrides it). A device that is open is changed for the new one
+// when the windows that hold it are done. Returns false if the build has no OpenCL.
+bool SelectDevice(int index);
+
 // A line about the device that is used ("NVIDIA GeForce RTX 5080 Laptop GPU (OpenCL 3.0)"), empty if none
 std::string DeviceDescription();
 

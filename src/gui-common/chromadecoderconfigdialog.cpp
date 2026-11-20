@@ -56,8 +56,17 @@ ChromaDecoderConfigDialog::ChromaDecoderConfigDialog(QWidget *parent) :
     // The GPU option: only when this build and this machine have an OpenCL GPU. It is a choice of the machine, not of the capture: it is kept in the
     // settings of the program, and not with the decoding parameters of a capture.
     {
+        HvdSettings::applyGpuDevice();
         const bool gpuAvailable = hvd::gpu::Available();
         ui->hvdGpuCheckBox->setEnabled(gpuAvailable);
+        // The GPUs of the machine to choose from (the strongest unless told); the choice is kept with the one of using it
+        ui->hvdGpuDeviceComboBox->addItem(tr("Automatic (the strongest)"), -1);
+        const std::vector<std::string> devices = hvd::gpu::Devices();
+        for (size_t i = 0; i < devices.size(); ++i) ui->hvdGpuDeviceComboBox->addItem(QString::fromStdString(devices[i]), static_cast<int>(i));
+        const int stored = QSettings().value("hvdGpuDevice", -1).toInt();
+        const int at = ui->hvdGpuDeviceComboBox->findData(stored);
+        ui->hvdGpuDeviceComboBox->setCurrentIndex(at >= 0 ? at : 0);
+        ui->hvdGpuDeviceComboBox->setEnabled(gpuAvailable && devices.size() > 1);
         ui->hvdGpuCheckBox->setToolTip(gpuAvailable
             ? tr("Run the solver of the HVD decoder on %1. The picture is the same, and it is faster, 3D most of all.").arg(QString::fromStdString(hvd::gpu::DeviceDescription()))
             : tr("No OpenCL GPU was found (or this build has no OpenCL): the HVD decoder runs on the processor."));
@@ -716,6 +725,14 @@ void ChromaDecoderConfigDialog::on_hvdGpuCheckBox_clicked()
 {
     hvdSettings.gpu = ui->hvdGpuCheckBox->isChecked();
     QSettings().setValue("hvdGpu", hvdSettings.gpu);
+    emit chromaDecoderConfigChanged();
+}
+
+void ChromaDecoderConfigDialog::on_hvdGpuDeviceComboBox_activated(int index)
+{
+    QSettings().setValue("hvdGpuDevice", ui->hvdGpuDeviceComboBox->itemData(index).toInt());
+    HvdSettings::applyGpuDevice();
+    ui->hvdGpuCheckBox->setToolTip(tr("Run the solver of the HVD decoder on %1. The picture is the same, and it is faster, 3D most of all.").arg(QString::fromStdString(hvd::gpu::DeviceDescription())));
     emit chromaDecoderConfigChanged();
 }
 

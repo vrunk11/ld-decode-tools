@@ -39,6 +39,8 @@ struct HvdSettings {
 
     // The choice of this machine: an OpenCL GPU is there, and "hvdGpu" is on in the settings of the program (the windows keep it when it is changed)
     static bool machineGpu();
+    // The GPU that the person chose among the ones of the machine ("hvdGpuDevice" in the settings of the program: the number in hvd::gpu::Devices(), -1 the strongest)
+    static void applyGpuDevice();
     qint32 fieldOrder = 0;      // 0 = from the metadata, 1 = the first field of a frame is the top one, 2 = the bottom one
     bool bidirectional = true;  // 3D: the fields after a field are used as well as the ones before
     bool selective = false;     // 3D only on the tiles of the picture where luma and chroma are ambiguous
