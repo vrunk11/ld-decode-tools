@@ -408,13 +408,6 @@
         </widget>
        </item>
        <item>
-        <widget class="QComboBox" name="hvdGpuDeviceComboBox">
-         <property name="toolTip">
-          <string>The GPU that runs the solver. An integrated GPU (it shares the memory of the processor) is usually slower than the processor, and it can slow the screen down.</string>
-         </property>
-        </widget>
-       </item>
-       <item>
         <widget class="QCheckBox" name="hvdBidirectionalCheckBox">
          <property name="text">
           <string>Bidirectional 3D (the fields after as well as before)</string>

@@ -31,14 +31,9 @@ bool HvdSettings::machineGpu()
 {
     // (the choice is read each time, a window can change it; the device is looked for only when it is on)
     if (!QSettings().value("hvdGpu", false).toBool()) return false;
-    applyGpuDevice();
     return hvd::gpu::Available();
 }
 
-void HvdSettings::applyGpuDevice()
-{
-    hvd::gpu::SelectDevice(QSettings().value("hvdGpuDevice", -1).toInt());
-}
 
 hvd::HvdConfig HvdSettings::makeConfig(double chromaGain, double chromaPhase) const
 {

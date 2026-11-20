@@ -324,6 +324,11 @@ int main(int argc, char *argv[])
                                     QCoreApplication::translate("main", "HVD: Run the solver on a GPU (OpenCL); the CPU does it when there is none (HVD_OPENCL_VERBOSE=1 lists the devices, HVD_OPENCL_DEVICE=n chooses one)"));
     parser.addOption(hvdGpuOption);
 
+    QCommandLineOption hvdGpuDeviceOption(QStringList() << "hvd-gpu-device",
+                                          QCoreApplication::translate("main", "HVD: The GPU to run the solver on, by its number in the list of HVD_OPENCL_VERBOSE=1 (the strongest by default); it turns --hvd-gpu on"),
+                                          QCoreApplication::translate("main", "number"));
+    parser.addOption(hvdGpuDeviceOption);
+
     QCommandLineOption hvdNoBidirectionalOption(QStringList() << "hvd-no-bidirectional",
                                                 QCoreApplication::translate("main", "hvd3d: Use only the fields before a field, not the ones after (faster, a little worse)"));
     parser.addOption(hvdNoBidirectionalOption);
@@ -512,7 +517,16 @@ int main(int argc, char *argv[])
     }
 
     if (parser.isSet(hvdNoFastOption)) hvdConfig.fast = false;
-    if (parser.isSet(hvdGpuOption)) {
+    if (parser.isSet(hvdGpuDeviceOption)) {
+        bool ok = false;
+        const int device = parser.value(hvdGpuDeviceOption).toInt(&ok);
+        if (!ok || device < 0) {
+            qCritical() << "--hvd-gpu-device: the number of a GPU is wanted (HVD_OPENCL_VERBOSE=1 lists them)";
+            return 2;
+        }
+        hvd::gpu::SelectDevice(device);
+    }
+    if (parser.isSet(hvdGpuOption) || parser.isSet(hvdGpuDeviceOption)) {
         if (hvd::gpu::Available()) {
             hvdConfig.use_gpu = true;
             qInfo().noquote() << "HVD solver on the GPU:" << QString::fromStdString(hvd::gpu::DeviceDescription());
