@@ -150,6 +150,12 @@ bool StreamReader::hasField(qint32 index)
     return waitFor(index / fieldsPerUnit);
 }
 
+bool StreamReader::hasFieldArrived(qint32 index)
+{
+    QMutexLocker locker(&mutex);
+    return index / fieldsPerUnit < unitsRead;
+}
+
 bool StreamReader::getField(qint32 index, Data &data)
 {
     const qint32 unitIndex = index / fieldsPerUnit;

@@ -363,6 +363,15 @@ void WaveformPanel::setDensity(Density density)
     updateGeometry();
 }
 
+QWidget *WaveformPanel::detachControls()
+{
+    setDensity(Density::Ultra);          // (the controls in one row, as wide as they need)
+    layout()->removeWidget(controls);
+    controls->setParent(nullptr);
+    controls->setMaximumHeight(QWIDGETSIZE_MAX);
+    return controls;
+}
+
 // The box round the waveform: sunken, on the colour of the fields (the depth of a well), or no box and the background of the panel
 void WaveformPanel::setWell(bool on)
 {

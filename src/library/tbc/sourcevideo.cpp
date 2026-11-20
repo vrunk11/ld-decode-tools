@@ -122,7 +122,7 @@ bool SourceVideo::streamLooksWiderThan10Bit()
 
 bool SourceVideo::hasField(qint32 fieldNumber)
 {
-    if (stream) return stream->hasField(fieldNumber - 1);
+    if (stream) return monitorStream ? stream->hasFieldArrived(fieldNumber - 1) : stream->hasField(fieldNumber - 1);
     return availableFields == -1 || (fieldNumber >= 1 && fieldNumber <= availableFields);
 }
 

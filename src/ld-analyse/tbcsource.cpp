@@ -1020,6 +1020,7 @@ void TbcSource::resetState()
     liveProtected = false;
     liveAnalyse = false;
     isLive = false;
+    isMonitor = false;
     liveFrames = 0;
     liveFirstFrame = 1;
     liveEnded = false;
@@ -1696,6 +1697,7 @@ void TbcSource::loadStream(const StreamInput &input)
     resetState();
     streamInput = input;
     isLive = true;
+    isMonitor = input.monitor;
 
     disconnect(&watcher, &QFutureWatcher<bool>::finished, nullptr, nullptr);
     connect(&watcher, &QFutureWatcher<bool>::finished, this, &TbcSource::finishBackgroundLoad);
@@ -1751,11 +1753,15 @@ bool TbcSource::startBackgroundStream()
 
     // Wait for the first frame, and what the decoder looks ahead to
     emit busy("Waiting for video...");
-    if (!sourceVideo.hasField(2 * (1 + getLookAheadFrames())) && sourceVideo.getFieldsReadSoFar() < 2) {
+    // (a monitor shows the first frame as it comes, and does not wait for what would be looked ahead to: it may not come for a long while)
+    if (!sourceVideo.hasField(streamInput.monitor ? 2 : 2 * (1 + getLookAheadFrames())) && sourceVideo.getFieldsReadSoFar() < 2) {
         sourceVideo.close();
         lastIOError = "The input ended before it held a frame of video";
         return false;
     }
+
+    // From here the input is not waited for: a field that has not come is blank to the decoders
+    if (streamInput.monitor) sourceVideo.setMonitor(true);
 
     // A CVBS stream with more than 10 bits to a sample, read as if it had 10: the picture would be
     // washed out, and a pipe has no metadata to say so
@@ -1819,7 +1825,8 @@ void TbcSource::updateLive()
 
     const qint32 frames = sourceVideo.getFieldsReadSoFar() / 2;
     liveEnded = sourceVideo.getNumberOfAvailableFields() >= 0;
-    liveFrames = liveEnded ? frames : qMax(0, frames - getLookAheadFrames());
+    // (a monitor shows the newest frame whatever the decoder looks ahead to, the frames that have not come being blank)
+    liveFrames = (liveEnded || isMonitor) ? frames : qMax(0, frames - getLookAheadFrames());
     // Reversed, a frame is made of a field and the one after the one it would have started with: the
     // last frame needs a field more than it did
     if (reverseFoOn) liveFrames = qMax(0, liveFrames - 1);

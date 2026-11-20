@@ -79,11 +79,15 @@ public:
         // Hold the producer back to the pace of the viewer instead of overwriting old video: for
         // video that comes faster than it plays (a file), not for a live input
         bool throttle = false;
+        // A monitor: the video comes a frame now and then (a frame asked for, then nothing for a while), and is not played. The newest frame is shown at once, whatever
+        // the decoder would look ahead to (what has not come is taken as blank), and the input is never waited for
+        bool monitor = false;
     };
 
     void loadSource(QString inputFileName);
     void loadStream(const StreamInput &input);
     bool getIsLive();
+    bool getIsMonitor() const { return isMonitor; }
     // The audio samples before each field (one more entry than there are fields), from the metadata; empty if it does not say
     QVector<qint64> getAudioSamplesBeforeFields();
     // The frames of the metadata that the video holds whole (a file cut short has fewer)
@@ -336,6 +340,7 @@ private:
     QString currentChromaFilename;
     // A stream: what has arrived
     bool isLive = false;
+    bool isMonitor = false;   // a live input that shows the frames as they come, a frame now and then (StreamInput::monitor)
     StreamInput streamInput;
     // The levels the SNR is measured against: those of the capture when it was opened (its metadata, or
     // the standard ones and --black-level and --white-level for a live input). Adjusting the levels in the

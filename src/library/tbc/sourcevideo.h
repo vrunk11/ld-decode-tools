@@ -105,6 +105,9 @@ public:
     // True if the field (numbered from 1) exists. Waits for it, if it is not yet read
     // from a stream that is still going; a false means the stream ended before it.
     bool hasField(qint32 fieldNumber);
+    // A viewer that shows what arrives, a frame now and then (the monitor of ld-analyse): a field of a stream that has not come is not waited for, whatever the
+    // stream, and is said to be missing, so that the decoders take it as blank at the end of the video
+    void setMonitor(bool monitor) { monitorStream = monitor; }
 
     // A program that shows video (ld-analyse) does not stop on a capture that is cut short, or whose metadata describe more video than
     // it holds: a field that is not there is given blank (and a warning said), instead of the fatal error the tools that process it give
@@ -136,6 +139,7 @@ private:
     // Stream input (standard input or a named pipe)
     StreamReader::Options streamOptions;
     std::shared_ptr<StreamReader> stream;
+    bool monitorStream = false;
 
     // A stacking session (.stack)
     std::unique_ptr<StackedVideo> stacked;

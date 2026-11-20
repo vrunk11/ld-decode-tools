@@ -13,6 +13,8 @@
 #include "mainwindow.h"
 #include <QInputDialog>
 #include "vlcsupport.h"
+#include <cstdio>
+#include <cstdlib>
 #include "aspectratio.h"
 #include "discnumbering.h"
 #include <QJsonObject>
@@ -494,7 +496,7 @@ void MainWindow::saveVideoFilterConfig()
 void MainWindow::updateFiltersButton()
 {
     if (!filtersPushButton) return;
-    const bool wide = this->width() >= 930;
+    const bool wide = layoutWidth() >= 930;
     filtersPushButton->setText(filtersEnabled ? (wide ? tr("Filters On") : tr("Filt Y"))
                                               : (wide ? tr("Filters Off") : tr("Filt N")));
 }
@@ -748,6 +750,12 @@ void MainWindow::updateLive()
     // The SNR graphs, if they are open, grow with the video (about twice a second)
     if (++liveGraphTick % 15 == 0) updateLiveGraphs();
 
+    if (tbcSource.getIsMonitor()) {
+        updateMonitor(ended);
+        if (ended) liveTimer->stop();
+        return;
+    }
+
     if (playback->isPlaying()) {
         // Playing on from a frozen buffer: once past it, it is part of the ring again
         tbcSource.releaseLiveProtection(currentFrameNumber);
@@ -790,6 +798,98 @@ void MainWindow::updateLive()
     }
     sourceVideoStatus.setText(status);
     if (ended) liveTimer->stop();
+}
+
+// A monitor: the video is not played, a frame comes when the program that drives it has one, and it is shown as soon as it has come. The program decides what is
+// looked at: there is nothing to seek in ld-analyse, so the controls of the playback and of the buffer are not there (see applyMonitorLayout).
+void MainWindow::updateMonitor(bool ended)
+{
+    const qint32 received = tbcSource.getFramesReceived();
+    if (received < 1) return;
+
+    const bool frameCame = received > monitorNewest;
+    if (received > currentFrameNumber || monitorNewest == 0) {
+        setCurrentFrame(received);
+        monitorNewest = currentFrameNumber;
+    }
+#ifdef LDDECODE_HAVE_AUDIO
+    updateMonitorSound(received, frameCame);
+#endif
+
+    sourceVideoStatus.setText(ended ? tr("Monitor - the input is closed, %1 frames were received").arg(received)
+                                    : tr("Monitor - %1 frames received").arg(received));
+}
+
+qint32 MainWindow::layoutWidth() const
+{
+    // (the controls of the sound of a monitor are in the bar: the buttons of the right have that much less, and take the short labels sooner)
+    const qint32 taken = monitorAudioControls && monitorAudioControls->isVisibleTo(this) ? monitorAudioControls->sizeHint().width() : 0;
+    return width() - taken;
+}
+
+// A button is never narrower than 75 pixels by the style, whatever its label: the buttons of the right of the bar share its room out between them, and the controls of
+// the sound had little. In a monitor they are as wide as their labels (the width is set again when the labels change, see resizeEvent)
+void MainWindow::fitMonitorButtons()
+{
+    for (QPushButton *button: {ui->videoPushButton, ui->aspectPushButton, ui->dropoutsPushButton, ui->sourcesPushButton, ui->viewPushButton, filtersPushButton}) {
+        if (!button) continue;
+        button->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
+        button->setMinimumWidth(button->fontMetrics().horizontalAdvance(button->text()) + 24);
+        button->setMaximumWidth(button->minimumWidth() + 24);
+    }
+}
+
+// The labels of the buttons are chosen by the width that the bar has (see resizeEvent)
+void MainWindow::refreshButtonLabels()
+{
+    QResizeEvent event(size(), size());
+    resizeEvent(&event);
+}
+
+// The Dropouts button is lit when the dropouts are shown (On)
+void MainWindow::applyDropoutHighlight(bool lit)
+{
+    dropoutLit = lit;
+    if (lit) {
+        // Light grey on a light theme (as before themes existed); on a dark
+        // one a lighter shade of the button, so it stands out without
+        // becoming a light patch with unreadable light text
+        QPalette tempPalette = buttonPalette;
+        const QColor highlightColour = appearance->isDark() ? buttonPalette.color(QPalette::Button).lighter(170)
+                                                   : QColor(Qt::lightGray);
+        tempPalette.setColor(QPalette::Button, highlightColour);
+        ui->dropoutsPushButton->setAutoFillBackground(true);
+        ui->dropoutsPushButton->setPalette(tempPalette);
+    } else {
+        ui->dropoutsPushButton->setAutoFillBackground(true);
+        ui->dropoutsPushButton->setPalette(buttonPalette);
+    }
+    ui->dropoutsPushButton->update();
+}
+
+// What a monitor has no use for is taken off the window: the play button, the slider and the frame number, the buttons that go from frame to frame, the
+// Playback menu and its keys, and the waveform of the sound (there is nothing to play)
+void MainWindow::applyMonitorLayout()
+{
+    for (QWidget *widget: {static_cast<QWidget *>(ui->posHorizontalSlider), static_cast<QWidget *>(ui->posNumberSpinBoxLabel),
+                           static_cast<QWidget *>(ui->posNumberSpinBox), static_cast<QWidget *>(ui->startPushButton),
+                           static_cast<QWidget *>(ui->previousPushButton), static_cast<QWidget *>(ui->nextPushButton),
+                           static_cast<QWidget *>(ui->endPushButton), static_cast<QWidget *>(playPushButton)}) {
+        widget->hide();
+    }
+    playbackMenu->menuAction()->setVisible(false);
+    actionPlayPause->setEnabled(false);
+    for (QAction *action: remoteActions) action->setEnabled(false);
+#ifdef LDDECODE_HAVE_AUDIO
+    // The sound is for the program that drives the monitor to play: the waveform of it is not drawn, but its controls (the source and the track, the
+    // channels, the mute and the volume) are in the bar, beside the zoom buttons, once there is sound
+    const bool hasSound = waveform->isVisibleTo(this);      // (the sound of the stream may have been loaded already)
+    waveform->hide();
+    monitorAudioControls = waveform->detachControls();
+    ui->horizontalLayout_3->insertWidget(ui->horizontalLayout_3->indexOf(ui->zoomInPushButton), monitorAudioControls);
+    monitorAudioControls->setVisible(hasSound);
+    refreshButtonLabels();
+#endif
 }
 
 // Loop and the speeds mean nothing for a live input, which plays as it arrives: hide them (and
@@ -899,6 +999,11 @@ void MainWindow::updateLiveControls()
     ui->previousPushButton->setEnabled(navigable);
     ui->nextPushButton->setEnabled(navigable);
     ui->startPushButton->setEnabled(navigable);
+    // A monitor is not played: the video is what the program that drives it sends
+    if (tbcSource.getIsMonitor()) {
+        playPushButton->setEnabled(false);
+        actionPlayPause->setEnabled(false);
+    }
     // (the end button goes back to the live edge, which is what is wanted when behind)
     ui->endPushButton->setEnabled(true);
 }
@@ -1315,7 +1420,7 @@ void MainWindow::resetGui()
 
     ui->posNumberSpinBox->setValue(1);
     ui->posHorizontalSlider->setValue(1);
-   (this->width() >= 930) ? ui->dropoutsPushButton->setText(tr("Dropouts Off")) : ui->dropoutsPushButton->setText(tr("Drop N"));
+   (layoutWidth() >= 930) ? ui->dropoutsPushButton->setText(tr("Dropouts Off")) : ui->dropoutsPushButton->setText(tr("Drop N"));
 
     setViewValues();
 
@@ -1332,9 +1437,9 @@ void MainWindow::resetGui()
     displayAspectRatio = true;
     updateAspectPushButton();
     updateSourcesPushButton();
-    if (this->width() > 1000)
+    if (layoutWidth() > 1000)
 		ui->fieldOrderPushButton->setText(tr("Normal Field-order"));
-	else if (this->width() >= 930)
+	else if (layoutWidth() >= 930)
 		ui->fieldOrderPushButton->setText(tr("Normal order"));
 	else
 		ui->fieldOrderPushButton->setText(tr("Normal"));
@@ -1408,7 +1513,7 @@ void MainWindow::updateGuiLoaded(bool newSource)
     statusText += tbcSource.getIsStack() ? tr(" stack (%1) loaded with ").arg(tbcSource.getStackDescription()) : tr(" source loaded with ");
 
     if (tbcSource.getIsLive()) {
-        statusText = tr("Live input (%1)").arg(tbcSource.getSystemDescription());
+        statusText = tbcSource.getIsMonitor() ? tr("Monitor (%1)").arg(tbcSource.getSystemDescription()) : tr("Live input (%1)").arg(tbcSource.getSystemDescription());
     } else if (tbcSource.getFieldViewEnabled()) {
         statusText += QString::number(tbcSource.getNumberOfFields());
         statusText += tr(" fields available");
@@ -1495,13 +1600,13 @@ void MainWindow::updateGuiUnloaded()
 
     // Set option button states
     ui->videoPushButton->setText(tr("Source"));
-    (this->width() >= 930) ? ui->dropoutsPushButton->setText(tr("Dropouts Off")) : ui->dropoutsPushButton->setText(tr("Drop N"));
+    (layoutWidth() >= 930) ? ui->dropoutsPushButton->setText(tr("Dropouts Off")) : ui->dropoutsPushButton->setText(tr("Drop N"));
     displayAspectRatio = false;
     updateAspectPushButton();
     updateSourcesPushButton();
-    if (this->width() > 1000)
+    if (layoutWidth() > 1000)
 		ui->fieldOrderPushButton->setText(tr("Normal Field-order"));
-	else if (this->width() >= 930)
+	else if (layoutWidth() >= 930)
 		ui->fieldOrderPushButton->setText(tr("Normal order"));
 	else
 		ui->fieldOrderPushButton->setText(tr("Normal"));
@@ -1525,7 +1630,7 @@ void MainWindow::updateAspectPushButton()
     if (!displayAspectRatio) {
         ui->aspectPushButton->setText(tr("SAR 1:1"));
     } else if (tbcSource.getIsWidescreen()) {
-        (this->width() >= 1020) ? ui->aspectPushButton->setText(tr("DAR 16:9")) : ui->aspectPushButton->setText(tr("16:9"));
+        (layoutWidth() >= 1020) ? ui->aspectPushButton->setText(tr("DAR 16:9")) : ui->aspectPushButton->setText(tr("16:9"));
     } else {
         ui->aspectPushButton->setText(tr("DAR 4:3"));
     }
@@ -1534,7 +1639,7 @@ void MainWindow::updateAspectPushButton()
 // Update the source selection button
 void MainWindow::updateSourcesPushButton()
 {
-	if (this->width() >= 930)
+	if (layoutWidth() >= 930)
 	{
 		switch (tbcSource.getSourceMode()) {
 		case TbcSource::ONE_SOURCE:
@@ -1623,22 +1728,7 @@ void MainWindow::showImage()
 
     // The Dropouts button is lit when the dropouts are shown (On), as a button that is on; not when the frame has some (it looked on while it was off, and blinked
     // as the frames went by)
-    if (tbcSource.getHighlightDropouts()) {
-        // Light grey on a light theme (as before themes existed); on a dark
-        // one a lighter shade of the button, so it stands out without
-        // becoming a light patch with unreadable light text
-        QPalette tempPalette = buttonPalette;
-        const QColor highlightColour = appearance->isDark() ? buttonPalette.color(QPalette::Button).lighter(170)
-                                                   : QColor(Qt::lightGray);
-        tempPalette.setColor(QPalette::Button, highlightColour);
-        ui->dropoutsPushButton->setAutoFillBackground(true);
-        ui->dropoutsPushButton->setPalette(tempPalette);
-        ui->dropoutsPushButton->update();
-    } else {
-        ui->dropoutsPushButton->setAutoFillBackground(true);
-        ui->dropoutsPushButton->setPalette(buttonPalette);
-        ui->dropoutsPushButton->update();
-    }
+    applyDropoutHighlight(tbcSource.getHighlightDropouts());
 
     // Update the VBI dialogue
     if (vbiDialog->isVisible()) {
@@ -1874,7 +1964,7 @@ void MainWindow::setViewValues()
     qint32 currentNumber, maximum;
     QString buttonLabel, spinLabel;
 
-	if (this->width() >= 930)
+	if (layoutWidth() >= 930)
 	{
 		if (tbcSource.getFieldViewEnabled()) {
 			currentNumber = currentFieldNumber;
@@ -2348,6 +2438,12 @@ void MainWindow::on_endPushButton_clicked()
         tbcSource.unfreezeLive();
         updateLive();
     }
+    // (the end of a monitor is its newest frame, which it follows again from there)
+    if (tbcSource.getIsMonitor()) {
+        monitorNewest = 0;
+        updateMonitor(tbcSource.getIsLiveEnded());
+        return;
+    }
     setCurrentFrame(tbcSource.startOfNextChapter(currentFrameNumber));
     if (tbcSource.getIsLive()) QTimer::singleShot(0, this, [this]() { togglePlayback(); });
     auto uiNumber = currentFrameNumber;
@@ -2648,7 +2744,7 @@ void MainWindow::exitChromaSeekMode(QPushButton* button)
 // Show/hide dropouts button clicked
 void MainWindow::on_dropoutsPushButton_clicked()
 {
-	int width = this->width();
+	int width = layoutWidth();
 
     if (tbcSource.getHighlightDropouts()) {
         tbcSource.setHighlightDropouts(false);
@@ -2765,7 +2861,7 @@ void MainWindow::on_fieldOrderPushButton_clicked()
     const qint32 frameBefore = currentFrameNumber;
     pausePlayback();
 
-	int width = this->width();
+	int width = layoutWidth();
 
     if (tbcSource.getFieldOrder()) {
         tbcSource.setFieldOrder(false);
@@ -3074,6 +3170,7 @@ void MainWindow::updateGraphs()
 void MainWindow::refreshAfterAppearanceChange(bool updateGraphData)
 {
     buttonPalette = QApplication::palette();
+    applyDropoutHighlight(dropoutLit);
     updatePlayButtonIcon();
 
     if (tbcSource.getIsSourceLoaded()) {
@@ -3118,7 +3215,7 @@ void MainWindow::on_finishedLoading(bool success)
 
         ui->actionOpen_TBC_file->setEnabled(!tbcSource.getIsLive());
         // Set the main window title
-        this->setWindowTitle(tbcSource.getIsLive() ? tr("ld-analyse - Live input")
+        this->setWindowTitle(tbcSource.getIsMonitor() ? tr("ld-analyse - Monitor") : tbcSource.getIsLive() ? tr("ld-analyse - Live input")
                                                    : tr("ld-analyse - ") + tbcSource.getCurrentSourceFilename());
 
         // Update the configuration for the source directory
@@ -3135,17 +3232,21 @@ void MainWindow::on_finishedLoading(bool success)
             ui->actionOpen_TBC_file->setEnabled(false);
             setPlaybackOptionsVisible(false);
             if (!tbcSource.getStreamHint().isEmpty()) statusBar()->showMessage(tbcSource.getStreamHint(), 30000);
+            if (tbcSource.getIsMonitor()) applyMonitorLayout();
             liveTimer->start();
             updateLive();
-            // At the live edge, not at the first frame, which would be as late as loading took
-            setCurrentFrame(qMax(1, tbcSource.getNumberOfFrames() - 1));
-            {
-                const QSignalBlocker spinBlocker(ui->posNumberSpinBox);
-                const QSignalBlocker sliderBlocker(ui->posHorizontalSlider);
-                ui->posNumberSpinBox->setValue(currentFrameNumber);
-                ui->posHorizontalSlider->setValue(currentFrameNumber);
+            // (a monitor is not played: updateLive has put the first frame on show, and it waits for the next)
+            if (!tbcSource.getIsMonitor()) {
+                // At the live edge, not at the first frame, which would be as late as loading took
+                setCurrentFrame(qMax(1, tbcSource.getNumberOfFrames() - 1));
+                {
+                    const QSignalBlocker spinBlocker(ui->posNumberSpinBox);
+                    const QSignalBlocker sliderBlocker(ui->posHorizontalSlider);
+                    ui->posNumberSpinBox->setValue(currentFrameNumber);
+                    ui->posHorizontalSlider->setValue(currentFrameNumber);
+                }
+                togglePlayback();
             }
-            togglePlayback();
         }
     } else {
         // Load failed
@@ -3185,7 +3286,7 @@ void MainWindow::on_finishedSaving(bool success)
 void MainWindow::resizeEvent(QResizeEvent *event)
 {
     QMainWindow::resizeEvent(event);
-    int width = this->width();
+    int width = layoutWidth();
 
 	//field order rename depending on size
 	if (!tbcSource.getFieldOrder())
@@ -3239,7 +3340,7 @@ void MainWindow::resizeEvent(QResizeEvent *event)
 	}
 
 	//view label
-	if (this->width() >= 930)
+	if (layoutWidth() >= 930)
 	{
 		if (tbcSource.getFieldViewEnabled()) {
 			ui->viewPushButton->setText(tr("Field View"));
@@ -3269,6 +3370,9 @@ void MainWindow::resizeEvent(QResizeEvent *event)
 
 	// leave out the field order button if the row has not the room
 	updateFieldOrderVisibility();
+
+	// a monitor: the buttons of the right are as wide as their labels, the controls of the sound have the rest
+	if (monitorAudioControls) fitMonitorButtons();
 
 	// Resize frame with window if resizeFrameWithWindow is enabled
 	if (resizeFrameWithWindow && tbcSource.getIsSourceLoaded()) {
@@ -3735,6 +3839,12 @@ void MainWindow::applyWaveformDensity(qint32 density)
 // Show or hide the waveform: the window grows or shrinks by its height, so that the video keeps its room
 void MainWindow::showWaveform(bool shown)
 {
+    // (a monitor has no waveform: what is shown or not is the row of the controls of the sound, in the bar)
+    if (monitorAudioControls) {
+        monitorAudioControls->setVisible(shown);
+        refreshButtonLabels();
+        return;
+    }
     if (waveform->isVisibleTo(this) == shown) return;
     const qint32 height = qMin(waveform->sizeHint().height(), waveform->maximumHeight()) + ui->verticalLayout->spacing();
     waveform->setVisible(shown);
@@ -4198,6 +4308,48 @@ void MainWindow::updateAudioPlayhead()
     if (!audio || !waveform || !waveform->isVisible()) return;
     const qint32 position = tbcSource.getFieldViewEnabled() || weaveActive ? currentFieldNumber : currentFrameNumber;
     waveform->setPlayheadSeconds(positionSeconds(position));
+}
+
+// The sound of a monitor. A monitor has no clock, and a frame shown by itself has no sound; but when the frames come one after the other (the program that drives it
+// is playing the video) the sound that goes with them is played, from the newest frame, as it comes, and stops when they stop. The sound plays at its own pace, so it
+// is put back to the newest frame when it falls more than a second and a half behind it (frames that come faster than the sound plays are jumped to)
+void MainWindow::updateMonitorSound(qint32 newest, bool)
+{
+    if (!audio || !audio->hasAudio() || audio->currentTrack() < 0) return;
+    // The pace the frames come at, over windows of half a second (the frames shown are fewer than the frames that come when decoding is slow): six a second or more
+    // is a video that plays, fewer is a program that asks for a frame now and then
+    if (!monitorFrameClock.isValid()) {
+        monitorFrameClock.start();
+        monitorSampleFrames = newest;
+    } else if (monitorFrameClock.elapsed() >= 500) {
+        // (it stops being one when two windows in a row are slower, not at a frame that is late)
+        if (newest - monitorSampleFrames >= 3) {
+            monitorStreaming = true;
+            monitorSlowWindows = 0;
+        } else if (++monitorSlowWindows >= 2) {
+            monitorStreaming = false;
+        }
+        monitorSampleFrames = newest;
+        monitorFrameClock.restart();
+    }
+    if (!monitorStreaming) {
+        if (audio->isPlaying()) {
+            if (std::getenv("LD_ANALYSE_TIMING")) std::fprintf(stderr, "monitor sound: stopped\n");
+            audioStop();
+        }
+        return;
+    }
+    const double newestSeconds = positionSeconds(newest);
+    if (!audio->isPlaying()) {
+        const bool started = audioStartAt(newestSeconds);
+        if (started) monitorSoundClock.restart();
+        if (std::getenv("LD_ANALYSE_TIMING")) std::fprintf(stderr, "monitor sound: %s at %.2f s of the video\n", started ? "started" : "could not start", newestSeconds);
+        return;
+    }
+    if (newestSeconds - audio->videoSecondsNow() > 1.5 && monitorSoundClock.elapsed() > 1000) {
+        audioStop();
+        if (audioStartAt(newestSeconds)) monitorSoundClock.restart();
+    }
 }
 
 // A click on the waveform: go to that place of the video

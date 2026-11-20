@@ -397,6 +397,18 @@ private:
     void updateLive();
     void updateLiveControls();
     void updateLiveGraphs();
+    // A monitor (--monitor): show the newest frame that has come, while the one on show is the newest; keep what is gone through
+    void updateMonitor(bool ended);
+    void applyMonitorLayout();
+    // The width the labels of the buttons are chosen by: that of the window, less what the controls of the sound of a monitor take of its bar
+    qint32 layoutWidth() const;
+    void refreshButtonLabels();
+    void fitMonitorButtons();
+    // The highlight of the Dropouts button: lit when the dropouts are shown
+    void applyDropoutHighlight(bool lit);
+    bool dropoutLit = false;
+    QWidget *monitorAudioControls = nullptr;   // the controls of the sound of a monitor, in its bar (null when it is not one)
+    qint32 monitorNewest = 0;              // the newest frame that was shown as the newest
     QTimer *snrFileTimer = nullptr;        // refreshes the SNR graphs while a file is measured from its video
     void setFileSnrMeasuring(bool measuring);
     void updateFileSnrGraphs();
@@ -470,6 +482,11 @@ private:
     void audioStop();
     void updateAudioPlayhead();
     void waveformSeek(double seconds);
+    // A monitor: the sound plays while the frames come one after the other (a program that plays the video), from the newest one, and stops when they stop
+    void updateMonitorSound(qint32 newest, bool frameCame);
+    QElapsedTimer monitorFrameClock, monitorSoundClock;
+    bool monitorStreaming = false;
+    qint32 monitorSampleFrames = 0, monitorSlowWindows = 0;
     double positionSeconds(qint32 position);
 #endif
     void setPlaybackOptionsVisible(bool visible);

@@ -40,6 +40,7 @@ Options for video piped in (input is -), which comes without metadata:
   --sample-encoding <encoding>  CVBS: u10 (the default), u16, tpg21 or s16
   --buffer-frames <number>      The size of each of the two buffers (see below), in frames (default: 5 seconds of video)
   --throttle                    Hold the producer back to the pace of the viewer instead of overwriting old video (for a file, or a decoder that is not live)
+  --monitor                     Piped input: a monitor, for video that comes a frame now and then (see below)
   --ignore-map                  Read the capture as it is, though its metadata keep a map (the frames in the order of the disc, from ld-discmap)
 
 Arguments:
@@ -293,6 +294,18 @@ The video has no length: the frame count grows as it arrives, and playback start
 Pause it (the play button or the space bar) to freeze the last few seconds and go through them: the slider, the frame number and the previous and next buttons work on the frozen video, which is for analysing a sequence. The input is never held up while you do: it goes on being read, into a second buffer. There are two buffers of about 5 seconds of video each (`--buffer-frames`, about 30 MB of memory for each second): a ring that holds the newest video, overwriting the oldest, and the frozen one, which pausing sets aside and which is kept as it is for as long as you need it. Playing again goes back to the live edge: the frozen video is only there to go through, and is let go of, so what is shown is what is arriving now (the end button does the same while playing).
 
 A video that arrives faster than it plays, such as a file, would be overwritten before it was seen: use `--throttle` for those, which holds the producer back to the pace of the viewer instead (pausing then holds the input up too). When the stream ends, playback stops at its last frame.
+
+## Monitor
+
+`--monitor` is for a program that decides which frame to look at and asks for it: RF-tools asking ld-decode for the frame at a position, say, and sending it to ld-analyse as video. Nothing arrives for most of the time, then a frame does:
+
+```
+rf-tool-frame-producer | ld-analyse - --system pal --monitor
+```
+
+ld-analyse is then a screen, as `ffplay` is, and sends nothing back: the program that drives it decides what is shown. The newest frame is shown as soon as it has come, and stays on the screen until the next one comes, so nothing is decoded while nothing arrives. The input is never waited for: the fields that the chroma decoder would look at before and after a frame, and that have not come, are black, so a single frame is enough to see a picture. All the tools of ld-analyse work on the frame that is shown (the scopes, the VBI, the dropouts, the SNR of the frames received, the decoder settings, the zoom and the views).
+
+There is nothing to seek in a monitor, and it has no clock of its own: it is not played. What is for playing and seeking is not on the window: the play button, the slider and the frame number, the buttons that go from frame to frame, the Playback menu (and its keys) and the waveform of the sound; the controls of the sound alone (the source and the track, the channels, the mute and the volume) are in the bar, beside the zoom buttons, when the input is an LDX stream that holds audio. The sound is played while the frames come one after the other, six a second or more (the program that drives the monitor is playing the video), from the newest frame, as it comes, and stops when they stop; a frame that is asked for by itself has no sound, and the sound is put back to the newest frame when it falls more than a second and a half behind it. When the program that drives it closes the pipe, the last frame stays on the screen. `--monitor` does not go with `--throttle`.
 
 A pipe has no ld-decode metadata, so ld-analyse works out what it can from the video itself, for the frames that are shown: the VBI (CLV timecode or CAV picture number, chapter, VITC, the NTSC video ID and closed captions) and the black and white SNR, with the same code as ld-process-vbi and ld-process-vits. The VBI is of the frames shown. The SNR is measured for every frame received, on a thread of its own, whether or not it was shown, so the SNR graphs of the Window menu are the history of what has been received, and grow as the video comes in. Above each graph a line says where its values come from (the metadata of the capture, or measured live), and for a live input there are two check boxes: Measure live switches the measuring on and off (what arrives while it is off is not measured), Follow keeps the whole history in view (zooming or panning the graph unticks it, so the part looked at stays put), and Clear forgets the history so far, which starts again from then. The history is kept for up to two hours of video (216000 frames); beyond that the oldest tenth is let go. With `--throttle` only the frames shown are measured. Dropouts are not detected, so the dropout windows stay empty. The SNR is measured against the black and white levels the capture has when it is opened: those of its metadata, or for a pipe the standard ones unless `--black-level` and `--white-level` say otherwise. Adjusting the levels in Config > Video parameters, which is for the picture (and can be done while the video plays), does not move the SNR.
 
