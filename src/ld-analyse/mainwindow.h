@@ -471,6 +471,11 @@ private:
     void audioStop();
     void updateAudioPlayhead();
     void waveformSeek(double seconds);
+    // A monitor: the sound plays while the frames come one after the other (a program that plays the video), from the newest one, and stops when they stop
+    void updateMonitorSound(qint32 newest, bool frameCame);
+    QElapsedTimer monitorFrameClock, monitorSoundClock;
+    bool monitorStreaming = false;
+    qint32 monitorSampleFrames = 0, monitorSlowWindows = 0;
     double positionSeconds(qint32 position);
 #endif
     void setPlaybackOptionsVisible(bool visible);

@@ -694,10 +694,14 @@ void MainWindow::updateMonitor(bool ended)
     const qint32 received = tbcSource.getFramesReceived();
     if (received < 1) return;
 
+    const bool frameCame = received > monitorNewest;
     if (received > currentFrameNumber || monitorNewest == 0) {
         setCurrentFrame(received);
         monitorNewest = currentFrameNumber;
     }
+#ifdef LDDECODE_HAVE_AUDIO
+    updateMonitorSound(received, frameCame);
+#endif
 
     sourceVideoStatus.setText(ended ? tr("Monitor - the input is closed, %1 frames were received").arg(received)
                                     : tr("Monitor - %1 frames received").arg(received));
@@ -4169,6 +4173,48 @@ void MainWindow::updateAudioPlayhead()
     if (!audio || !waveform || !waveform->isVisible()) return;
     const qint32 position = tbcSource.getFieldViewEnabled() || weaveActive ? currentFieldNumber : currentFrameNumber;
     waveform->setPlayheadSeconds(positionSeconds(position));
+}
+
+// The sound of a monitor. A monitor has no clock, and a frame shown by itself has no sound; but when the frames come one after the other (the program that drives it
+// is playing the video) the sound that goes with them is played, from the newest frame, as it comes, and stops when they stop. The sound plays at its own pace, so it
+// is put back to the newest frame when it falls more than a second and a half behind it (frames that come faster than the sound plays are jumped to)
+void MainWindow::updateMonitorSound(qint32 newest, bool)
+{
+    if (!audio || !audio->hasAudio() || audio->currentTrack() < 0) return;
+    // The pace the frames come at, over windows of half a second (the frames shown are fewer than the frames that come when decoding is slow): six a second or more
+    // is a video that plays, fewer is a program that asks for a frame now and then
+    if (!monitorFrameClock.isValid()) {
+        monitorFrameClock.start();
+        monitorSampleFrames = newest;
+    } else if (monitorFrameClock.elapsed() >= 500) {
+        // (it stops being one when two windows in a row are slower, not at a frame that is late)
+        if (newest - monitorSampleFrames >= 3) {
+            monitorStreaming = true;
+            monitorSlowWindows = 0;
+        } else if (++monitorSlowWindows >= 2) {
+            monitorStreaming = false;
+        }
+        monitorSampleFrames = newest;
+        monitorFrameClock.restart();
+    }
+    if (!monitorStreaming) {
+        if (audio->isPlaying()) {
+            if (std::getenv("LD_ANALYSE_TIMING")) std::fprintf(stderr, "monitor sound: stopped\n");
+            audioStop();
+        }
+        return;
+    }
+    const double newestSeconds = positionSeconds(newest);
+    if (!audio->isPlaying()) {
+        const bool started = audioStartAt(newestSeconds);
+        if (started) monitorSoundClock.restart();
+        if (std::getenv("LD_ANALYSE_TIMING")) std::fprintf(stderr, "monitor sound: %s at %.2f s of the video\n", started ? "started" : "could not start", newestSeconds);
+        return;
+    }
+    if (newestSeconds - audio->videoSecondsNow() > 1.5 && monitorSoundClock.elapsed() > 1000) {
+        audioStop();
+        if (audioStartAt(newestSeconds)) monitorSoundClock.restart();
+    }
 }
 
 // A click on the waveform: go to that place of the video
