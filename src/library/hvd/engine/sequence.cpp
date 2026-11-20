@@ -276,7 +276,7 @@ std::vector<DecodedField> DecodeFieldWindow(const std::vector<FieldObs>& fields,
                                             SequenceDiagnostics* diag) {
   // With the GPU asked for, the fast mode and the temporal terms, the window is decoded on the device from the signal of its fields, the init included;
   // when it cannot be, the inits are made here
-  if (cfg.use_gpu && cfg.fast && cfg.cg_iterations > 0 && cfg.temporal_strength >= 0.0F && !cfg.psi_init && !cfg.symmetry_variant && fields.size() > 1) {
+  if (cfg.use_gpu && cfg.cg_iterations > 0 && cfg.temporal_strength >= 0.0F && !cfg.psi_init && !cfg.symmetry_variant && fields.size() > 1) {
     bool device_failed = false;
     std::vector<DecodedField> decoded = DecodeFieldWindowWithInits(fields, {}, g, cfg, diag, true, &device_failed);
     if (!device_failed) return decoded;
@@ -706,7 +706,7 @@ std::vector<DecodedField> DecodeFieldWindowWithInits(
     if (!win->GetField(k, (ccfg.output_fidelity && !verify_gpu) ? nullptr : &Ys[k], &chis[k])) gpu_failed = true;
     host_fresh[k] = 1;
   };
-  if (ccfg.use_gpu && has_temporal && ccfg.fast && !ccfg.psi_init && ccfg.cg_iterations > 0 && nf > 1) {
+  if (ccfg.use_gpu && has_temporal && !ccfg.psi_init && ccfg.cg_iterations > 0 && nf > 1) {
     win = gpu::Window::Open(fields[0].s.height(), fields[0].s.width(), nf);
     gpu::InitAxes axes;
     if (device_init && win) {
@@ -898,6 +898,7 @@ std::vector<DecodedField> DecodeFieldWindowWithInits(
           if (k >= 0 && k < nf && ((o & 1) != 0)) any_odd = true;
         }
         job.anyOdd = any_odd;
+        job.slowConfidence = !ccfg.fast;
         job.gateOn = ccfg.coherence_gate > 0.0F && !(ccfg.fast && pass == 0);
         job.coherence = ccfg.coherence_gate;
         job.temporalEps = ccfg.temporal_eps;
@@ -909,11 +910,15 @@ std::vector<DecodedField> DecodeFieldWindowWithInits(
           gpu::NeighbourSpec spec;
           spec.k = k;
           SnapTileVectors(mo.dy, mo.dx, &spec.mdy, &spec.mdx);
-          // the confidence of the fast upsampling: its square, taken through the same cleaning of the outliers
-          Plane squared(mo.confidence.height(), mo.confidence.width());
-          for (size_t i = 0; i < squared.size(); ++i) squared[i] = mo.confidence[i] * mo.confidence[i];
-          Plane unused;
-          SnapTileVectors(squared, squared, &spec.conf, &unused);
+          if (ccfg.fast) {
+            // the confidence of the fast upsampling: its square, taken through the same cleaning of the outliers
+            Plane squared(mo.confidence.height(), mo.confidence.width());
+            for (size_t i = 0; i < squared.size(); ++i) squared[i] = mo.confidence[i] * mo.confidence[i];
+            Plane unused;
+            SnapTileVectors(squared, squared, &spec.conf, &unused);
+          } else {
+            spec.conf = mo.confidence;  // (the slow upsampling squares it itself)
+          }
           spec.odd = (o & 1) != 0;
           job.neighbours.push_back(std::move(spec));
         }

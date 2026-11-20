@@ -88,6 +88,9 @@ struct FieldJob {
   int tile = 32;
   std::vector<NeighbourSpec> neighbours;
   bool anyOdd = false;         // the vertical envelope and the floor of the gate of the odd neighbours are wanted
+  // The confidence of a neighbour is the one of the slow mode: the squared confidence of the tile that the pixel is in, blurred (the confidence of the motion is in
+  // the grids as it is); otherwise the fast one (the squared confidence of the tiles, cleaned of its outliers and interpolated between them)
+  bool slowConfidence = false;
   bool gateOn = false;         // the coherence gate of the confidence
   float coherence = 0.0F;      // its strength
   float temporalEps = 0.0F;    // the robust scale of the neighbours

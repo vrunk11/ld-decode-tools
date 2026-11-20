@@ -747,6 +747,21 @@ __kernel void k_anchor_prep(__global const float* tiles, int oy, int ox, int oc,
   confS[i] = c * c;
 }
 
+// The squared confidence of the tile that each pixel is in (the slow mode's upsampling of the confidence, before its blur)
+__kernel void k_conf_tile(__global const float* tiles, int oc, int th, int tw, int tile, int H, int W, __global float* confS) {
+  const int i = get_global_id(0);
+  if (i >= H * W) return;
+  const int y = i / W;
+  const int x = i % W;
+  const float c = tiles[oc + min(y / tile, th - 1) * tw + min(x / tile, tw - 1)];
+  confS[i] = c * c;
+}
+
+__kernel void k_copy_at(__global const float* src, __global float* dst, int N, int base) {
+  const int i = get_global_id(0);
+  if (i < N) dst[base + i] = src[i];
+}
+
 // One neighbour of the anchor: the luma and the chroma of the neighbour warped (bilinear) to the field, and added to the blend
 __kernel void k_synth_step(__global const float* Yk, __global const float2* chik, __global const float* vdy, __global const float* vdx, float row_off, int H, int W,
                            __global const float* Yj, __global const float2* chij, __global const float* conf, __global float* accY, __global float2* accC,
@@ -1115,7 +1130,7 @@ class Device {
     jneg_ = Kernel("k_jneg");
     jaxpy_ = Kernel("k_jaxpy");
     jdupdate_ = Kernel("k_jdupdate");
-    for (const char* name : {"k_warp_bil_c", "k_box_v", "k_box_h", "k_conf_odd", "k_oddmaps", "k_smooth_rows", "k_gather7", "k_floor", "k_lapsm", "k_synth_init", "k_synth_fin", "k_synth_weight", "k_decimate", "k_bm_cost", "k_tile_stats", "k_mc", "k_coh_v", "k_coh_h", "k_nbr_weight_all", "k_jnbr_weight_all", "k_anchor_prep", "k_synth_step", "k_fft_rows", "k_fft_cols", "k_init_demod_pad", "k_init_crop", "k_init_chiv", "k_init_edge", "k_init_acc", "k_init_final"}) {
+    for (const char* name : {"k_warp_bil_c", "k_box_v", "k_box_h", "k_conf_odd", "k_oddmaps", "k_smooth_rows", "k_gather7", "k_floor", "k_lapsm", "k_synth_init", "k_synth_fin", "k_synth_weight", "k_decimate", "k_bm_cost", "k_tile_stats", "k_mc", "k_coh_v", "k_coh_h", "k_nbr_weight_all", "k_jnbr_weight_all", "k_anchor_prep", "k_conf_tile", "k_copy_at", "k_synth_step", "k_fft_rows", "k_fft_cols", "k_init_demod_pad", "k_init_crop", "k_init_chiv", "k_init_edge", "k_init_acc", "k_init_final"}) {
       kernels_[name] = Kernel(name);
     }
   }
@@ -1594,6 +1609,11 @@ class Device {
     Run(K_("k_mc"), global, kGroup,
         {Arg(win_.tiles), Arg(at.dy), Arg(at.dx), Arg(at.conf), Arg(spec.mdy.height()), Arg(spec.mdy.width()), Arg(job.tile), Arg(H), Arg(W), Arg(K.s), Arg(K.car), Arg(b_.car),
          Arg(win_.vdy), Arg(win_.vdx), Arg(b_.conf), Arg(b_.comp), Arg(b_.dc), Arg(base), Arg(joint ? 1 : 0)});
+    if (job.slowConfidence) {
+      Run(K_("k_conf_tile"), global, kGroup, {Arg(win_.tiles), Arg(at.conf), Arg(spec.mdy.height()), Arg(spec.mdy.width()), Arg(job.tile), Arg(H), Arg(W), Arg(win_.confS)});
+      Box(win_.confS, win_.rr, 8);
+      Run(K_("k_copy_at"), global, kGroup, {Arg(win_.rr), Arg(b_.conf), Arg(static_cast<int>(N)), Arg(base)});
+    }
     if (job.gateOn) {
       // the coherence of the chroma of the field with the chroma of the neighbour warped to it
       Run(K_("k_warp_bil_c"), global, kGroup, {Arg(K.chi), Arg(win_.vdy), Arg(win_.vdx), Arg(win_.cwC), Arg(H), Arg(W), Arg(0.0F)});
