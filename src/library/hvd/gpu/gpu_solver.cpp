@@ -55,6 +55,11 @@ std::vector<std::pair<std::string, cl_event>> g_profile_events;
 
 const char* const kSource = R"CLC(
 #define GS 256
+#ifdef BM_FMA
+#define BM_ACC(d, acc) fma(d, d, acc)
+#else
+#define BM_ACC(d, acc) ((acc) + (d) * (d))
+#endif
 
 inline float cabs2(float2 a) { return a.x * a.x + a.y * a.y; }
 inline float rmul(float2 a, float2 b) { return a.x * b.x - a.y * b.y; }
@@ -548,42 +553,14 @@ __kernel void k_decimate(__global const float* src, __global float* dst, int H, 
   dst[i] = acc * (1.0f / (float)(f * f));
 }
 
-// The squared difference of a tile of A with the tile of B that its shift points at (the reference clamped to its edges), for each shift of each tile: one
-// group for each. shifts[g] = (sy, sx) for the tile g % (th * tw) of the candidate g / (th * tw).
+// The squared difference of each tile of A with the tile of B that a shift points at (the reference clamped to its edges): one group for each tile, and one
+// thread for each candidate shift, summing the pixels of the tile in the order of the rows, as the host code of motion.cpp does (the tile of A is in the local
+// memory, read by all the candidates). shifts[c * tiles + t] = (sy, sx) of the candidate c for the tile t.
 __kernel void k_bm_cost(__global const float* A, __global const float* B, int H, int W, int tile, int th, int tw, __global const int2* shifts, __global float* costs,
-                        __local float* sh) {
-  const int g = get_group_id(0);
-  const int t = g % (th * tw);
-  const int ty = t / tw;
-  const int tx = t % tw;
-  const int2 s = shifts[g];
-  const int y0 = ty * tile;
-  const int y1 = min(y0 + tile, H);
-  const int x0 = tx * tile;
-  const int x1 = min(x0 + tile, W);
-  const int bw = x1 - x0;
-  const int total = bw * (y1 - y0);
-  float acc = 0.0f;
-  for (int p = get_local_id(0); p < total; p += get_local_size(0)) {
-    const int y = y0 + p / bw;
-    const int x = x0 + p % bw;
-    const int yy = clamp(y - s.x, 0, H - 1);
-    const int xx = clamp(x - s.y, 0, W - 1);
-    const float d = A[y * W + x] - B[yy * W + xx];
-    acc += d * d;
-  }
-  const int l = get_local_id(0);
-  sh[l] = acc;
-  barrier(CLK_LOCAL_MEM_FENCE);
-  for (int step = GS / 2; step > 0; step >>= 1) {
-    if (l < step) sh[l] += sh[l + step];
-    barrier(CLK_LOCAL_MEM_FENCE);
-  }
-  if (l == 0) costs[g] = sh[0];
-}
-
-// The sum and the sum of squares of each tile of A, for the confidence of the motion
-__kernel void k_tile_stats(__global const float* A, int H, int W, int tile, int th, int tw, __global float* sums, __global float* sums2, __local float* sh) {
+                        int cand0, int ncand, __local float* at) {
+#ifndef BM_FMA
+#pragma OPENCL FP_CONTRACT OFF
+#endif
   const int t = get_group_id(0);
   const int ty = t / tw;
   const int tx = t % tw;
@@ -593,28 +570,48 @@ __kernel void k_tile_stats(__global const float* A, int H, int W, int tile, int 
   const int x1 = min(x0 + tile, W);
   const int bw = x1 - x0;
   const int total = bw * (y1 - y0);
+  for (int p = get_local_id(0); p < total; p += get_local_size(0)) at[p] = A[(y0 + p / bw) * W + x0 + p % bw];
+  barrier(CLK_LOCAL_MEM_FENCE);
+  const int c = get_local_id(0);
+  if (c >= ncand) return;
+  const int ntiles = th * tw;
+  const int2 s = shifts[(cand0 + c) * ntiles + t];
+  float acc = 0.0f;
+  for (int y = y0; y < y1; ++y) {
+    const int yy = clamp(y - s.x, 0, H - 1);
+    for (int x = x0; x < x1; ++x) {
+      const int xx = clamp(x - s.y, 0, W - 1);
+      const float d = at[(y - y0) * bw + (x - x0)] - B[yy * W + xx];
+      acc = BM_ACC(d, acc);
+    }
+  }
+  costs[(cand0 + c) * ntiles + t] = acc;
+}
+
+// The sum and the sum of squares of each tile of A, for the confidence of the motion: one thread for each tile, adding in the order of the rows as the host code does
+__kernel void k_tile_stats(__global const float* A, int H, int W, int tile, int th, int tw, __global float* sums, __global float* sums2) {
+#ifndef BM_FMA
+#pragma OPENCL FP_CONTRACT OFF
+#endif
+  const int t = get_global_id(0);
+  if (t >= th * tw) return;
+  const int ty = t / tw;
+  const int tx = t % tw;
+  const int y0 = ty * tile;
+  const int y1 = min(y0 + tile, H);
+  const int x0 = tx * tile;
+  const int x1 = min(x0 + tile, W);
   float a = 0.0f;
   float b = 0.0f;
-  for (int p = get_local_id(0); p < total; p += get_local_size(0)) {
-    const float v = A[(y0 + p / bw) * W + x0 + p % bw];
-    a += v;
-    b += v * v;
-  }
-  const int l = get_local_id(0);
-  sh[l] = a;
-  sh[GS + l] = b;
-  barrier(CLK_LOCAL_MEM_FENCE);
-  for (int step = GS / 2; step > 0; step >>= 1) {
-    if (l < step) {
-      sh[l] += sh[l + step];
-      sh[GS + l] += sh[GS + l + step];
+  for (int y = y0; y < y1; ++y) {
+    for (int x = x0; x < x1; ++x) {
+      const float v = A[y * W + x];
+      a += v;
+      b = BM_ACC(v, b);
     }
-    barrier(CLK_LOCAL_MEM_FENCE);
   }
-  if (l == 0) {
-    sums[t] = sh[0];
-    sums2[t] = sh[GS];
-  }
+  sums[t] = a;
+  sums2[t] = b;
 }
 
 // ---- Fused kernels: the same arithmetic, in fewer launches (the kernels are small, a launch costs as much as one) ---------------------------------
@@ -1076,7 +1073,8 @@ class Device {
     const char* sources[2] = {kSource, kSourceWindow};
     program_ = clCreateProgramWithSource(context_, 2, sources, nullptr, &error);
     Check(error, "clCreateProgramWithSource");
-    error = clBuildProgram(program_, 1, &device_, "-cl-mad-enable", nullptr, nullptr);
+    const char* options = std::getenv("HVD_OPENCL_BM_FMA") ? "-cl-mad-enable -DBM_FMA" : "-cl-mad-enable";
+    error = clBuildProgram(program_, 1, &device_, options, nullptr, nullptr);
     if (error != CL_SUCCESS) {
       size_t size = 0;
       clGetProgramBuildInfo(program_, device_, CL_PROGRAM_BUILD_LOG, 0, nullptr, &size);
@@ -1374,7 +1372,36 @@ class Device {
 
   struct FieldBuffers {
     Buffer s, car, y, chi;
+    // the luma blurred for the search for the motion, and the sums of its tiles: made once for each state of the field (version), not once for each search
+    Buffer blur;
+    int version = 0;
+    int blurVersion = -1;
+    int statsVersion = -1;
+    int statsTile = 0;
+    std::vector<float> sum, sum2;
   };
+
+  // The blurred luma of the field k, made if its state is not the one of the blur that is there
+  const Buffer& BlurOf(int k) {
+    FieldBuffers& F = *win_.field.at(static_cast<size_t>(k));
+    if (F.blurVersion != F.version) {
+      Box(F.y, F.blur, 2);
+      F.blurVersion = F.version;
+    }
+    return F.blur;
+  }
+
+  // The sums of the tiles of the blurred luma of the field j
+  void StatsOf(int j, int tile, int th, int tw, std::vector<float>* sum, std::vector<float>* sum2) {
+    FieldBuffers& F = *win_.field.at(static_cast<size_t>(j));
+    if (F.statsVersion != F.version || F.statsTile != tile) {
+      TileSums(BlurOf(j), tile, th, tw, &F.sum, &F.sum2);
+      F.statsVersion = F.version;
+      F.statsTile = tile;
+    }
+    *sum = F.sum;
+    *sum2 = F.sum2;
+  }
 
   struct TileOffsets {
     int dy = 0, dx = 0, conf = 0;
@@ -1395,6 +1422,7 @@ class Device {
       b.car.Allocate(context_, N * c);
       b.y.Allocate(context_, N * f);
       b.chi.Allocate(context_, N * c);
+      b.blur.Allocate(context_, N * f);
     }
     win_.tiles.Allocate(context_, N * sizeof(float));
     for (Buffer* plane : {&win_.vdy, &win_.vdx, &win_.gmag, &win_.lapmag, &win_.vgrad, &win_.lapsm, &win_.traw, &win_.cre,
@@ -1404,14 +1432,14 @@ class Device {
     }
     for (Buffer* plane : {&win_.cwC, &win_.accC}) plane->Allocate(context_, N * c);
     win_.samples.Allocate(context_, (N / 7 + 2) * f);
-    for (Buffer* plane : {&win_.mA, &win_.mB, &win_.mAd, &win_.mBd}) plane->Allocate(context_, N * f);
+    for (Buffer* plane : {&win_.mAd, &win_.mBd}) plane->Allocate(context_, N * f);
   }
 
   void CloseWindow() {
     win_.field.clear();
     for (Buffer* plane : {&win_.vdy, &win_.vdx, &win_.gmag, &win_.lapmag, &win_.vgrad, &win_.lapsm, &win_.traw, &win_.cre,
                           &win_.cim, &win_.m1, &win_.m2, &win_.tmp, &win_.yw, &win_.confS, &win_.rr,
-                          &win_.accY, &win_.accW, &win_.resid, &win_.cwC, &win_.accC, &win_.samples, &win_.mA, &win_.mB, &win_.mAd, &win_.mBd, &win_.mCost, &win_.mShift, &win_.mStat, &win_.mStat2, &win_.iP, &win_.iQ, &win_.iSpec, &win_.initK, &win_.fftRowTab, &win_.fftRowRad, &win_.fftColTab, &win_.fftColRad}) {
+                          &win_.accY, &win_.accW, &win_.resid, &win_.cwC, &win_.accC, &win_.samples, &win_.mAd, &win_.mBd, &win_.mCost, &win_.mShift, &win_.mStat, &win_.mStat2, &win_.iP, &win_.iQ, &win_.iSpec, &win_.initK, &win_.fftRowTab, &win_.fftRowRad, &win_.fftColTab, &win_.fftColRad}) {
       plane->Release();
     }
     win_.initHp = 0;
@@ -1424,6 +1452,7 @@ class Device {
     Write(b.car, carrier.data(), N * sizeof(Complex));
     Write(b.y, y.data(), N * sizeof(float));
     Write(b.chi, chi.data(), N * sizeof(Complex));
+    ++b.version;
   }
 
   void GetField(int j, Plane* y, ComplexPlane* chi) {
@@ -1461,6 +1490,7 @@ class Device {
     const Staged none{};
     if (job.joint) IterateJoint(H, W, p, job.anchorStrength, nn, none, &out, nullptr, nullptr, tp0);
     else IteratePlain(H, W, p, nn, none, &out, nullptr, tp0);
+    ++F.version;
   }
 
   // For the tests: the neighbours of the field (and its anchor, when the job is joint) as the device makes them, read back
@@ -1618,7 +1648,7 @@ class Device {
     size_t N = 0;
     std::vector<std::unique_ptr<FieldBuffers>> field;
     Buffer vdy, vdx, tiles, gmag, lapmag, vgrad, lapsm, traw, samples, cwC, accC, cre, cim, m1, m2, tmp, yw, confS, rr,
-        accY, accW, resid, mA, mB, mAd, mBd, mCost, mShift, mStat, mStat2, iP, iQ, iSpec, initK, fftRowTab, fftRowRad, fftColTab, fftColRad;
+        accY, accW, resid, mAd, mBd, mCost, mShift, mStat, mStat2, iP, iQ, iSpec, initK, fftRowTab, fftRowRad, fftColTab, fftColRad;
     int initHp = 0;
     std::vector<int> rowRad, colRad;
   };
@@ -1654,8 +1684,13 @@ class Device {
     Grow(win_.mShift, shifts.size() * sizeof(int));
     Grow(win_.mCost, static_cast<size_t>(ncand) * ntiles * sizeof(float));
     Write(win_.mShift, shifts.data(), shifts.size() * sizeof(int));
-    Run(K("k_bm_cost"), static_cast<size_t>(ncand) * ntiles * kGroup, kGroup,
-        {Arg(A), Arg(B), Arg(H), Arg(W), Arg(tile), Arg(th), Arg(tw), Arg(win_.mShift), Arg(win_.mCost), ArgLocal(kGroup * sizeof(float))});
+    // one group for each tile, one thread for each candidate (at most 128 at a time)
+    constexpr int kThreads = 128;
+    for (int cand0 = 0; cand0 < ncand; cand0 += kThreads) {
+      Run(K("k_bm_cost"), ntiles * kThreads, kThreads,
+          {Arg(A), Arg(B), Arg(H), Arg(W), Arg(tile), Arg(th), Arg(tw), Arg(win_.mShift), Arg(win_.mCost), Arg(cand0), Arg(std::min(kThreads, ncand - cand0)),
+           ArgLocal(static_cast<size_t>(tile) * static_cast<size_t>(tile) * sizeof(float))});
+    }
     std::vector<float> costs(static_cast<size_t>(ncand) * ntiles);
     Check(clEnqueueReadBuffer(queue_, win_.mCost.get(), CL_TRUE, 0, costs.size() * sizeof(float), costs.data(), 0, nullptr, nullptr), "read of the costs");
     return costs;
@@ -1697,8 +1732,7 @@ class Device {
     const size_t ntiles = static_cast<size_t>(th) * static_cast<size_t>(tw);
     Grow(win_.mStat, ntiles * sizeof(float));
     Grow(win_.mStat2, ntiles * sizeof(float));
-    Run(K("k_tile_stats"), ntiles * kGroup, kGroup,
-        {Arg(A), Arg(win_.H), Arg(win_.W), Arg(tile), Arg(th), Arg(tw), Arg(win_.mStat), Arg(win_.mStat2), ArgLocal(2 * kGroup * sizeof(float))});
+    Run(K("k_tile_stats"), ((ntiles + kGroup - 1) / kGroup) * kGroup, kGroup, {Arg(A), Arg(win_.H), Arg(win_.W), Arg(tile), Arg(th), Arg(tw), Arg(win_.mStat), Arg(win_.mStat2)});
     sum->resize(ntiles);
     sum2->resize(ntiles);
     Check(clEnqueueReadBuffer(queue_, win_.mStat.get(), CL_TRUE, 0, ntiles * sizeof(float), sum->data(), 0, nullptr, nullptr), "read of the sums of the tiles");
@@ -1710,8 +1744,8 @@ class Device {
     const int H = win_.H;
     const int W = win_.W;
     const size_t global = ((win_.N + kGroup - 1) / kGroup) * kGroup;
-    Box(win_.field.at(static_cast<size_t>(j))->y, win_.mA, 2);  // (the current field, blurred)
-    Box(win_.field.at(static_cast<size_t>(k))->y, win_.mB, 2);  // (the reference)
+    const Buffer& bufA = BlurOf(j);  // (the current field, blurred)
+    const Buffer& bufB = BlurOf(k);  // (the reference)
     const int th = (H + tile - 1) / tile;
     const int tw = (W + tile - 1) / tile;
     const size_t ntiles = static_cast<size_t>(th) * static_cast<size_t>(tw);
@@ -1721,8 +1755,8 @@ class Device {
     const int cs = std::max(1, (search + kDecimation - 1) / kDecimation);
     const int hh = H / kDecimation;
     const int ww = W / kDecimation;
-    Run(K("k_decimate"), ((static_cast<size_t>(hh) * ww + kGroup - 1) / kGroup) * kGroup, kGroup, {Arg(win_.mA), Arg(win_.mAd), Arg(H), Arg(W), Arg(kDecimation)});
-    Run(K("k_decimate"), ((static_cast<size_t>(hh) * ww + kGroup - 1) / kGroup) * kGroup, kGroup, {Arg(win_.mB), Arg(win_.mBd), Arg(H), Arg(W), Arg(kDecimation)});
+    Run(K("k_decimate"), ((static_cast<size_t>(hh) * ww + kGroup - 1) / kGroup) * kGroup, kGroup, {Arg(bufA), Arg(win_.mAd), Arg(H), Arg(W), Arg(kDecimation)});
+    Run(K("k_decimate"), ((static_cast<size_t>(hh) * ww + kGroup - 1) / kGroup) * kGroup, kGroup, {Arg(bufB), Arg(win_.mBd), Arg(H), Arg(W), Arg(kDecimation)});
     const int coarse_tile = std::max(4, tile / kDecimation);
     const int cth = (hh + coarse_tile - 1) / coarse_tile;
     const int ctw = (ww + coarse_tile - 1) / coarse_tile;
@@ -1778,7 +1812,7 @@ class Device {
         shifts.push_back(static_cast<int>(std::lround(base_dx[t])) + c.second);
       }
     }
-    costs = BlockCosts(win_.mA, win_.mB, H, W, tile, th, tw, shifts, static_cast<int>(candidates.size()));
+    costs = BlockCosts(bufA, bufB, H, W, tile, th, tw, shifts, static_cast<int>(candidates.size()));
     Plane mdy(th, tw, 0.0F), mdx(th, tw, 0.0F);
     Plane best_refined(th, tw, std::numeric_limits<float>::infinity());
     for (size_t ci = 0; ci < candidates.size(); ++ci) {
@@ -1806,7 +1840,7 @@ class Device {
       shifts.push_back(0);
       shifts.push_back(0);
     }
-    costs = BlockCosts(win_.mA, win_.mB, H, W, tile, th, tw, shifts, 5);
+    costs = BlockCosts(bufA, bufB, H, W, tile, th, tw, shifts, 5);
     auto parabolic = [](float cm, float c0, float cp) {
       const float den = cm - 2.0F * c0 + cp;
       float sub = 0.0F;
@@ -1837,7 +1871,7 @@ class Device {
       }
     }
     std::vector<float> sum, sum2;
-    TileSums(win_.mA, tile, th, tw, &sum, &sum2);
+    StatsOf(j, tile, th, tw, &sum, &sum2);
     out->tile = tile;
     out->dy = Plane(th, tw);
     out->dx = Plane(th, tw);
@@ -1852,8 +1886,8 @@ class Device {
   void VerifyMotionDevice(int k, int j, const Plane& pdy, const Plane& pdx, int tile, MotionField* out) {
     const int H = win_.H;
     const int W = win_.W;
-    Box(win_.field.at(static_cast<size_t>(j))->y, win_.mA, 2);
-    Box(win_.field.at(static_cast<size_t>(k))->y, win_.mB, 2);
+    const Buffer& bufA = BlurOf(j);
+    const Buffer& bufB = BlurOf(k);
     const int th = (H + tile - 1) / tile;
     const int tw = (W + tile - 1) / tile;
     const size_t ntiles = static_cast<size_t>(th) * static_cast<size_t>(tw);
@@ -1866,7 +1900,7 @@ class Device {
       shifts.push_back(0);
       shifts.push_back(0);
     }
-    const std::vector<float> costs = BlockCosts(win_.mA, win_.mB, H, W, tile, th, tw, shifts, 2);
+    const std::vector<float> costs = BlockCosts(bufA, bufB, H, W, tile, th, tw, shifts, 2);
     out->tile = tile;
     out->dy = Plane(th, tw);
     out->dx = Plane(th, tw);
@@ -1885,7 +1919,7 @@ class Device {
       }
     }
     std::vector<float> sum, sum2;
-    TileSums(win_.mA, tile, th, tw, &sum, &sum2);
+    StatsOf(j, tile, th, tw, &sum, &sum2);
     out->confidence = ConfidenceOfTiles(sum, sum2, best, H, W, tile);
   }
 
@@ -1991,6 +2025,7 @@ class Device {
       Run(K("k_init_acc"), global, kGroup, {Arg(win_.cwC), Arg(win_.rr), Arg(win_.accC), Arg(win_.accW), Arg(static_cast<int>(N)), Arg(v == 0 ? 1 : 0)});
     }
     Run(K("k_init_final"), global, kGroup, {Arg(win_.accC), Arg(win_.accW), Arg(F.s), Arg(F.car), Arg(F.chi), Arg(F.y), Arg(static_cast<int>(N))});
+    ++F.version;
   }
 
  private:
