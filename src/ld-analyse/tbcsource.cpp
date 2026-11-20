@@ -9,6 +9,7 @@
  * This file is part of ld-decode-tools.
  ******************************************************************************/
 
+#include <cstring>
 #include <limits>
 
 #include "tbcsource.h"
@@ -1131,10 +1132,70 @@ void TbcSource::loadInputFields()
     inputFieldsValid = true;
 }
 
+// The weave of the fields p and p + 1 from the frames that hold them, decoded ahead: each field is decoded once, whatever the pairs that it is in
+bool TbcSource::composeWeave(qint32 p, ComponentFrame &out)
+{
+    const auto holdingA = predecoded.constFind((p + 1) / 2);
+    const auto holdingB = predecoded.constFind((p + 2) / 2);
+    if (holdingA == predecoded.constEnd() || holdingB == predecoded.constEnd()) return false;
+    const LdDecodeMetaData::VideoParameters videoParameters = ldDecodeMetaData.getVideoParameters();
+    const qint32 parityOfA = ldDecodeMetaData.getField(p).isFirstField ? 0 : 1;
+    const size_t bytes = static_cast<size_t>(videoParameters.fieldWidth) * sizeof(double);
+    out.init(videoParameters, false);
+    for (qint32 line = videoParameters.firstActiveFrameLine; line < videoParameters.lastActiveFrameLine; line++) {
+        const ComponentFrame &from = (line % 2 == parityOfA) ? holdingA.value() : holdingB.value();
+        std::memcpy(out.y(line), from.y(line), bytes);
+        std::memcpy(out.u(line), from.u(line), bytes);
+        std::memcpy(out.v(line), from.v(line), bytes);
+    }
+    return true;
+}
+
+bool TbcSource::predecodeRun(qint32 firstFrame, qint32 count)
+{
+    predecoded.clear();
+    // Only the HVD 3D decoder gains by it, on one source, in the frame view (the playback of fields and of weaves is by position)
+    if (count < 2 || !sourceReady || isLive || !chromaOn || sourceMode != ONE_SOURCE || getFieldViewEnabled()) return false;
+    if (!hvdSettings.enabled || !hvdSettings.temporal) return false;
+    if (firstFrame < 1 || firstFrame + count - 1 > numberOfWholeFrames()) return false;
+
+    QVector<SourceField> fields;
+    qint32 startIndex = 0;
+    qint32 endIndex = 0;
+    SourceField::loadFields(sourceVideo, ldDecodeMetaData, firstFrame, count, getLookBehindFrames(), getLookAheadFrames(), fields, startIndex, endIndex);
+    QVector<ComponentFrame> frames(count);
+    hvdDecoder.decodeFrames(fields, startIndex, endIndex, frames);
+    for (qint32 i = 0; i < count; i++) predecoded.insert(firstFrame + i, frames[i]);
+    predecodedGeneration = settingsGeneration;
+    return true;
+}
+
 // Ensure the current frame has been decoded
 void TbcSource::decodeFrame()
 {
     if (decodedFrameValid) return;
+
+    // Frames that predecodeRun made with the settings that are in force now: the frame that is loaded, or the weave of two fields that is
+    // (the lines of the field of each parity from the frame that holds it)
+    if (!predecoded.isEmpty() && predecodedGeneration == settingsGeneration) {
+        if (weaveStart > 0) {
+            ComponentFrame woven;
+            if (composeWeave(weaveStart, woven)) {
+                componentFrames.resize(1);
+                componentFrames[0] = woven;
+                decodedFrameValid = true;
+                return;
+            }
+        } else {
+            const auto found = predecoded.constFind(loadedFrameNumber);
+            if (found != predecoded.constEnd()) {
+                componentFrames.resize(1);
+                componentFrames[0] = found.value();
+                decodedFrameValid = true;
+                return;
+            }
+        }
+    }
 
     loadInputFields();
 	

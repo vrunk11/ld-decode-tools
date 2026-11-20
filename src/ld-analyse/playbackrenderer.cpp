@@ -11,10 +11,17 @@
 #include "playbackrenderer.h"
 
 #include <algorithm>
+#include <cstdio>
+#include <cstdlib>
+
+#include <QElapsedTimer>
 
 class PlaybackRenderer::Worker : public QThread
 {
 public:
+    // The frames that a worker decodes together for the HVD 3D decoder (one window for the run)
+    static constexpr qint32 kRunLength = 6;
+
     Worker(PlaybackRenderer &_owner, TbcSource &_source) : owner(_owner), source(_source) {}
 
 protected:
@@ -28,6 +35,8 @@ protected:
             TbcSource::RenderSettings settings;
             quint32 generation;
             qint32 position;
+            qint32 count = 1;
+            quint32 claimedEpoch;
             bool isFieldView;
             {
                 QMutexLocker locker(&owner.mutex);
@@ -40,9 +49,16 @@ protected:
                     }
                     owner.wake.wait(&owner.mutex);
                 }
-                owner.nextToRender = position + 1;
                 settings = owner.currentSettings;
                 generation = owner.currentGeneration;
+                claimedEpoch = owner.epoch;
+                // The HVD 3D decoder decodes a window of fields: a run of frames in one window costs a lot less than the same frames each in its own
+                // (that decodes the frames around each of them again), and the playback must beat the clock
+                const bool run = settings.hvdSettings.enabled && settings.hvdSettings.temporal && settings.chromaOn && !settings.isLive
+                                 && settings.viewMode == TbcSource::ViewMode::FRAME_VIEW && settings.sourceMode == TbcSource::ONE_SOURCE;
+                // (the positions of a weave are fields, and the frames of the run are decoded once for the weaves that they are in: twice the positions)
+                if (run) count = std::max<qint32>(1, std::min(settings.weave ? 2 * kRunLength : kRunLength, owner.lastPosition - position + 1));
+                owner.nextToRender = position + count;
             }
 
             // The metadata is read here, in the worker, the first time it is needed
@@ -66,19 +82,43 @@ protected:
             }
 
             isFieldView = settings.viewMode == TbcSource::ViewMode::FIELD_VIEW;
-            if (settings.weave) {
-                // (the position is a field: the image is the weave of it and the next)
-                source.loadWeave(position);
-            } else {
-                source.load(isFieldView ? (position + 1) / 2 : position, isFieldView ? position : position * 2 - 1);
+            QElapsedTimer runTimer;
+            runTimer.start();
+            if (count > 1) {
+                if (settings.weave) {
+                    // the frames that hold the fields of the weaves of the run
+                    const qint32 firstFrame = (position + 1) / 2;
+                    const qint32 lastFrame = std::min((position + count) / 2 + 1, source.getNumberOfFrames());
+                    source.predecodeRun(firstFrame, lastFrame - firstFrame + 1);
+                } else {
+                    source.predecodeRun(position, count);
+                }
             }
-            const QImage image = source.getImage();
+            const qint64 predecodeMs = runTimer.elapsed();
+            for (qint32 k = 0; k < count; k++) {
+                const qint32 at = position + k;
+                if (settings.weave) {
+                    // (the position is a field: the image is the weave of it and the next)
+                    source.loadWeave(at);
+                } else {
+                    source.load(isFieldView ? (at + 1) / 2 : at, isFieldView ? at : at * 2 - 1);
+                }
+                const QImage image = source.getImage();
 
-            {
-                QMutexLocker locker(&owner.mutex);
-                owner.ready.insert(position, Rendered{image, generation});
+                {
+                    QMutexLocker locker(&owner.mutex);
+                    // (the settings changed while this run was being decoded: what is left of it is of no use)
+                    if (owner.stopping) return;
+                    // (the playback looped while this run was being decoded)
+                    if (owner.epoch != claimedEpoch) break;
+                    owner.ready.insert(at, Rendered{image, generation});
+                }
+                emit owner.imageReady();
             }
-            emit owner.imageReady();
+            if (std::getenv("LD_ANALYSE_TIMING")) {
+                std::fprintf(stderr, "worker: positions %d..%d, %lld ms (the decoding of the run %lld ms)\n", position, position + count - 1,
+                             static_cast<long long>(runTimer.elapsed()), static_cast<long long>(predecodeMs));
+            }
         }
     }
 
@@ -149,6 +189,17 @@ void PlaybackRenderer::setSettings(const TbcSource::RenderSettings &settings, qu
     // What was rendered with the old settings is of no use; render from the present again
     ready.clear();
     nextToRender = dueHint;
+    wake.wakeAll();
+}
+
+void PlaybackRenderer::rewind(qint32 firstPosition)
+{
+    QMutexLocker locker(&mutex);
+    epoch++;
+    ready.clear();
+    nextToRender = firstPosition;
+    dueHint = firstPosition;
+    lastTaken = firstPosition - 1;
     wake.wakeAll();
 }
 

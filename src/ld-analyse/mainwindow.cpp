@@ -895,6 +895,23 @@ void MainWindow::updatePlaybackState(bool playing)
 {
     playbackShowsPause = playing;
     if (playing) lastFrameHadStop = tbcSource.getIsFrameVbiValid() && tbcSource.getFrameVbi().picStop;
+    // The clock came to the end before the image of the last position was ready (a decoder that is behind the clock, as the HVD one is when the playback
+    // begins): the last frame is what stays on show, not the one that was ahead of the others
+    if (!playing && tbcSource.getIsSourceLoaded() && !tbcSource.getIsLive() && playbackLastPosition > 0 && playbackDue >= playbackLastPosition) {
+        const bool byFields = tbcSource.getFieldViewEnabled() && !weaveActive;
+        const qint32 lastFrame = weaveActive ? (playbackLastPosition + 1) / 2 : playbackLastPosition;
+        if (byFields) {
+            if (currentFieldNumber != playbackLastPosition) setCurrentField(playbackLastPosition);
+        } else if (currentFrameNumber != lastFrame && lastFrame >= 1 && lastFrame <= tbcSource.getNumberOfFrames()) {
+            setCurrentFrame(lastFrame);
+        }
+        const qint32 shown = byFields ? currentFieldNumber : currentFrameNumber;
+        const QSignalBlocker spinBlocker(ui->posNumberSpinBox);
+        const QSignalBlocker sliderBlocker(ui->posHorizontalSlider);
+        ui->posNumberSpinBox->setValue(shown);
+        ui->posHorizontalSlider->setValue(shown);
+        playbackDue = 0;
+    }
     if (!playing && weaveActive) {
         // The weaves were a trick of the playback: what stays on show is the real frame
         weaveActive = false;
@@ -1006,7 +1023,7 @@ void MainWindow::togglePlayback()
 void MainWindow::playbackLooped()
 {
     playbackDue = playbackFirstPosition;
-    renderer->start(tbcSource.getRenderSettings(), renderGeneration, playbackFirstPosition, playbackLastPosition, nullptr);
+    renderer->rewind(playbackFirstPosition);
     firstImageShown = false;
 #ifdef LDDECODE_HAVE_AUDIO
     if (audio && audio->isPlaying()) {

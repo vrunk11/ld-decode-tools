@@ -45,6 +45,8 @@ public:
     // A stream grows: the last position there is video for (workers run to it)
     void setLastPosition(qint32 position);
     void setSettings(const TbcSource::RenderSettings &settings, quint32 generation);
+    // Looping: go on from the first position, without waiting for the workers to finish what they are decoding (it is dropped)
+    void rewind(qint32 firstPosition);
     void stop();
     void close();
 
@@ -80,6 +82,7 @@ private:
     qint32 nextToRender = 0;
     qint32 dueHint = 0;
     qint32 lastTaken = 0;
+    quint32 epoch = 0;   // changed by a rewind: what a worker claimed before it is of no use
     bool stopping = false;
     bool failed = false;
     qint32 lookAhead = 4;

@@ -204,6 +204,12 @@ public:
     void setPrerenderedImage(qint32 position, const QImage &image);
 
     void load(qint32 frameNumber, qint32 fieldNumber);
+    // The frames firstFrame .. firstFrame + count - 1 decoded together, for the playback: the HVD 3D decoder works on a window of fields, and decoding
+    // one frame at a time it does the frames around each of them again. The next loads of these frames (frame view, the chroma decoder on) take
+    // them from here. False when this is not for the settings (then nothing was decoded, and the frames are decoded one by one as ever).
+    bool predecodeRun(qint32 firstFrame, qint32 count);
+    // The weave of the fields p and p + 1 out of the frames that predecodeRun made (false if they are not there)
+    bool composeWeave(qint32 p, ComponentFrame &out);
     // A playback trick: an image of the frame view that is the weave of the fields p and p+1, whichever frames they belong to (the
     // fields are put top field first, so the lines are where they belong). The next load() goes back to real frames.
     void loadWeave(qint32 p);
@@ -351,6 +357,9 @@ private:
     QImage prerenderedImage;
     qint32 prerenderedPosition = -1;
     quint32 prerenderedGeneration = 0;
+    // The frames decoded ahead by predecodeRun, by number, and the settings they were decoded with
+    QMap<qint32, ComponentFrame> predecoded;
+    quint32 predecodedGeneration = 0;
 
     // Chroma decoder objects
     PalColour palColour;

@@ -46,6 +46,8 @@ std::atomic<long long> g_computeNs{0};  // the iterations, with the sums coming 
 std::atomic<long long> g_copyNs{0};     // (statistics) the copies of the planes around the device call
 std::atomic<long long> g_deviceNs{0};   // the device call as a whole (Prepare, writes, iterations, reads)
 std::atomic<long long> g_motionNs{0};  // the searches for the motion on the device
+std::atomic<long long> g_openNs{0};  // opening the windows (the buffers of the fields)
+std::atomic<long long> g_openCalls{0};
 std::atomic<long long> g_motionCalls{0};
 
 // HVD_OPENCL_PROFILE: the time of each kernel on the device, from the events of the queue, said at the exit
@@ -2200,7 +2202,8 @@ void PrintProfile() {
 void PrintStats() {
   std::fprintf(stderr, "HVD OpenCL: %lld solves, %.2f s held (uploads %.2f s, iterations %.2f s), %.2f s waited for a worker\n", g_stats.calls.load(),
                g_stats.heldNs.load() / 1e9, g_uploadNs.load() / 1e9, g_computeNs.load() / 1e9, g_stats.waitNs.load() / 1e9);
-  std::fprintf(stderr, "HVD OpenCL: solves of fields %.2f s, %lld searches for the motion %.2f s\n", g_deviceNs.load() / 1e9, g_motionCalls.load(), g_motionNs.load() / 1e9);
+  std::fprintf(stderr, "HVD OpenCL: solves of fields %.2f s, %lld searches for the motion %.2f s, %lld windows opened in %.2f s\n", g_deviceNs.load() / 1e9, g_motionCalls.load(), g_motionNs.load() / 1e9,
+               g_openCalls.load(), g_openNs.load() / 1e9);
 }
 
 class SolveTimer {
@@ -2486,7 +2489,10 @@ std::unique_ptr<Window> Window::Open(int height, int width, int fields) {
   g_stats.waitNs += std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - tw0).count();
   if (!worker) return nullptr;
   try {
+    const auto to0 = std::chrono::steady_clock::now();
     worker->OpenWindow(height, width, fields);
+    g_openNs += std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - to0).count();
+    ++g_openCalls;
   } catch (const std::exception&) {
     // no room for it (or no more): the CPU decodes this window, the GPU stays on for the others
     try {
