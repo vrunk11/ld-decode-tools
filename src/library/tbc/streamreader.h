@@ -67,6 +67,8 @@ public:
 
     // Wait for the 0-based field to be read: false if the stream ended before it
     bool hasField(qint32 index);
+    // Whether the 0-based field has been read already, without waiting for it
+    bool hasFieldArrived(qint32 index);
     // Get the field, waiting for it if need be: false if the stream ended before it.
     // Aborts, saying why, if the field has already left the window.
     bool getField(qint32 index, Data &data);

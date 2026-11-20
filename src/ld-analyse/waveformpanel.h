@@ -82,6 +82,8 @@ public:
     // (one line of buttons: the controls beside the waveform in a single row)
     enum class Density { Large = 0, Compact = 1, Ultra = 2 };
     void setDensity(Density density);
+    // The controls alone, in one row, to be put elsewhere (the window of a monitor puts them in its bar): the panel is left without them, and is not shown
+    QWidget *detachControls();
     bool muted() const;
     void setMuted(bool muted);
     void setMessage(const QString &text) { view->setMessage(text); }

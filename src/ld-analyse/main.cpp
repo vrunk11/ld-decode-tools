@@ -86,6 +86,10 @@ int main(int argc, char *argv[])
                                       QCoreApplication::translate("main", "Piped input: hold the producer back to the pace of the viewer, instead of overwriting old video. For video that arrives faster than it plays (a file, or a decoder that is not live); pausing then holds the input up"));
     parser.addOption(throttleOption);
 
+    QCommandLineOption monitorOption(QStringList() << "monitor",
+                                     QCoreApplication::translate("main", "Piped input: a monitor. The video comes a frame now and then, from a program that decides which (RF-tools asking ld-decode for a frame): the newest frame is shown at once and stays until the next comes, nothing is played, and the earlier ones can be gone through"));
+    parser.addOption(monitorOption);
+
     QCommandLineOption ignoreMapOption("ignore-map", QCoreApplication::translate("main", "Read the capture as it is, though its metadata keep a map (the frames in the order of the disc, from ld-discmap)"));
     parser.addOption(ignoreMapOption);
 
@@ -161,6 +165,11 @@ int main(int argc, char *argv[])
         // Each of the two buffers holds about 5 seconds of video: how far back a paused input can be gone through
         streamInput.bufferFrames = streamInput.system == PAL ? 125 : 150;
         streamInput.throttle = parser.isSet(throttleOption);
+        streamInput.monitor = parser.isSet(monitorOption);
+        if (streamInput.monitor && streamInput.throttle) {
+            qCritical("--monitor and --throttle do not go together: a monitor never holds the input up");
+            return 2;
+        }
         if (parser.isSet(bufferFramesOption)) {
             streamInput.bufferFrames = parser.value(bufferFramesOption).toInt();
             if (streamInput.bufferFrames < 1) {
@@ -168,7 +177,7 @@ int main(int argc, char *argv[])
                 return 2;
             }
         }
-    } else if (pipedOptions.isFormatSet(parser) || pipedOptions.isSystemSet(parser) || parser.isSet(bufferFramesOption) || parser.isSet(throttleOption)) {
+    } else if (pipedOptions.isFormatSet(parser) || pipedOptions.isSystemSet(parser) || parser.isSet(bufferFramesOption) || parser.isSet(throttleOption) || parser.isSet(monitorOption)) {
         qWarning() << "--input-format, --system and the other piped input options only apply to piped input (ld-analyse -)";
     }
 

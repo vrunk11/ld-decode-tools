@@ -383,6 +383,21 @@ private:
     void updateLive();
     void updateLiveControls();
     void updateLiveGraphs();
+    // A monitor (--monitor): show the newest frame that has come, while the one on show is the newest; keep what is gone through
+    void updateMonitor(bool ended);
+    void applyMonitorLayout();
+    // The width the labels of the buttons are chosen by: that of the window, less what the controls of the sound of a monitor take of its bar
+    qint32 layoutWidth() const;
+    void refreshButtonLabels();
+    void fitMonitorButtons();
+    // The highlight of the Dropouts button (the frame on show has dropouts), kept lit for a moment when the frames go by quickly
+    void setDropoutHighlight(bool present);
+    void applyDropoutHighlight(bool lit);
+    bool dropoutLit = false;
+    QTimer *dropoutClearTimer = nullptr;
+    QElapsedTimer dropoutUpdateClock;
+    QWidget *monitorAudioControls = nullptr;   // the controls of the sound of a monitor, in its bar (null when it is not one)
+    qint32 monitorNewest = 0;              // the newest frame that was shown as the newest
     QTimer *snrFileTimer = nullptr;        // refreshes the SNR graphs while a file is measured from its video
     void setFileSnrMeasuring(bool measuring);
     void updateFileSnrGraphs();
