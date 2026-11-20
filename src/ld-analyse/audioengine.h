@@ -71,6 +71,8 @@ public:
 
     // The audio is this many milliseconds later than the video (negative: earlier)
     void setOffsetMs(qint32 milliseconds);
+    // How late the picture is shown after it is made (another program shows it, as VLC, which measures it): the sound is that much later as well
+    void setDisplayLatencyMs(qint32 milliseconds);
 
     double sampleRate() const;
     qint64 samples() const;
@@ -134,6 +136,7 @@ private:
     double mixVolume = 1.0;
     bool mixMuted = false;
     qint32 offsetMs = 0;
+    qint32 displayLatencyMs = 0;
     QVector<qint64> fieldSamples;
     double fieldRate = 0.0;
     bool usesFieldSamples() const;

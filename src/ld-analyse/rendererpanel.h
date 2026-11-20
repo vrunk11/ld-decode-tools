@@ -48,6 +48,8 @@ private:
     struct OptionRow {
         QString module, name;
         bool isInteger = false;
+        bool isBoolean = false;
+        bool isChoice = false;
         QCheckBox *set = nullptr;
         QWidget *value = nullptr;
     };
@@ -68,6 +70,7 @@ private:
     QString failure;                    // why VLC could not be asked (empty if it was)
     bool loading = false;
     bool building = false;
+    bool resetFromVlc = false;          // (VLC was asked again by the person: what is chosen is set from its preferences when it answers)
 
     QWidget *vlcPage = nullptr;
     QWidget *commandPage = nullptr;

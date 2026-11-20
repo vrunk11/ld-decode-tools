@@ -220,6 +220,11 @@ void AudioEngine::setOffsetMs(qint32 milliseconds)
     offsetMs = milliseconds;
 }
 
+void AudioEngine::setDisplayLatencyMs(qint32 milliseconds)
+{
+    displayLatencyMs = milliseconds;
+}
+
 double AudioEngine::sampleRate() const { return reader ? reader->sampleRate() : 44100.0; }
 qint64 AudioEngine::samples() const { return reader ? reader->samples() : 0; }
 double AudioEngine::durationSeconds() const { return reader ? static_cast<double>(reader->samples()) / reader->sampleRate() : 0.0; }
@@ -227,13 +232,13 @@ double AudioEngine::durationSeconds() const { return reader ? static_cast<double
 qint64 AudioEngine::sampleAt(double videoSeconds) const
 {
     if (usesFieldSamples()) {
-        const double position = (videoSeconds - offsetMs / 1000.0) * fieldRate;
+        const double position = (videoSeconds - (offsetMs + displayLatencyMs) / 1000.0) * fieldRate;
         const qint64 last = fieldSamples.size() - 1;
         const qint64 field = qBound<qint64>(0, static_cast<qint64>(std::floor(position)), last - 1);
         const double fraction = qBound(0.0, position - static_cast<double>(field), 1.0);
         return fieldSamples[field] + static_cast<qint64>(fraction * static_cast<double>(fieldSamples[field + 1] - fieldSamples[field]));
     }
-    return static_cast<qint64>((videoSeconds - trackStartSeconds() - offsetMs / 1000.0) * sampleRate());
+    return static_cast<qint64>((videoSeconds - trackStartSeconds() - (offsetMs + displayLatencyMs) / 1000.0) * sampleRate());
 }
 
 double AudioEngine::videoSecondsOf(qint64 sample) const
@@ -243,9 +248,9 @@ double AudioEngine::videoSecondsOf(qint64 sample) const
         const qint64 field = qBound<qint64>(0, static_cast<qint64>(above - fieldSamples.constBegin()) - 1, fieldSamples.size() - 2);
         const qint64 span = fieldSamples[field + 1] - fieldSamples[field];
         const double fraction = span > 0 ? static_cast<double>(sample - fieldSamples[field]) / static_cast<double>(span) : 0.0;
-        return (static_cast<double>(field) + fraction) / fieldRate + offsetMs / 1000.0;
+        return (static_cast<double>(field) + fraction) / fieldRate + (offsetMs + displayLatencyMs) / 1000.0;
     }
-    return static_cast<double>(sample) / sampleRate() + trackStartSeconds() + offsetMs / 1000.0;
+    return static_cast<double>(sample) / sampleRate() + trackStartSeconds() + (offsetMs + displayLatencyMs) / 1000.0;
 }
 
 bool AudioEngine::start(double videoSeconds)

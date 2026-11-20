@@ -39,6 +39,26 @@ struct LibVlc {
     void (*setAspectRatio)(Player *, const char *) = nullptr;
     const char *(*version)() = nullptr;
 
+    // From libvlccore (next to libvlc): a variable of an object of VLC. libvlc_media_player_set_hwnd (and its kin) set the video output of the player back to "any"; the one
+    // that was chosen is set again on the player with it (the player is an object of VLC). Null if it is not there.
+    union Value {
+        int64_t integer;
+        const char *string;
+        void *address;
+    };
+    int (*varSetChecked)(void *, const char *, int, Value) = nullptr;
+    int (*varType)(void *, const char *) = nullptr;
+    // The objects under an object (the video outputs of the player): a list of them, released with listRelease
+    struct List {
+        int type;
+        int count;
+        Value *values;
+    };
+    List *(*listChildren)(void *) = nullptr;
+    void (*listRelease)(List *) = nullptr;
+    static constexpr int varInteger = 0x0030;
+    static constexpr int varString = 0x0040;
+
     // Load it from the folder of the VLC at `vlcExecutable` (the libvlc that is next to it, or the system's): the same one for every call. Null, with the reason, if it
     // cannot be had.
     static const LibVlc *load(const QString &vlcExecutable, QString &error);

@@ -67,11 +67,9 @@ RendererPanel::RendererPanel(QWidget *parent)
     deinterlaceRow->addWidget(new QLabel(tr("Deinterlacing:"), vlcPage));
     deinterlaceCombo = new QComboBox(vlcPage);
     deinterlaceCombo->addItem(tr("VLC's default mode"), QString());
-    deinterlaceCombo->addItem(tr("Off"), QStringLiteral("off"));
     deinterlaceRow->addWidget(deinterlaceCombo, 1);
     vlcLayout->addLayout(deinterlaceRow);
-    vlcLayout->addWidget(makeHint(tr("For the Deinterlaced view of the view button: the other views are shown as they are (the frame view interlaced), and a field or the two fields "
-                                     "side by side are not interlaced. The picture is shown in the window of ld-analyse, at its size and in the aspect ratio that was chosen.")));
+    vlcLayout->addWidget(makeHint(tr("Used in the Deinterlaced view only.")));
 
     // The options that VLC lists for the modules of the picture and for the video output, each with its own switch: an option that is not set is VLC's (its
     // preferences). A change of one starts VLC again with it.
@@ -111,22 +109,13 @@ RendererPanel::RendererPanel(QWidget *parent)
 
     connect(reloadButton, &QPushButton::clicked, this, [this]() {
         if (loading) return;
-        // What VLC says is made again, and what was set from the old list goes with it: the video output and the options are VLC's own again (the path of VLC, the
-        // deinterlacing and the other arguments are kept)
-        if (!rows.isEmpty() || !voutValue().isEmpty()) {
-            const auto answer = QMessageBox::question(this, tr("Ask VLC again"), tr("VLC will be asked again for what it has. The video output and the options that were set are reset to VLC's own. Go on?"));
-            if (answer != QMessageBox::Yes) return;
-        }
-        building = true;
-        current.options.clear();
-        current.vout.clear();
-        voutCombo->setCurrentIndex(0);
-        building = false;
-        rebuildEffects();
+        // What VLC has is asked again, and its preferences are read again: the video output, the deinterlacing and the options are set as they are in VLC (when
+        // the answer comes, see helpLoaded). The path of VLC and the other arguments are kept.
+        const auto answer = QMessageBox::question(this, tr("Ask VLC again"), tr("VLC will be asked again for what it has, and the video output, the deinterlacing and the options will be set as they are in the preferences of VLC. Go on?"));
+        if (answer != QMessageBox::Yes) return;
+        resetFromVlc = true;
         helpReady = false;
         loadHelp(true);
-        updatePreview();
-        emit changed();
     });
     connect(browse, &QPushButton::clicked, this, &RendererPanel::chooseVlc);
     connect(pathEdit, &QLineEdit::editingFinished, this, [this]() {
@@ -151,7 +140,12 @@ RendererPanel::RendererPanel(QWidget *parent)
         updatePreview();
         emit changed();
     };
-    connect(deinterlaceCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, edited);
+    connect(deinterlaceCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this]() {
+        if (building) return;
+        rebuildEffects();
+        updatePreview();
+        emit changed();
+    });
     connect(extraEdit, &QLineEdit::textChanged, this, edited);
     connect(commandEdit, &QLineEdit::textChanged, this, edited);
 
@@ -212,7 +206,9 @@ RendererSettings RendererPanel::settings() const
         for (const OptionRow &row: rows) {
             if (!row.set->isChecked()) continue;
             QString text;
-            if (row.isInteger) text = QString::number(static_cast<QSpinBox *>(row.value)->value());
+            if (row.isBoolean) text = static_cast<QCheckBox *>(row.value)->isChecked() ? QStringLiteral("true") : QStringLiteral("false");
+            else if (row.isChoice) text = static_cast<QComboBox *>(row.value)->currentData().toString();
+            else if (row.isInteger) text = QString::number(static_cast<QSpinBox *>(row.value)->value());
             else text = QString::number(static_cast<QDoubleSpinBox *>(row.value)->value(), 'g', 6);
             options << QString("%1:%2=%3").arg(row.module, row.name, text);
         }
@@ -296,14 +292,43 @@ void RendererPanel::helpLoaded(const QString &path, bool ok, const QString &erro
     else voutCombo->setCurrentIndex(0);
     deinterlaceCombo->clear();
     deinterlaceCombo->addItem(tr("VLC's default mode"), QString());
-    deinterlaceCombo->addItem(tr("Off"), QStringLiteral("off"));
     for (const QString &mode: help.deinterlaceModes) deinterlaceCombo->addItem(mode, mode);
+    // (the deinterlacers that were added to VLC, as VLC lists them: they are not modes of VLC's, VLC tries them before its own)
+    for (const QString &module: help.deinterlacers) {
+        const QString name = help.moduleNames.value(module);
+        deinterlaceCombo->addItem(name.isEmpty() ? module : QString("%1 (%2)").arg(name, module), "filter:" + module);
+    }
     deinterlaceCombo->setCurrentIndex(qMax(0, deinterlaceCombo->findData(deinterlace)));
     building = false;
 
     rebuildEffects();
     updateStatus();
     updatePreview();
+
+    // Asked again by the person: what is chosen is what is set in the preferences of VLC (VLC's own choice for what is not set there), and it is kept as what is chosen
+    if (resetFromVlc) {
+        resetFromVlc = false;
+        building = true;
+        const QString vout = help.vlcSettings.value("vout");
+        voutCombo->setCurrentIndex(qMax(0, voutCombo->findData(help.videoOutputs.contains(vout) ? vout : QString())));
+        const QString mode = help.vlcSettings.value("deinterlace-mode");
+        deinterlaceCombo->setCurrentIndex(qMax(0, deinterlaceCombo->findData(help.deinterlaceModes.contains(mode) ? mode : QString())));
+        current.options.clear();
+        for (auto module = help.modules.constBegin(); module != help.modules.constEnd(); ++module) {
+            for (const VlcSupport::Option &option: module.value()) {
+                const auto set = help.vlcSettings.constFind(option.name);
+                if (set == help.vlcSettings.constEnd()) continue;
+                QString value = set.value();
+                if (option.isBoolean) value = value.toInt() != 0 ? QStringLiteral("true") : QStringLiteral("false");
+                current.options << QString("%1:%2=%3").arg(module.key(), option.name, value);
+            }
+        }
+        rows.clear();
+        building = false;
+        rebuildEffects();
+        updatePreview();
+        emit changed();
+    }
 }
 
 void RendererPanel::updateStatus()
@@ -320,7 +345,7 @@ void RendererPanel::updateStatus()
 // The options of the modules of the picture, and of the video output that is chosen: a switch, a name and a control of the range VLC says, for each
 void RendererPanel::rebuildEffects()
 {
-    // What is set now is kept across the rebuild (the video output changes the list)
+    // What is set now is kept across the rebuild (the video output or the deinterlacer change the list)
     QStringList keep = rows.isEmpty() ? current.options : settings().options;
     while (QLayoutItem *item = effectsLayout->takeAt(0)) {
         delete item->widget();
@@ -328,52 +353,65 @@ void RendererPanel::rebuildEffects()
     }
     rows.clear();
 
+    // The modules of the picture, then the video output and the deinterlacer that are chosen, when VLC lists options for them (the ones of a module that was added to
+    // VLC, as an upscaler, are there as well). They are given to the libvlc of ld-analyse only: the preferences of VLC are not changed.
     QStringList modules = { "adjust", "sharpen", "gradfun", "grain" };
     const QString vout = voutValue();
-    if (!vout.isEmpty() && help.modules.contains(vout)) modules << vout;
+    if (!vout.isEmpty() && help.modules.contains(vout)) modules.prepend(vout);
+    const QString deinterlace = helpReady ? deinterlaceCombo->currentData().toString() : current.deinterlace;
+    if (deinterlace.startsWith(QLatin1String("filter:"))) {
+        const QString module = deinterlace.mid(7);
+        if (help.modules.contains(module)) modules.insert(vout.isEmpty() || !help.modules.contains(vout) ? 0 : 1, module);
+    }
     for (const QString &module: modules) {
         const QVector<VlcSupport::Option> options = help.modules.value(module);
-        QVector<VlcSupport::Option> numbers;
-        for (const VlcSupport::Option &option: options) {
-            if (!option.isBoolean) numbers.push_back(option);
-        }
-        if (numbers.isEmpty()) continue;
+        if (options.isEmpty()) continue;
         const QString title = help.moduleNames.value(module).isEmpty() ? module : help.moduleNames.value(module);
         QGroupBox *box = new QGroupBox(title, effectsWidget);
         QVBoxLayout *boxLayout = new QVBoxLayout(box);
-        for (const VlcSupport::Option &option: numbers) {
+        for (const VlcSupport::Option &option: options) {
             OptionRow row;
             row.module = module;
             row.name = option.name;
             row.isInteger = option.isInteger;
+            row.isBoolean = option.isBoolean;
+            row.isChoice = option.isChoice;
             QHBoxLayout *line = new QHBoxLayout;
             row.set = new QCheckBox(option.description.isEmpty() ? option.name : option.description, box);
             row.set->setToolTip("--" + option.name);
             line->addWidget(row.set, 1);
-            if (option.isInteger) {
+            // (a change of the value sets the option)
+            const auto valueChanged = [this, row]() {
+                if (building) return;
+                if (!row.set->isChecked()) row.set->setChecked(true);
+                updatePreview();
+                emit changed();
+            };
+            if (option.isBoolean) {
+                QCheckBox *on = new QCheckBox(tr("on"), box);
+                on->setChecked(VlcSupport::defaultOf(option) != 0.0);
+                row.value = on;
+                connect(on, &QCheckBox::toggled, this, valueChanged);
+            } else if (option.isChoice) {
+                QComboBox *list = new QComboBox(box);
+                for (qsizetype i = 0; i < option.choices.size(); i++) list->addItem(option.choiceLabels.value(i, option.choices[i]), option.choices[i]);
+                if (!option.defaultText.isEmpty()) list->setCurrentIndex(qMax(0, list->findData(option.defaultText)));
+                row.value = list;
+                connect(list, QOverload<int>::of(&QComboBox::currentIndexChanged), this, valueChanged);
+            } else if (option.isInteger) {
                 QSpinBox *spin = new QSpinBox(box);
                 spin->setRange(static_cast<int>(option.minimum), static_cast<int>(option.maximum));
                 spin->setValue(static_cast<int>(VlcSupport::defaultOf(option)));
                 row.value = spin;
-                connect(spin, QOverload<int>::of(&QSpinBox::valueChanged), this, [this, row]() {
-                    if (building) return;
-                    if (!row.set->isChecked()) row.set->setChecked(true);
-                    updatePreview();
-                    emit changed();
-                });
+                connect(spin, QOverload<int>::of(&QSpinBox::valueChanged), this, valueChanged);
             } else {
                 QDoubleSpinBox *spin = new QDoubleSpinBox(box);
                 spin->setDecimals(3);
                 spin->setRange(option.minimum, option.maximum);
-                spin->setSingleStep(qMax(0.001, (option.maximum - option.minimum) / 100.0));
+                spin->setSingleStep(option.minimum <= -1000000.0 ? 0.1 : qMax(0.001, (option.maximum - option.minimum) / 100.0));
                 spin->setValue(VlcSupport::defaultOf(option));
                 row.value = spin;
-                connect(spin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this, row]() {
-                    if (building) return;
-                    if (!row.set->isChecked()) row.set->setChecked(true);
-                    updatePreview();
-                    emit changed();
-                });
+                connect(spin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, valueChanged);
             }
             line->addWidget(row.value);
             boxLayout->addLayout(line);
@@ -386,10 +424,12 @@ void RendererPanel::rebuildEffects()
             for (const QString &entry: keep) {
                 const QString prefix = QString("%1:%2=").arg(module, option.name);
                 if (!entry.startsWith(prefix)) continue;
-                const double value = entry.mid(prefix.size()).toDouble();
+                const QString value = entry.mid(prefix.size());
                 const QSignalBlocker blocker(row.value);
-                if (option.isInteger) static_cast<QSpinBox *>(row.value)->setValue(static_cast<int>(value));
-                else static_cast<QDoubleSpinBox *>(row.value)->setValue(value);
+                if (option.isBoolean) static_cast<QCheckBox *>(row.value)->setChecked(value == "true");
+                else if (option.isChoice) static_cast<QComboBox *>(row.value)->setCurrentIndex(qMax(0, static_cast<QComboBox *>(row.value)->findData(value)));
+                else if (option.isInteger) static_cast<QSpinBox *>(row.value)->setValue(value.toInt());
+                else static_cast<QDoubleSpinBox *>(row.value)->setValue(value.toDouble());
                 const QSignalBlocker setBlocker(row.set);
                 row.set->setChecked(true);
             }
@@ -405,7 +445,8 @@ void RendererPanel::updatePreview()
     const RendererSettings chosen = settings();
     if (chosen.engine == RendererSettings::Vlc) {
         // (VLC is the libvlc of the program: it is started with these arguments, and given the deinterlacing for the Deinterlaced view in place)
-        const QString mode = chosen.deinterlace == "off" ? tr("off") : (chosen.deinterlace.isEmpty() ? QStringLiteral("auto") : chosen.deinterlace);
+        QString mode = chosen.deinterlace.isEmpty() ? QStringLiteral("auto") : chosen.deinterlace;
+        if (mode.startsWith(QLatin1String("filter:"))) mode = mode.mid(7);
         previewLabel->setText(tr("libvlc: %1 (deinterlacing in the Deinterlaced view: %2)").arg(chosen.libvlcArguments().join(' '), mode));
         return;
     }

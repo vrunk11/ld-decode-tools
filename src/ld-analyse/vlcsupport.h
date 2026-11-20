@@ -24,20 +24,27 @@ namespace VlcSupport {
 // The VLC to use: the one that was given, if it exists, then where the system puts it, then the PATH. Empty if it is not found.
 QString find(const QString &configured);
 
-// An option of a module that is a number or a switch, as VLC lists it
+// An option of a module that is a number, a switch or one of a list, as VLC lists it
 struct Option {
     QString name;            // as on the command line, without the dashes: "sharpen-sigma"
     QString description;
     bool isInteger = false;
     bool isBoolean = false;
+    bool isChoice = false;           // one of a list: choices are the values, choiceLabels what VLC calls them
+    QStringList choices, choiceLabels;
     double minimum = 0.0, maximum = 1.0;
+    double defaultValue = 0.0;       // the value VLC uses: its own (of the module), or the one set in the preferences of VLC (vlcrc), when it is known
+    bool hasDefault = false;
+    QString defaultText;             // (the same, for one of a list)
 };
 
 struct Help {
     QStringList videoOutputs;                      // the modules --vout takes (direct3d11, tscale...)
     QStringList deinterlaceModes;                  // what --deinterlace-mode takes (blend, yadif...)
+    QStringList deinterlacers;                     // the deinterlacers that were added to VLC: video filters that answer to "deinterlace" before VLC's own
     QMap<QString, QVector<Option>> modules;        // the options of each module that has some that are numbers or switches
     QMap<QString, QString> moduleNames;            // what VLC calls each module
+    QMap<QString, QString> vlcSettings;            // the options that were set in the preferences of VLC, with their values
 };
 
 // Ask VLC, or read what it said the first time it was asked about this file (it is asked again only with refresh, which is a button of the person's: it is for
@@ -52,6 +59,13 @@ double defaultOf(const Option &option);
 
 // Parse the text of --full-help (for load, and the tests)
 bool parse(const QString &text, Help &help);
+
+// The text of the preferences of VLC (its vlcrc): "#name=value" is the value of the module, "name=value" one that was set in VLC. They are what the options start
+// at, and the ones set in VLC are kept in vlcSettings (load reads the file when VLC is asked, and keeps it with its answers).
+void applyConfiguration(const QString &text, Help &help);
+
+// Parse the text of --list-verbose: the modules, with their names, what they answer to (s) and what they do with their score (c)
+void parseModules(const QString &text, Help &help);
 
 }
 

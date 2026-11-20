@@ -24,7 +24,7 @@ struct RendererSettings {
     // VLC
     QString vlcPath;                 // where it is, if it was not found by itself
     QString vout;                    // the video output module (empty: VLC's own choice, or the one of its preferences)
-    QString deinterlace;             // empty: the setting of VLC; "off"; or a mode (yadif, blend...)
+    QString deinterlace;             // empty: the setting of VLC; a mode (yadif, blend...); or "filter:" and the module of a deinterlacer that was added to VLC
     QStringList options;             // the options that are set: "module:name=value" (the filters of the picture, the options of the video output)
     QString extra;                   // other arguments for VLC, as they are written on a command line
 

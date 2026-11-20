@@ -76,6 +76,16 @@ const LibVlc *LibVlc::load(const QString &vlcExecutable, QString &error)
     symbol("libvlc_video_set_deinterlace", api.setDeinterlace);
     symbol("libvlc_video_set_aspect_ratio", api.setAspectRatio);
     symbol("libvlc_get_version", api.version, false);
+    // (libvlccore was loaded with libvlc: it is in the same folder)
+    {
+        QLibrary core(QFileInfo(loadedFrom).absolutePath() + QStringLiteral("/libvlccore"));
+        if (core.load()) {
+            api.varSetChecked = reinterpret_cast<decltype(api.varSetChecked)>(core.resolve("var_SetChecked"));
+            api.varType = reinterpret_cast<decltype(api.varType)>(core.resolve("var_Type"));
+            api.listChildren = reinterpret_cast<decltype(api.listChildren)>(core.resolve("vlc_list_children"));
+            api.listRelease = reinterpret_cast<decltype(api.listRelease)>(core.resolve("vlc_list_release"));
+        }
+    }
     if (!complete) {
         library->unload();
         delete library;

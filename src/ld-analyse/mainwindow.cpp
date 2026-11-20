@@ -373,6 +373,22 @@ void MainWindow::setupExternalRenderer()
     };
     connect(externalRenderer, &ExternalRenderer::stopped, this, renderStopped);
     connect(vlcRenderer, &VlcRenderer::stopped, this, renderStopped);
+    // (VLC's deinterlacer gives out the picture on show when it has the frame that follows: it is made as the one the filters of ld-analyse look at)
+    connect(vlcRenderer, &VlcRenderer::nextWanted, this, [this](qint32 frame) {
+        if (!deinterlacedView || frame != currentFrameNumber + 1) return;
+        vlcRenderer->setNextImage(activeAreaOf(contextImage(frame)), frame);
+    });
+    // (VLC shows the picture later than ld-analyse makes it, by what it measured when it started: the sound is made that much later, to be with the picture)
+    connect(vlcRenderer, &VlcRenderer::previousWanted, this, [this](qint32 frame) {
+        if (!deinterlacedView || frame != currentFrameNumber - 1) return;
+        vlcRenderer->setPreviousImage(activeAreaOf(contextImage(frame)), frame);
+    });
+    connect(vlcRenderer, &VlcRenderer::latencyMeasured, this, [this](qint32 milliseconds) {
+#ifdef LDDECODE_HAVE_AUDIO
+        if (audio) audio->setDisplayLatencyMs(milliseconds);
+#endif
+        statusBar()->showMessage(tr("VLC shows the picture %1 ms after it is made: the sound follows it").arg(milliseconds), 5000);
+    });
 
     // What shows the picture is what was chosen: it is started, with the first picture, when one was
     if (rendererSettings.engine != RendererSettings::Ffmpeg) applyRendererSettings(rendererSettings);
@@ -415,6 +431,10 @@ void MainWindow::setExternalRendererOn(bool on)
     const bool useCommand = on && rendererSettings.engine == RendererSettings::Command;
     vlcRenderer->setEnabled(useVlc);
     externalRenderer->setEnabled(useCommand);
+#ifdef LDDECODE_HAVE_AUDIO
+    // (the picture is shown by ld-analyse, or by VLC that measures how late it is when it starts)
+    if (!useVlc && audio) audio->setDisplayLatencyMs(0);
+#endif
     if (!on) externalPictureSize = QSizeF();
     const bool embedded = useVlc || (useCommand && externalRenderer->embeds());
     ui->scrollArea->setVisible(!embedded);
@@ -1601,8 +1621,9 @@ void MainWindow::showImage()
         timeCodeStatus.hide();
     }
 
-    // If there are dropouts in the frame, highlight the show dropouts button
-    if (tbcSource.getIsDropoutPresent()) {
+    // The Dropouts button is lit when the dropouts are shown (On), as a button that is on; not when the frame has some (it looked on while it was off, and blinked
+    // as the frames went by)
+    if (tbcSource.getHighlightDropouts()) {
         // Light grey on a light theme (as before themes existed); on a dark
         // one a lighter shade of the button, so it stands out without
         // becoming a light patch with unreadable light text
@@ -1704,7 +1725,7 @@ void MainWindow::updateImageViewer()
         if (shownByVlc) {
             vlcRenderer->setDeinterlace(rendererSettings.deinterlaceMode(deinterlaced));
             vlcRenderer->setAspect(aspect);
-            vlcRenderer->setImage(image, videoFrameRate(tbcSource.getSystem()));
+            vlcRenderer->setImage(image, videoFrameRate(tbcSource.getSystem()), deinterlaced ? currentFrameNumber : -1, playback->isPlaying());
         } else {
             externalRenderer->setVariable("deinterlace", rendererSettings.deinterlaceArguments(deinterlaced));
             externalRenderer->setVariable("aspect", aspect);
