@@ -8,6 +8,7 @@
 #include <cstdlib>
 
 #include "engine/gradients.h"
+#include "gpu/gpu_solver.h"
 
 namespace hvd {
 
@@ -528,6 +529,28 @@ RefineResult VariationalRefine(const Plane& s, const ComplexPlane& carrier,
     mu_v *= scale;
     mu_d *= scale;
   }
+  // On a GPU, when it was asked for and there is one: the same solve, with the parameters resolved here (the CPU goes on if it cannot)
+  if (cfg.use_gpu && chi0.height() >= 2 && chi0.width() >= 2) {
+    gpu::SolveParameters gp;
+    gp.eps = eps;
+    gp.eps_c = eps_c;
+    gp.eps_t = eps_t;
+    gp.mu_h = mu_h;
+    gp.mu_v = mu_v;
+    gp.mu_d = mu_d;
+    gp.k = cfg.structure_coupling;
+    gp.nu = neighbors.empty() ? 0.0F : cfg.temporal_strength;
+    gp.irls_outer = std::max(1, cfg.irls_outer);
+    gp.n_inner = std::max(1, (cfg.fast ? cfg.cg_iterations * 2 / 3 : cfg.cg_iterations) / gp.irls_outer);
+    gp.cg_tol = cfg.cg_tol > 0.0F ? cfg.cg_tol : (cfg.fast ? 0.10F : 0.02F);
+    ComplexPlane chi = chi0;
+    if (gpu::Solve(s, carrier, gp, neighbors, &chi)) {
+      RefineResult out;
+      out.luma = Luma(s, chi, carrier);
+      out.chroma = std::move(chi);
+      return out;
+    }
+  }
   if (neighbors.empty() && !(mu_d > 0.0F) && chi0.height() >= 2 && chi0.width() >= 2) {
     return RefineDecoupled(s, carrier, chi0, cfg, mu_h, mu_v);
   }
@@ -907,6 +930,28 @@ RefineResult VariationalRefineJoint(const Plane& s, const ComplexPlane& carrier,
 
   Plane Y = y0;
   ComplexPlane chi = chi0;
+
+  // On a GPU, when it was asked for and there is one (the CPU goes on if it cannot)
+  if (cfg.use_gpu && H >= 2 && W >= 2) {
+    gpu::SolveParameters gp;
+    gp.eps = eps;
+    gp.eps_c = eps_c;
+    gp.eps_t = eps_t;
+    gp.mu_h = mu_h;
+    gp.mu_v = mu_v;
+    gp.mu_d = mu_d;
+    gp.k = k;
+    gp.nu = nu;
+    gp.irls_outer = irls_outer;
+    gp.n_inner = n_inner;
+    gp.cg_tol = cg_tol;
+    if (gpu::SolveJoint(s, carrier, gp, nu_a, neighbors, anchor, &Y, &chi)) {
+      RefineResult out;
+      out.luma = std::move(Y);
+      out.chroma = std::move(chi);
+      return out;
+    }
+  }
 
   // ---- Workspace, allocated once (same rationale as VariationalRefine) ----
   Plane wx(H, W), wy(H, W), wcx(H, W), wcy(H, W);

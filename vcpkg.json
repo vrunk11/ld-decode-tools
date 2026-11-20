@@ -29,6 +29,12 @@
         }
       ]
     },
+    "opencl": {
+      "description": "OpenCL (headers and the ICD loader) for the GPU of the HVD decoder. Optional; build.bat builds it unless USE_OPENCL=0",
+      "dependencies": [
+        "opencl"
+      ]
+    },
     "qt": {
       "description": "Build Qt 6 with vcpkg instead of using an installed Qt (used by build.bat; CI installs an official Qt)",
       "dependencies": [

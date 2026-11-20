@@ -25,6 +25,7 @@ rem                         installed Qt with -DCMAKE_PREFIX_PATH=...
 rem   USE_FFMPEG=0          do not build ffmpeg (libavfilter): ld-analyse is then
 rem                         built without video filters. Building ffmpeg adds a
 rem                         while to the first run
+rem   USE_OPENCL=0          do not build the OpenCL loader: the HVD decoder has no GPU option
 rem   NATIVE=0              portable build: no LTO / native CPU tuning
 rem                         (on by default here, never in CI)
 rem
@@ -126,6 +127,10 @@ if "%USE_SYSTEM_QT%"=="1" set "FEATURES_ARG="
 rem libavfilter (video filters in ld-analyse) is built too; USE_FFMPEG=0 leaves it out
 if not "%USE_FFMPEG%"=="0" (
     if defined FEATURES_ARG (set "FEATURES_ARG=-DVCPKG_MANIFEST_FEATURES=qt;ffmpeg") else (set "FEATURES_ARG=-DVCPKG_MANIFEST_FEATURES=ffmpeg")
+)
+rem OpenCL (the GPU of the HVD decoder: headers and the ICD loader); USE_OPENCL=0 leaves it out
+if not "%USE_OPENCL%"=="0" (
+    if defined FEATURES_ARG (set "FEATURES_ARG=%FEATURES_ARG%;opencl") else (set "FEATURES_ARG=-DVCPKG_MANIFEST_FEATURES=opencl")
 )
 
 rem --- generator ---------------------------------------------------------------

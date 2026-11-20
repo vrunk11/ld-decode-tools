@@ -12,12 +12,26 @@ add_library(lddecode-hvd STATIC
     engine/temporal.cpp
     engine/sequence.cpp
     engine/engine.cpp
+    gpu/gpu_solver.cpp
     fieldwindow.cpp
     frame_bridge.cpp
 )
 
 target_include_directories(lddecode-hvd PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(lddecode-hvd PUBLIC PkgConfig::FFTW3F Threads::Threads)
+
+# The GPU path (OpenCL, optional): without the headers and a loader the library is built without it and the decoder runs on the CPU.
+option(LDDECODE_WITH_OPENCL "Build the HVD decoder with its OpenCL (GPU) solver when OpenCL is found" ON)
+if(LDDECODE_WITH_OPENCL)
+    find_package(OpenCL QUIET)
+    if(OpenCL_FOUND)
+        target_compile_definitions(lddecode-hvd PUBLIC LDDECODE_HVD_OPENCL)
+        target_link_libraries(lddecode-hvd PUBLIC OpenCL::OpenCL)
+        message(STATUS "OpenCL found: the HVD decoder has its GPU option")
+    else()
+        message(STATUS "OpenCL not found: the HVD decoder has no GPU option")
+    endif()
+endif()
 
 find_package(OpenMP QUIET)
 if(OpenMP_CXX_FOUND)

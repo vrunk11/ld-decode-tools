@@ -101,6 +101,10 @@ struct HvdConfig {
   // the slower path.
   bool fast = true;
 
+  // --- GPU -------------------------------------------------------------------
+  // Run the solver on a GPU (OpenCL) when the build has it and there is one; the CPU does it otherwise, and when the GPU fails.
+  bool use_gpu = false;
+
   // --- Parallelisation strategy (2D / decoupled-field decode only) --------
   // The comment in sequence.cpp's decode loop claiming "one field per core
   // beats one memory-bound loop across all cores" (i.e. parallelise ACROSS

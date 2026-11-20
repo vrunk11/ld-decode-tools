@@ -16,7 +16,8 @@ set(HVD_ENGINE_TESTS
     chroma_reference_test
     gain_chain_test
     pal_aniso_group_test
-    preview_aspect_test)
+    preview_aspect_test
+    gpu_solver_test)
 
 foreach(t ${HVD_ENGINE_TESTS})
     add_executable(hvd_${t} ${t}.cpp)
