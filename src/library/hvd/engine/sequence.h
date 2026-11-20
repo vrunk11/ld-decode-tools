@@ -132,7 +132,9 @@ DrizzleResult DrizzleFrame(int j0, const std::vector<Plane>& Ys,
 std::vector<DecodedField> DecodeFieldWindowWithInits(
     const std::vector<FieldObs>& fields,
     const std::vector<DecodedField>& inits, const FieldGeometry& g,
-    const HvdConfig& cfg, SequenceDiagnostics* diag = nullptr);
+    const HvdConfig& cfg, SequenceDiagnostics* diag = nullptr,
+    // the init is made on the device, in the window of the GPU (the inits are then not used): when that cannot be, device_failed is set and nothing is decoded
+    bool device_init = false, bool* device_failed = nullptr);
 
 }  // namespace hvd
 

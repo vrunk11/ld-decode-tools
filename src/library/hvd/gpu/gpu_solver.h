@@ -63,6 +63,13 @@ bool SolveJoint(const Plane& s, const ComplexPlane& carrier, const SolveParamete
 
 // A neighbour of the field: the tile grids of its motion (cleaned of their outliers by the host: SnapTileVectors), those of its confidence squared and
 // cleaned, and whether its offset is odd (the neighbour is of the other parity)
+// What the host knows of the init of a field of this geometry: the rows that its mirror padding adds above and below, and the two crops (a curve along the lines
+// and a curve along the columns each, for the padded size)
+struct InitAxes {
+  int pad = 0;
+  std::vector<float> kx[2], ky[2];
+};
+
 struct NeighbourSpec {
   int k = 0;
   Plane mdy, mdx, conf;
@@ -112,6 +119,8 @@ class Window {
   bool SolveField(int j, const FieldJob& job, const SolveParameters& p);
   // The luma and the chroma of the field j, from the device
   bool GetField(int j, Plane* y, ComplexPlane* chi);
+  // The field j made from its signal and its carrier: the holographic init (its chroma and its luma) is made on the device; false when it cannot be (the host makes it)
+  bool InitField(int j, const Plane& s, const ComplexPlane& carrier, const InitAxes& axes);
   // The search for the motion between the luma of two fields that are on the device (EstimateMotion and VerifyMotion of engine/motion.h, the reference being the field k and the
   // current one the field j)
   bool EstimateMotion(int k, int j, int tile, int search, MotionField* out);

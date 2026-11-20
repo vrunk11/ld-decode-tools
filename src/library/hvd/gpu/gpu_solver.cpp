@@ -21,6 +21,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <condition_variable>
 #include <limits>
 #include <functional>
@@ -919,6 +920,142 @@ __kernel void k_synth_step(__global const float* Yk, __global const float2* chik
   accC[i] += w * cw;
   accW[i] += w;
 }
+
+// ---- The holographic init on the device: the FFT of the field (mixed radix, any length), the crops, the blend (HolographicInit of holographic_init.cpp) ------
+
+inline float2 cmulc(float2 a, float2 b) { return (float2)(a.x * b.x - a.y * b.y, a.x * b.y + a.y * b.x); }
+
+// The FFT of one line of n values in the local memory, by the Stockham autosort passes of the radices rad[0..nr) (the product of which is n): each output of a
+// pass is the sum of the radix values that it takes, with the twiddle of the pass and of the small transform as one entry of the table of exp(-2 pi i q / n).
+// `inv` is 1 for the forward transform, -1 for the inverse one (the conjugate of the table). Returns the buffer that holds the result.
+inline __local float2* fft_line(__local float2* a, __local float2* b, int n, int nr, __global const int* rad, __global const float2* tab, float inv) {
+  const int lid = get_local_id(0);
+  const int lsz = get_local_size(0);
+  int Ns = 1;
+  __local float2* src = a;
+  __local float2* dst = b;
+  for (int s = 0; s < nr; ++s) {
+    const int R = rad[s];
+    const int nb = n / R;
+    const int span = Ns * R;
+    const int step = n / span;
+    for (int idx = lid; idx < n; idx += lsz) {
+      const int j = idx % nb;
+      const int u = idx / nb;
+      const int k = j % Ns;
+      const int kk = k + Ns * u;
+      float2 acc = (float2)(0.0f, 0.0f);
+      for (int t = 0; t < R; ++t) {
+        float2 w = tab[((t * kk) % span) * step];
+        w.y *= inv;
+        acc += cmulc(src[j + t * nb], w);
+      }
+      dst[(j / Ns) * span + k + u * Ns] = acc;
+    }
+    barrier(CLK_LOCAL_MEM_FENCE);
+    __local float2* tmp = src;
+    src = dst;
+    dst = tmp;
+    Ns = span;
+  }
+  return src;
+}
+
+// The FFT along each row of a plane of H rows of W values (one group for each row), and along each column (one group for each column)
+__kernel void k_fft_rows(__global const float2* in, __global float2* out, int H, int W, float inv, float scale, int nr, __global const int* rad,
+                         __global const float2* tab, __local float2* sh) {
+  const int row = get_group_id(0);
+  __local float2* a = sh;
+  __local float2* b = sh + W;
+  for (int x = get_local_id(0); x < W; x += get_local_size(0)) a[x] = in[row * W + x];
+  barrier(CLK_LOCAL_MEM_FENCE);
+  __local float2* r = fft_line(a, b, W, nr, rad, tab, inv);
+  for (int x = get_local_id(0); x < W; x += get_local_size(0)) out[row * W + x] = r[x] * scale;
+}
+
+__kernel void k_fft_cols(__global const float2* in, __global float2* out, int H, int W, float inv, float scale, int nr, __global const int* rad,
+                         __global const float2* tab, __local float2* sh) {
+  const int col = get_group_id(0);
+  __local float2* a = sh;
+  __local float2* b = sh + H;
+  for (int y = get_local_id(0); y < H; y += get_local_size(0)) a[y] = in[y * W + col];
+  barrier(CLK_LOCAL_MEM_FENCE);
+  __local float2* r = fft_line(a, b, H, nr, rad, tab, inv);
+  for (int y = get_local_id(0); y < H; y += get_local_size(0)) out[y * W + col] = r[y] * scale;
+}
+
+// The row of the field that a row of the padded plane is, the edge rows not repeated (reflect101)
+inline int mirror_row(int y, int h) {
+  if (h <= 1) return 0;
+  const int period = 2 * h - 2;
+  y = ((y % period) + period) % period;
+  return y < h ? y : period - y;
+}
+
+// demod = S conj(carrier), the rows mirrored above and below
+__kernel void k_init_demod_pad(__global const float* s, __global const float2* car, __global float2* A, int h, int w, int pad) {
+  const int i = get_global_id(0);
+  const int hp = h + 2 * pad;
+  if (i >= hp * w) return;
+  const int y = i / w;
+  const int x = i % w;
+  const int sy = mirror_row(y - pad, h);
+  const float v = s[sy * w + x];
+  const float2 c = car[sy * w + x];
+  A[i] = (float2)(v * c.x, v * -c.y);
+}
+
+// The spectrum under the crop, the product of a curve along the columns and a curve along the rows
+__kernel void k_init_crop(__global const float2* spec, __global const float* k, int kxo, int kyo, __global float2* out, int hp, int w) {
+  const int i = get_global_id(0);
+  if (i >= hp * w) return;
+  const int y = i / w;
+  const int x = i % w;
+  const float kernel_v = k[kyo + y] * k[kxo + x];
+  const float2 v = spec[i];
+  out[i] = (float2)(v.x * kernel_v, v.y * kernel_v);
+}
+
+// The chroma of one variant (twice the rows of the field out of the padded ones) and the luma that is left of the signal
+__kernel void k_init_chiv(__global const float2* inv, __global const float* s, __global const float2* car, __global float2* chiv, __global float* yv, int h, int w,
+                          int pad) {
+  const int i = get_global_id(0);
+  if (i >= h * w) return;
+  const float2 c = inv[pad * w + i] * 2.0f;
+  chiv[i] = c;
+  const float2 k = car[i];
+  yv[i] = s[i] - (c.x * k.x - c.y * k.y);
+}
+
+// |Dx Y| + |Dy Y|, the last column and row having none
+__kernel void k_init_edge(__global const float* y, __global float* e, int h, int w) {
+  const int i = get_global_id(0);
+  if (i >= h * w) return;
+  const int r = i / w;
+  const int x = i % w;
+  const float gx = x + 1 < w ? y[i + 1] - y[i] : 0.0f;
+  const float gy = r + 1 < h ? y[i + w] - y[i] : 0.0f;
+  e[i] = fabs(gx) + fabs(gy);
+}
+
+// The blend of the variants: the chroma, weighted by 1 / (edge energy + 0.5)
+__kernel void k_init_acc(__global const float2* chiv, __global const float* e, __global float2* cnum, __global float* wsum, int N, int first) {
+  const int i = get_global_id(0);
+  if (i >= N) return;
+  const float weight = 1.0f / (e[i] + 0.5f);
+  const float2 add = chiv[i] * weight;
+  cnum[i] = first ? add : cnum[i] + add;
+  wsum[i] = first ? weight : wsum[i] + weight;
+}
+
+__kernel void k_init_final(__global const float2* cnum, __global const float* wsum, __global const float* s, __global const float2* car, __global float2* chi,
+                           __global float* y, int N) {
+  const int i = get_global_id(0);
+  if (i >= N) return;
+  const float2 c = (float2)(cnum[i].x / wsum[i], cnum[i].y / wsum[i]);
+  chi[i] = c;
+  y[i] = s[i] - (c.x * car[i].x - c.y * car[i].y);
+}
 )CLC";
 
 struct GpuError : std::runtime_error {
@@ -1124,7 +1261,7 @@ class Device {
     jneg_ = Kernel("k_jneg");
     jaxpy_ = Kernel("k_jaxpy");
     jdupdate_ = Kernel("k_jdupdate");
-    for (const char* name : {"k_interp2", "k_interp1", "k_conf_nearest", "k_warp_int", "k_warp_int_c", "k_warp_bil", "k_warp_bil_c", "k_box_v", "k_box_h", "k_coh_prep", "k_coh_fin", "k_conf_gate", "k_conf_odd", "k_oddmaps", "k_smooth_rows", "k_gather7", "k_floor", "k_lapsm", "k_synth_init", "k_synth_accum", "k_synth_fin", "k_synth_weight", "k_decimate", "k_bm_cost", "k_tile_stats", "k_mc", "k_coh_v", "k_coh_h", "k_nbr_weight_all", "k_jnbr_weight_all", "k_anchor_prep", "k_synth_step"}) {
+    for (const char* name : {"k_interp2", "k_interp1", "k_conf_nearest", "k_warp_int", "k_warp_int_c", "k_warp_bil", "k_warp_bil_c", "k_box_v", "k_box_h", "k_coh_prep", "k_coh_fin", "k_conf_gate", "k_conf_odd", "k_oddmaps", "k_smooth_rows", "k_gather7", "k_floor", "k_lapsm", "k_synth_init", "k_synth_accum", "k_synth_fin", "k_synth_weight", "k_decimate", "k_bm_cost", "k_tile_stats", "k_mc", "k_coh_v", "k_coh_h", "k_nbr_weight_all", "k_jnbr_weight_all", "k_anchor_prep", "k_synth_step", "k_fft_rows", "k_fft_cols", "k_init_demod_pad", "k_init_crop", "k_init_chiv", "k_init_edge", "k_init_acc", "k_init_final"}) {
       kernels_[name] = Kernel(name);
     }
   }
@@ -1420,9 +1557,10 @@ class Device {
     win_.field.clear();
     for (Buffer* plane : {&win_.vdy, &win_.vdx, &win_.tileA, &win_.tileB, &win_.tileC, &win_.gmag, &win_.lapmag, &win_.vgrad, &win_.lapsm, &win_.traw, &win_.cre,
                           &win_.cim, &win_.m1, &win_.m2, &win_.bre, &win_.bim, &win_.b1, &win_.b2, &win_.tmp, &win_.gamma, &win_.yw, &win_.confS, &win_.rr,
-                          &win_.accY, &win_.accW, &win_.resid, &win_.cwC, &win_.cwS, &win_.accC, &win_.samples, &win_.mA, &win_.mB, &win_.mAd, &win_.mBd, &win_.mCost, &win_.mShift, &win_.mStat, &win_.mStat2}) {
+                          &win_.accY, &win_.accW, &win_.resid, &win_.cwC, &win_.cwS, &win_.accC, &win_.samples, &win_.mA, &win_.mB, &win_.mAd, &win_.mBd, &win_.mCost, &win_.mShift, &win_.mStat, &win_.mStat2, &win_.iP, &win_.iQ, &win_.iSpec, &win_.initK, &win_.fftRowTab, &win_.fftRowRad, &win_.fftColTab, &win_.fftColRad}) {
       plane->Release();
     }
+    win_.initHp = 0;
   }
 
   void SetField(int j, const Plane& s, const ComplexPlane& carrier, const Plane& y, const ComplexPlane& chi) {
@@ -1636,7 +1774,9 @@ class Device {
     size_t N = 0;
     std::vector<std::unique_ptr<FieldBuffers>> field;
     Buffer vdy, vdx, tiles, tileA, tileB, tileC, gmag, lapmag, vgrad, lapsm, traw, samples, cwC, cwS, accC, cre, cim, m1, m2, bre, bim, b1, b2, tmp, gamma, yw, confS, rr,
-        accY, accW, resid, mA, mB, mAd, mBd, mCost, mShift, mStat, mStat2;
+        accY, accW, resid, mA, mB, mAd, mBd, mCost, mShift, mStat, mStat2, iP, iQ, iSpec, initK, fftRowTab, fftRowRad, fftColTab, fftColRad;
+    int initHp = 0;
+    std::vector<int> rowRad, colRad;
   };
   WindowBuffers win_;
   std::map<std::string, cl_kernel> kernels_;
@@ -1903,6 +2043,110 @@ class Device {
     std::vector<float> sum, sum2;
     TileSums(win_.mA, tile, th, tw, &sum, &sum2);
     out->confidence = ConfidenceOfTiles(sum, sum2, best, H, W, tile);
+  }
+
+  // ---- The holographic init of the fields of the window ------------------------------------------------------------------------------------------------
+
+  struct GpuUnsupported : GpuError {
+    using GpuError::GpuError;
+  };
+
+  // The radices of the FFT of n values: eights, fours, twos, then the odd primes (any size works, a large prime costs n times itself)
+  static std::vector<int> Radices(int n) {
+    std::vector<int> r;
+    int m = n;
+    while (m % 8 == 0) {
+      r.push_back(8);
+      m /= 8;
+    }
+    if (m % 4 == 0) {
+      r.push_back(4);
+      m /= 4;
+    }
+    if (m % 2 == 0) {
+      r.push_back(2);
+      m /= 2;
+    }
+    for (int p = 3; m > 1; p += 2) {
+      while (m % p == 0) {
+        r.push_back(p);
+        m /= p;
+      }
+    }
+    if (r.empty()) r.push_back(1);
+    return r;
+  }
+
+  // The table exp(-2 pi i q / n) for q < n, made in double, and the radices, on the device
+  void MakeFftTables(int n, std::vector<int>* radices, Buffer* tab, Buffer* rad) {
+    std::vector<float> t(2 * static_cast<size_t>(n));
+    const double pi = 3.14159265358979323846;
+    for (int q = 0; q < n; ++q) {
+      t[2 * static_cast<size_t>(q)] = static_cast<float>(std::cos(2.0 * pi * q / n));
+      t[2 * static_cast<size_t>(q) + 1] = static_cast<float>(-std::sin(2.0 * pi * q / n));
+    }
+    *radices = Radices(n);
+    tab->Allocate(context_, t.size() * sizeof(float));
+    Write(*tab, t.data(), t.size() * sizeof(float));
+    rad->Allocate(context_, radices->size() * sizeof(int));
+    Write(*rad, radices->data(), radices->size() * sizeof(int));
+  }
+
+  // The 2-D FFT of the plane `in` of H rows by W values into `out` (in == out allowed), `tmp` being a plane of the same size; the inverse one is divided by H W
+  void Fft2D(const Buffer& in, const Buffer& tmp, const Buffer& out, int H, int W, bool inverse) {
+    const float inv = inverse ? -1.0F : 1.0F;
+    Run(K("k_fft_rows"), static_cast<size_t>(H) * kGroup, kGroup,
+        {Arg(in), Arg(tmp), Arg(H), Arg(W), Arg(inv), Arg(1.0F), Arg(static_cast<int>(win_.rowRad.size())), Arg(win_.fftRowRad), Arg(win_.fftRowTab),
+         ArgLocal(2 * static_cast<size_t>(W) * sizeof(Complex))});
+    const float scale = inverse ? 1.0F / (static_cast<float>(H) * static_cast<float>(W)) : 1.0F;
+    Run(K("k_fft_cols"), static_cast<size_t>(W) * kGroup, kGroup,
+        {Arg(tmp), Arg(out), Arg(H), Arg(W), Arg(inv), Arg(scale), Arg(static_cast<int>(win_.colRad.size())), Arg(win_.fftColRad), Arg(win_.fftColTab),
+         ArgLocal(2 * static_cast<size_t>(H) * sizeof(Complex))});
+  }
+
+  // The init of the field j from its signal and carrier: its chroma and its luma are left in the buffers of the window
+  void InitFieldDevice(int j, const Plane& s, const ComplexPlane& carrier, const InitAxes& ax) {
+    const int H = win_.H;
+    const int W = win_.W;
+    const size_t N = win_.N;
+    const int pad = ax.pad;
+    const int hp = H + 2 * pad;
+    const size_t padded = static_cast<size_t>(hp) * static_cast<size_t>(W);
+    if (win_.initHp != hp) {
+      // the transforms of this size: the tables, the planes, the crops; the local memory must hold two lines of the longer one
+      cl_ulong local = 0;
+      clGetDeviceInfo(device_, CL_DEVICE_LOCAL_MEM_SIZE, sizeof local, &local, nullptr);
+      if (static_cast<cl_ulong>(2 * std::max(hp, W)) * sizeof(Complex) > local) throw GpuUnsupported("a line of the FFT does not fit in the local memory");
+      MakeFftTables(W, &win_.rowRad, &win_.fftRowTab, &win_.fftRowRad);
+      MakeFftTables(hp, &win_.colRad, &win_.fftColTab, &win_.fftColRad);
+      win_.iP.Allocate(context_, padded * sizeof(Complex));
+      win_.iQ.Allocate(context_, padded * sizeof(Complex));
+      win_.iSpec.Allocate(context_, padded * sizeof(Complex));
+      std::vector<float> k;
+      for (int v = 0; v < 2; ++v) k.insert(k.end(), ax.kx[v].begin(), ax.kx[v].end());
+      for (int v = 0; v < 2; ++v) k.insert(k.end(), ax.ky[v].begin(), ax.ky[v].end());
+      win_.initK.Allocate(context_, k.size() * sizeof(float));
+      Write(win_.initK, k.data(), k.size() * sizeof(float));
+      win_.initHp = hp;
+    }
+    FieldBuffers& F = *win_.field.at(static_cast<size_t>(j));
+    Write(F.s, s.data(), N * sizeof(float));
+    Write(F.car, carrier.data(), N * sizeof(Complex));
+    const size_t global = ((N + kGroup - 1) / kGroup) * kGroup;
+    const size_t globalPadded = ((padded + kGroup - 1) / kGroup) * kGroup;
+    Run(K("k_init_demod_pad"), globalPadded, kGroup, {Arg(F.s), Arg(F.car), Arg(win_.iP), Arg(H), Arg(W), Arg(pad)});
+    Fft2D(win_.iP, win_.iQ, win_.iSpec, hp, W, false);
+    for (int v = 0; v < 2; ++v) {
+      const int kxo = v * W;
+      const int kyo = 2 * W + v * hp;
+      Run(K("k_init_crop"), globalPadded, kGroup, {Arg(win_.iSpec), Arg(win_.initK), Arg(kxo), Arg(kyo), Arg(win_.iP), Arg(hp), Arg(W)});
+      Fft2D(win_.iP, win_.iQ, win_.iP, hp, W, true);
+      Run(K("k_init_chiv"), global, kGroup, {Arg(win_.iP), Arg(F.s), Arg(F.car), Arg(win_.cwC), Arg(win_.yw), Arg(H), Arg(W), Arg(pad)});
+      Run(K("k_init_edge"), global, kGroup, {Arg(win_.yw), Arg(win_.confS), Arg(H), Arg(W)});
+      Box(win_.confS, win_.rr, 3);
+      Run(K("k_init_acc"), global, kGroup, {Arg(win_.cwC), Arg(win_.rr), Arg(win_.accC), Arg(win_.accW), Arg(static_cast<int>(N)), Arg(v == 0 ? 1 : 0)});
+    }
+    Run(K("k_init_final"), global, kGroup, {Arg(win_.accC), Arg(win_.accW), Arg(F.s), Arg(F.car), Arg(F.chi), Arg(F.y), Arg(static_cast<int>(N))});
   }
 
  private:
@@ -2453,6 +2697,19 @@ bool Window::VerifyMotion(int k, int j, const Plane& pdy, const Plane& pdx, int 
   }
 }
 
+bool Window::InitField(int j, const Plane& s, const ComplexPlane& carrier, const InitAxes& axes) {
+  std::lock_guard<std::mutex> lock(impl_->mutex);
+  try {
+    impl_->worker->InitFieldDevice(j, s, carrier, axes);
+    return true;
+  } catch (const Device::GpuUnsupported&) {
+    return false;  // the init of this size is not for the device: the CPU makes it, the GPU stays on
+  } catch (const std::exception& e) {
+    Failed(e);
+    return false;
+  }
+}
+
 bool Window::GetField(int j, Plane* y, ComplexPlane* chi) {
   std::lock_guard<std::mutex> lock(impl_->mutex);
   try {
@@ -2484,6 +2741,7 @@ Window::~Window() = default;
 bool Window::SetField(int, const Plane&, const ComplexPlane&, const Plane&, const ComplexPlane&) { return false; }
 bool Window::SolveField(int, const FieldJob&, const SolveParameters&) { return false; }
 bool Window::GetField(int, Plane*, ComplexPlane*) { return false; }
+bool Window::InitField(int, const Plane&, const ComplexPlane&, const InitAxes&) { return false; }
 bool Window::EstimateMotion(int, int, int, int, MotionField*) { return false; }
 bool Window::VerifyMotion(int, int, const Plane&, const Plane&, int, MotionField*) { return false; }
 bool Window::Debug(int, const FieldJob&, WindowDebug*) { return false; }

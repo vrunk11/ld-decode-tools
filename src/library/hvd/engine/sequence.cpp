@@ -274,6 +274,13 @@ std::vector<DecodedField> DecodeFieldWindow(const std::vector<FieldObs>& fields,
                                             const FieldGeometry& g,
                                             const HvdConfig& cfg, Fft2d* fft,
                                             SequenceDiagnostics* diag) {
+  // With the GPU asked for, the fast mode and the temporal terms, the window is decoded on the device from the signal of its fields, the init included;
+  // when it cannot be, the inits are made here
+  if (cfg.use_gpu && cfg.fast && cfg.cg_iterations > 0 && cfg.temporal_strength >= 0.0F && !cfg.psi_init && !cfg.symmetry_variant && fields.size() > 1) {
+    bool device_failed = false;
+    std::vector<DecodedField> decoded = DecodeFieldWindowWithInits(fields, {}, g, cfg, diag, true, &device_failed);
+    if (!device_failed) return decoded;
+  }
   std::vector<DecodedField> inits(fields.size());
   for (size_t j = 0; j < fields.size(); ++j) {
     HoloInit hi = HolographicInit(fields[j].s, fields[j].carrier, g, cfg, fft);
@@ -426,7 +433,7 @@ DrizzleResult DrizzleFrame(int j0, const std::vector<Plane>& Ys,
 std::vector<DecodedField> DecodeFieldWindowWithInits(
     const std::vector<FieldObs>& fields,
     const std::vector<DecodedField>& inits, const FieldGeometry& g,
-    const HvdConfig& cfg_in, SequenceDiagnostics* diag) {
+    const HvdConfig& cfg_in, SequenceDiagnostics* diag, bool device_init, bool* device_failed) {
   (void)g;
   const int nf = static_cast<int>(fields.size());
   std::vector<DecodedField> out(nf);
@@ -483,6 +490,13 @@ std::vector<DecodedField> DecodeFieldWindowWithInits(
   std::vector<ComplexPlane> chis(nf);
   std::vector<int> parities(nf);
   for (int j = 0; j < nf; ++j) {
+    if (device_init) {
+      // the init is made on the device (the planes here are filled when the host asks for them)
+      chis[j] = ComplexPlane(fields[j].s.height(), fields[j].s.width());
+      Ys[j] = Plane(fields[j].s.height(), fields[j].s.width());
+      parities[j] = fields[j].parity;
+      continue;
+    }
     chis[j] = inits[j].chroma;
     if (!inits[j].luma.empty()) {
       Ys[j] = inits[j].luma;
@@ -694,9 +708,45 @@ std::vector<DecodedField> DecodeFieldWindowWithInits(
   };
   if (ccfg.use_gpu && has_temporal && ccfg.fast && !ccfg.psi_init && ccfg.cg_iterations > 0 && nf > 1) {
     win = gpu::Window::Open(fields[0].s.height(), fields[0].s.width(), nf);
-    for (int j = 0; win && j < nf; ++j) {
-      if (!win->SetField(j, fields[j].s, fields[j].carrier, Ys[j], chis[j])) win.reset();
+    gpu::InitAxes axes;
+    if (device_init && win) {
+      HoloAxes holo;
+      HoloInitAxes(fields[0].s.height(), fields[0].s.width(), g, &holo);
+      axes.pad = holo.pad;
+      for (int v = 0; v < 2; ++v) {
+        axes.kx[v] = holo.kx[v];
+        axes.ky[v] = holo.ky[v];
+      }
     }
+    for (int j = 0; win && j < nf; ++j) {
+      const bool ok = device_init ? win->InitField(j, fields[j].s, fields[j].carrier, axes) : win->SetField(j, fields[j].s, fields[j].carrier, Ys[j], chis[j]);
+      if (!ok) win.reset();
+    }
+    if (device_init) std::fill(host_fresh.begin(), host_fresh.end(), 0);
+    if (device_init && win && verify_gpu) {
+      // the check of the init: the chroma and the luma that the device made of a field, against the host's own
+      Fft2d fft_check;
+      for (int jj : {0, nf - 1}) {
+        const HoloInit host_init = HolographicInit(fields[jj].s, fields[jj].carrier, g, ccfg, &fft_check);
+        Plane yd(fields[jj].s.height(), fields[jj].s.width());
+        ComplexPlane cd(yd.height(), yd.width());
+        win->GetField(jj, &yd, &cd);
+        double worst_c = 0.0, worst_y = 0.0;
+        size_t big_c = 0;
+        for (size_t i = 0; i < cd.size(); ++i) {
+          const double dc = std::abs(static_cast<std::complex<double>>(host_init.chroma[i]) - static_cast<std::complex<double>>(cd[i]));
+          worst_c = std::max(worst_c, dc);
+          if (dc > 1e-2) ++big_c;
+          worst_y = std::max(worst_y, std::fabs(static_cast<double>(host_init.luma[i]) - yd[i]));
+        }
+        std::fprintf(stderr, "verify init field %d: chroma differs by %.4g at most (%zu of %zu over 0.01 IRE), luma by %.4g\n", jj, worst_c, big_c, cd.size(), worst_y);
+      }
+    }
+  }
+  if (device_init && !win) {
+    // no window on the device (or the init is not for it): the caller makes the inits on the host
+    if (device_failed) *device_failed = true;
+    return {};
   }
 
   for (int pass = 0; pass < n_passes; ++pass) {
@@ -1277,6 +1327,10 @@ std::vector<DecodedField> DecodeFieldWindowWithInits(
       win.reset();
       HvdConfig cpu_cfg = cfg_in;
       cpu_cfg.use_gpu = false;
+      if (device_init) {
+        if (device_failed) *device_failed = true;
+        return {};
+      }
       return DecodeFieldWindowWithInits(fields, inits, g, cpu_cfg, diag);
     }
     // The fields come back from the device (the luma too: without the purist output it is the one of the solve)
@@ -1285,6 +1339,10 @@ std::vector<DecodedField> DecodeFieldWindowWithInits(
       win.reset();
       HvdConfig cpu_cfg = cfg_in;
       cpu_cfg.use_gpu = false;
+      if (device_init) {
+        if (device_failed) *device_failed = true;
+        return {};
+      }
       return DecodeFieldWindowWithInits(fields, inits, g, cpu_cfg, diag);
     }
     win.reset();

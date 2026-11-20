@@ -21,6 +21,8 @@
 #include "engine/fft2d.h"
 #include "engine/hvd_config.h"
 #include "engine/ntsc_geometry.h"
+#include <vector>
+
 #include "engine/plane.h"
 
 namespace hvd {
@@ -36,6 +38,13 @@ struct HoloInit {
 
 // `s` is the active composite (IRE). `carrier` is exp(i*phi) over the same
 // area (from MakeCarrier). `fft` provides the 2-D transforms.
+// The rows that the mirror padding of the init adds, and the crops of its two variants, for the init on the GPU
+struct HoloAxes {
+  int pad = 0;
+  std::vector<float> kx[2], ky[2];
+};
+void HoloInitAxes(int h, int w, const FieldGeometry& g, HoloAxes* out);
+
 HoloInit HolographicInit(const Plane& s, const ComplexPlane& carrier,
                          const FieldGeometry& g, const HvdConfig& cfg,
                          Fft2d* fft);

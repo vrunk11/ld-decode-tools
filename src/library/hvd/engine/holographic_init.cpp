@@ -378,4 +378,12 @@ HoloInit HolographicInit(const Plane& s, const ComplexPlane& carrier,
   return out;
 }
 
+void HoloInitAxes(int h, int w, const FieldGeometry& g, HoloAxes* out) {
+  out->pad = std::min(16, h > 1 ? h - 1 : 0);
+  const int hp = h + 2 * out->pad;
+  // the two crops of HolographicInit: (narrow in x, wide in y) and (wide in x, narrow in y)
+  const float variants[2][2] = {{0.8F, 120.0F}, {1.8F, 30.0F}};
+  for (int v = 0; v < 2; ++v) GaussianAxes(hp, w, g, variants[v][0], variants[v][1], h, &out->kx[v], &out->ky[v]);
+}
+
 }  // namespace hvd

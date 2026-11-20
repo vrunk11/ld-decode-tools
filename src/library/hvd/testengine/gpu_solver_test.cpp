@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "check.h"
+#include "engine/fft2d.h"
 #include "engine/ntsc_geometry.h"
 #include "engine/sequence.h"
 #include "engine/variational.h"
@@ -91,10 +92,8 @@ std::vector<hvd::NeighborTerm> MakeNeighbours(const Scene& sc, const FieldGeomet
 
 // A window of fields decoded on the CPU and with the window on the device (the neighbours, the anchor and the solves made there): the same decode.
 // The scene moves, so the motion search, the warps and the gates of the confidence all have something to do.
-void WindowTest() {
+void WindowTest(int h, int w) {
   const int nf = 8;
-  const int h = 64;
-  const int w = 96;
   FieldGeometry g;
   g.active_video_start = 0;
   g.active_video_end = w;
@@ -131,6 +130,19 @@ void WindowTest() {
   for (int f = 0; f < nf; ++f) {
     worst = std::fmax(worst, RmsDiff(a[f].chroma, b[f].chroma));
     worst = std::fmax(worst, RmsDiff(a[f].luma, b[f].luma));
+  }
+  // the same window from the signal of its fields, the holographic init made on the device too (DecodeFieldWindow)
+  {
+    hvd::Fft2d fft;
+    const std::vector<hvd::DecodedField> c = hvd::DecodeFieldWindow(fields, g, cpu, &fft);
+    const std::vector<hvd::DecodedField> d = hvd::DecodeFieldWindow(fields, g, gpu, &fft);
+    double worst_init = 0.0;
+    for (int f = 0; f < nf; ++f) {
+      worst_init = std::fmax(worst_init, RmsDiff(c[f].chroma, d[f].chroma));
+      worst_init = std::fmax(worst_init, RmsDiff(c[f].luma, d[f].luma));
+    }
+    std::fprintf(stderr, "window with the init on the device: the worst RMS difference is %.5f\n", worst_init);
+    CHECK(worst_init < 5e-2);
   }
   std::fprintf(stderr, "window: the worst RMS difference between the CPU and the device is %.5f\n", worst);
   CHECK(worst < 5e-2);
@@ -194,7 +206,8 @@ void RunTests() {
     CHECK(RmsDiff(a.chroma, b.chroma) < tolerance);
     CHECK(RmsDiff(a.luma, b.luma) < tolerance);
   }
-  WindowTest();
+  WindowTest(64, 96);  // sizes of small primes
+  WindowTest(53, 71);  // sizes of large primes (the padded height is 85 = 5 x 17), for the FFT of any length
   // joint: neighbours and an anchor
   {
     const std::vector<hvd::NeighborTerm> nb = MakeNeighbours(sc, g, h, w);
