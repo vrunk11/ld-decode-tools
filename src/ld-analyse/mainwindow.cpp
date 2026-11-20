@@ -11,6 +11,8 @@
 
 #include <QDateTime>
 #include "mainwindow.h"
+#include <QInputDialog>
+#include "vlcsupport.h"
 #include "aspectratio.h"
 #include "discnumbering.h"
 #include <QJsonObject>
@@ -265,6 +267,7 @@ MainWindow::MainWindow(QString inputFilenameParam, const TbcSource::StreamInput 
         });
     }
     setupVideoFilter();
+    setupExternalRenderer();
     buildConfigMenu();
     setupSeekActions();
     captureShortcutDefaults();
@@ -328,6 +331,96 @@ MainWindow::~MainWindow()
     }
 
     delete ui;
+}
+
+// Another program shows the picture: VLC with its own upscaler and deinterlacer (through its libvlc, in this program), or any other program (a command line that is given the
+// video). What shows it is chosen in Config > Video filter... (ffmpeg's filters, which is no other program, VLC with its options, or another program). The picture is drawn in
+// a widget of this window, in the place of the picture of ld-analyse, or in a window of its own for a command that has no {winid}.
+void MainWindow::setupExternalRenderer()
+{
+    externalRenderer = new ExternalRenderer(this);
+    vlcRenderer = new VlcRenderer(this);
+    externalHost = new QWidget(this);
+    externalHost->setAttribute(Qt::WA_NativeWindow);
+    externalHost->setAttribute(Qt::WA_PaintOnScreen);
+    externalHost->setAutoFillBackground(true);
+    externalHost->setPalette(QPalette(Qt::black));
+    externalHost->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    externalHost->hide();
+    ui->verticalLayout->insertWidget(ui->verticalLayout->indexOf(ui->scrollArea) + 1, externalHost, 1);
+    externalRenderer->setHost(externalHost);
+    vlcRenderer->setHost(externalHost);
+
+    // What was chosen the last time
+    QVariantMap stored;
+    for (const char *key: { "engine", "vlcPath", "vout", "deinterlace", "options", "extra", "command" }) {
+        const QVariant value = configuration.playbackValue(QString("renderer_") + key);
+        if (value.isValid()) stored.insert(key, value);
+    }
+    rendererSettings = RendererSettings::fromMap(stored);
+    if (rendererSettings.command.isEmpty()) rendererSettings.command = ExternalRenderer::defaultCommand();
+    videoFilterDialog->setRendererSettings(rendererSettings);
+    connect(videoFilterDialog, &VideoFilterDialog::rendererChosen, this, &MainWindow::applyRendererSettings);
+
+    const auto renderStopped = [this](const QString &message) {
+        // (the program could not be started, or its window was closed: ffmpeg's filters show the picture again)
+        rendererSettings.engine = RendererSettings::Ffmpeg;
+        configuration.setPlaybackValue("renderer_engine", rendererSettings.engine);
+        videoFilterDialog->setRendererSettings(rendererSettings);
+        ui->scrollArea->setVisible(true);
+        externalHost->hide();
+        statusBar()->showMessage(message, 8000);
+    };
+    connect(externalRenderer, &ExternalRenderer::stopped, this, renderStopped);
+    connect(vlcRenderer, &VlcRenderer::stopped, this, renderStopped);
+
+    // What shows the picture is what was chosen: it is started, with the first picture, when one was
+    if (rendererSettings.engine != RendererSettings::Ffmpeg) applyRendererSettings(rendererSettings);
+}
+
+// The renderer chosen in the dialogue (or an option of it changed): kept, and started (again) with it. ffmpeg is no other program: it is off.
+void MainWindow::applyRendererSettings(const RendererSettings &settings)
+{
+    rendererSettings = settings;
+    const QVariantMap map = settings.toMap();
+    for (auto it = map.constBegin(); it != map.constEnd(); ++it) configuration.setPlaybackValue("renderer_" + it.key(), it.value());
+
+    if (settings.engine == RendererSettings::Ffmpeg) {
+        setExternalRendererOn(false);
+        return;
+    }
+    if (settings.engine == RendererSettings::Vlc) {
+        const QString vlc = VlcSupport::find(settings.vlcPath);
+        if (vlc.isEmpty()) {
+            statusBar()->showMessage(tr("VLC was not found: give its path in Config > Video filter..."), 8000);
+            setExternalRendererOn(false);
+            return;
+        }
+        vlcRenderer->setConfiguration(vlc, settings.libvlcArguments());
+    } else {
+        const QString command = settings.toCommand(QString());
+        externalRenderer->setCommand(command);
+        if (command.isEmpty()) {
+            statusBar()->showMessage(tr("The command of the renderer is empty"), 8000);
+            setExternalRendererOn(false);
+            return;
+        }
+    }
+    setExternalRendererOn(true);
+}
+
+void MainWindow::setExternalRendererOn(bool on)
+{
+    const bool useVlc = on && rendererSettings.engine == RendererSettings::Vlc;
+    const bool useCommand = on && rendererSettings.engine == RendererSettings::Command;
+    vlcRenderer->setEnabled(useVlc);
+    externalRenderer->setEnabled(useCommand);
+    if (!on) externalPictureSize = QSizeF();
+    const bool embedded = useVlc || (useCommand && externalRenderer->embeds());
+    ui->scrollArea->setVisible(!embedded);
+    externalHost->setVisible(embedded);
+    // (the picture on show is sent now, not at the next frame)
+    if (on && tbcSource.getIsSourceLoaded()) updateImageViewer();
 }
 
 // The Config menu: what is set up (rather than a window of analysis, which is in the Window menu)
@@ -1600,6 +1693,30 @@ void MainWindow::updateImageViewer()
 {
     QImage image = activeAreaOf(tbcSource.getImage());
 
+    // Another program shows the picture: it is given it as it is, before the lines of the scopes are drawn on it and before it is scaled or filtered
+    const bool shownByProgram = externalRenderer && externalRenderer->isEnabled();
+    const bool shownByVlc = vlcRenderer && vlcRenderer->isEnabled();
+    if ((shownByProgram || shownByVlc) && !image.isNull()) {
+        // What the program is told of the view: the shape the picture is shown in (the aspect ratio that was chosen), and whether the Deinterlaced view is on (the deinterlacing
+        // is for it only). For a command line they are in the command, and a change of one starts it again; VLC (libvlc) is told in place.
+        const bool deinterlaced = deinterlacedView && !tbcSource.getFieldViewEnabled() && !tbcSource.getSplitViewEnabled();
+        const QString aspect = QString("%1:%2").arg(qMax(1, qRound(displayedWidth(image)))).arg(qMax(1, image.height()));
+        if (shownByVlc) {
+            vlcRenderer->setDeinterlace(rendererSettings.deinterlaceMode(deinterlaced));
+            vlcRenderer->setAspect(aspect);
+            vlcRenderer->setImage(image, videoFrameRate(tbcSource.getSystem()));
+        } else {
+            externalRenderer->setVariable("deinterlace", rendererSettings.deinterlaceArguments(deinterlaced));
+            externalRenderer->setVariable("aspect", aspect);
+            externalRenderer->setImage(image, videoFrameRate(tbcSource.getSystem()));
+        }
+        // The size the picture is shown at (the shape of it, the zoom is applied by the window sizing): kept for the sizing. The window is sized to it once, with the
+        // first picture (the opening), not each time the picture changes
+        const bool firstPicture = externalPictureSize.isEmpty();
+        externalPictureSize = QSizeF(displayedWidth(image), image.height());
+        if (firstPicture) QTimer::singleShot(0, this, [this]() { resize_on_aspect(); });
+    }
+
     if (!fullScreenOn && ui->mouseModePushButton->isChecked() && !image.isNull() && image.width() > 0 && image.height() > 0) {
         // Create a painter object
         QPainter imagePainter;
@@ -1618,10 +1735,13 @@ void MainWindow::updateImageViewer()
     const int width = static_cast<int>(scaleFactor * displayedWidth(image));
     const int height = static_cast<int>(scaleFactor * image.height());
 
-    // Through the video filters, which can size the picture to what is shown
-    const bool showPicture = filterImage(image, width, height);
+    // Another program shows the picture in the window (VLC drawing in the place of it): ld-analyse has none of its own to make, and it is not scaled or filtered
+    const bool shownByAnother = externalShownInWindow();
 
-    QPixmap pixmap = QPixmap::fromImage(image);
+    // Through the video filters, which can size the picture to what is shown
+    const bool showPicture = !shownByAnother && filterImage(image, width, height);
+
+    QPixmap pixmap = shownByAnother ? QPixmap() : QPixmap::fromImage(image);
 
     // Scale and apply the pixmap (only if it's valid)
     if (showPicture && !pixmap.isNull()) {
@@ -2383,6 +2503,22 @@ void MainWindow::resizeForZoom()
 
 void MainWindow::resize_on_aspect(int passesLeft)
 {
+	// Another program shows the picture in the window: it fits itself to the area it draws in (ld-analyse gives it the size and the shape of the picture), and the window
+	// is sized to the picture only when the person asks for it, as it always was: at the opening, and by the zoom buttons (the original size among them) and the aspect
+	// button. The area of the picture of ld-analyse is hidden then, and measuring it would make the window grow with each measure: the area that the program draws
+	// in is measured instead.
+	if (externalShownInWindow()) {
+		if (!this->isFullScreen() && !this->isMaximized() && autoResize && !externalPictureSize.isEmpty()) {
+			if (this->layout()) this->layout()->activate();
+			const QSize wanted(qRound(externalPictureSize.width() * scaleFactor), qRound(externalPictureSize.height() * scaleFactor));
+			const QSize difference = wanted - externalHost->size();
+			if (!difference.isNull()) {
+				this->resize(this->size() + difference);
+				if (passesLeft > 0) QTimer::singleShot(0, this, [this, passesLeft]() { resize_on_aspect(passesLeft - 1); });
+			}
+		}
+		return;
+	}
 	if(!this->isFullScreen() && !this->isMaximized() && autoResize)
 	{
 		// Size the window so that the scroll area shows the whole image without
@@ -2416,6 +2552,7 @@ void MainWindow::resize_on_aspect(int passesLeft)
 // Resize the frame to fit within the current window size
 void MainWindow::resizeFrameToWindow()
 {
+	if (externalShownInWindow()) return;
 	if (QDateTime::currentMSecsSinceEpoch() < zoomResizeUntil) {
 		return;
 	}

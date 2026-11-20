@@ -27,6 +27,13 @@ set(ld-analyse_SOURCES
     snrsourcebar.cpp
     playbackcontroller.cpp
     playbackrenderer.cpp
+    externalrenderer.cpp externalrenderer.h
+    vlcsupport.cpp vlcsupport.h
+    renderersettings.cpp renderersettings.h
+    rendererpanel.cpp rendererpanel.h
+    i420.cpp i420.h
+    libvlcapi.cpp libvlcapi.h
+    vlcrenderer.cpp vlcrenderer.h
     scopeupdater.cpp
     stackaudio.cpp
     sourceinfodialog.cpp sourceinfodialog.h

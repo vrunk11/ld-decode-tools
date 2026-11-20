@@ -17,6 +17,9 @@
 #include <QLabel>
 #include <QLineEdit>
 
+#include "rendererpanel.h"
+#include "renderersettings.h"
+
 // What the video is shown through: a deinterlacer, a scaling algorithm and any other ffmpeg
 // filters, which run in that order. The deinterlacer is used by the Deinterlaced mode of the
 // view button and the other filters when the Filters button is on, so those two flags are set by
@@ -45,6 +48,10 @@ public:
     void setSettings(const VideoFilterSettings &settings);
     VideoFilterSettings getSettings() const;
 
+    // What shows the picture: ffmpeg's filters (the rest of this dialogue), VLC, or another program
+    RendererSettings rendererSettings() const;
+    void setRendererSettings(const RendererSettings &settings);
+
     // Show whether the Filters button is on (it applies the other filters)
     void setFiltersOn(bool on);
 
@@ -52,12 +59,17 @@ public:
     void showResult(const QString &errorText);
 
 signals:
+    // The user chose another renderer, or changed an option of one (VLC is started again with it)
+    void rendererChosen(const RendererSettings &settings);
     // The user ticked or unticked Apply them: the Filters button is to be switched
     void filtersToggled(bool on);
     // The user asked for these filters (Apply, or OK)
     void settingsChosen(const VideoFilterSettings &settings);
 
 private:
+    QComboBox *engineCombo;
+    RendererPanel *rendererPanel;
+    QWidget *ffmpegPage;
     QComboBox *deinterlacerCombo;
     QComboBox *scalerCombo;
     QLineEdit *customEdit;

@@ -61,6 +61,9 @@
 #include "tbcsource.h"
 #include "playbackcontroller.h"
 #include "playbackrenderer.h"
+#include "externalrenderer.h"
+#include "vlcrenderer.h"
+#include "renderersettings.h"
 #include "scopeupdater.h"
 #include "stackaudio.h"
 #include <QMap>
@@ -230,6 +233,17 @@ private:
     // Video playback: the controller is the clock, MainWindow shows what falls due
     PlaybackController *playback;
     PlaybackRenderer *renderer;
+    // Another program shows the picture (Config > External renderer): a command line that is given the video, optionally drawing in a widget of this window
+    ExternalRenderer *externalRenderer = nullptr;
+    VlcRenderer *vlcRenderer = nullptr;
+    QWidget *externalHost = nullptr;
+    void setupExternalRenderer();
+    // Whether another program draws the picture in the window (the area of the picture of ld-analyse is not shown then)
+    bool externalShownInWindow() const { return externalHost && externalHost->isVisible(); }
+    QSizeF externalPictureSize;        // the shape of the picture that another program shows (the window is sized to it by the zoom buttons and at the opening)
+    void setExternalRendererOn(bool on);
+    void applyRendererSettings(const RendererSettings &settings);
+    RendererSettings rendererSettings;
     // The scopes are made in a thread of their own (see ScopeUpdater): what they ask of the source does not hold up the window
     ScopeUpdater *scopeUpdater = nullptr;
     TbcSource::RenderSettings scopeSettings;

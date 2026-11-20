@@ -79,8 +79,27 @@ VideoFilterDialog::VideoFilterDialog(QWidget *parent)
     };
 
     QVBoxLayout *layout = new QVBoxLayout(this);
-    layout->addWidget(makeHint(tr("These change only the picture shown, not the data the analysis tools read. "
-                                  "They are applied in this order.")));
+
+    // What shows the picture: ffmpeg's filters run by ld-analyse (as it always was), a VLC that is run for it, or another program
+    QHBoxLayout *engineRow = new QHBoxLayout;
+    engineRow->addWidget(new QLabel(tr("Show the picture with:"), this));
+    engineCombo = new QComboBox(this);
+    engineCombo->addItem(tr("ffmpeg filters (in ld-analyse)"), RendererSettings::Ffmpeg);
+    engineCombo->addItem(tr("VLC"), RendererSettings::Vlc);
+    engineCombo->addItem(tr("Another program (command line)"), RendererSettings::Command);
+    engineRow->addWidget(engineCombo, 1);
+    layout->addLayout(engineRow);
+    rendererPanel = new RendererPanel(this);
+    rendererPanel->hide();
+    layout->addWidget(rendererPanel);
+
+    // The page of ffmpeg's filters
+    ffmpegPage = new QWidget(this);
+    QVBoxLayout *ffLayout = new QVBoxLayout(ffmpegPage);
+    ffLayout->setContentsMargins(0, 0, 0, 0);
+    layout->addWidget(ffmpegPage);
+    ffLayout->addWidget(makeHint(tr("These change only the picture shown, not the data the analysis tools read. "
+                                    "They are applied in this order.")));
 
     // 1. Deinterlacing: only the algorithm is chosen here, the view button switches it on
     QGroupBox *deinterlaceBox = new QGroupBox(tr("1. Deinterlacing"), this);
@@ -92,7 +111,7 @@ VideoFilterDialog::VideoFilterDialog(QWidget *parent)
     deinterlaceRow->addWidget(deinterlacerCombo, 1);
     deinterlaceLayout->addLayout(deinterlaceRow);
     deinterlaceLayout->addWidget(makeHint(tr("Used when the view button is on Deinterlaced.")));
-    layout->addWidget(deinterlaceBox);
+    ffLayout->addWidget(deinterlaceBox);
 
     // 2. Scaling
     QGroupBox *scaleBox = new QGroupBox(tr("2. Scaling"), this);
@@ -105,7 +124,7 @@ VideoFilterDialog::VideoFilterDialog(QWidget *parent)
     scaleRow->addWidget(scalerCombo, 1);
     scaleLayout->addLayout(scaleRow);
     scaleLayout->addWidget(makeHint(tr("The default is the program's own smooth scaling. Any other makes ffmpeg give the picture the size it is shown at, with that algorithm, zooming included.")));
-    layout->addWidget(scaleBox);
+    ffLayout->addWidget(scaleBox);
 
     // 3. Other filters: a command line, always there to edit; the check box is the Filters button
     QGroupBox *otherBox = new QGroupBox(tr("3. Other filters (ffmpeg -vf)"), this);
@@ -116,15 +135,15 @@ VideoFilterDialog::VideoFilterDialog(QWidget *parent)
     filtersCheck = new QCheckBox(tr("Apply them (the Filters button)"), otherBox);
     otherLayout->addWidget(filtersCheck);
     otherLayout->addWidget(makeHint(tr("For example hqdn3d=2:1,unsharp=5:5:0.8. $W and $H are the size the picture is shown at.")));
-    layout->addWidget(otherBox);
+    ffLayout->addWidget(otherBox);
 
     // What comes of it: the graph given to ffmpeg, then whether ffmpeg took it
     graphLabel = makeHint(QString());
     graphLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
-    layout->addWidget(graphLabel);
+    ffLayout->addWidget(graphLabel);
     resultLabel = new QLabel(this);
     resultLabel->setWordWrap(true);
-    layout->addWidget(resultLabel);
+    ffLayout->addWidget(resultLabel);
 
     QDialogButtonBox *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Apply
                                                      | QDialogButtonBox::Close, this);
@@ -132,11 +151,22 @@ VideoFilterDialog::VideoFilterDialog(QWidget *parent)
     connect(buttons->button(QDialogButtonBox::Close), &QPushButton::clicked, this, &QDialog::close);
     connect(buttons->button(QDialogButtonBox::Apply), &QPushButton::clicked, this, [this]() {
         emit settingsChosen(getSettings());
+        emit rendererChosen(rendererSettings());
     });
     connect(buttons->button(QDialogButtonBox::Ok), &QPushButton::clicked, this, [this]() {
         emit settingsChosen(getSettings());
+        emit rendererChosen(rendererSettings());
         accept();
     });
+    connect(engineCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this]() {
+        const int engine = engineCombo->currentData().toInt();
+        ffmpegPage->setVisible(engine == RendererSettings::Ffmpeg);
+        rendererPanel->setVisible(engine != RendererSettings::Ffmpeg);
+        if (engine != RendererSettings::Ffmpeg) rendererPanel->setEngine(engine);
+        adjustSize();
+    });
+    // A change of an option of VLC is shown at once, not only once the dialogue is closed (VLC is started again with it)
+    connect(rendererPanel, &RendererPanel::changed, this, [this]() { emit rendererChosen(rendererSettings()); });
 
     // Anything changed is shown at once in the graph
     const auto update = [this]() {
@@ -174,6 +204,22 @@ VideoFilterSettings VideoFilterDialog::getSettings() const
     settings.customOn = true;
     settings.custom = customEdit->text().trimmed();
     return settings;
+}
+
+RendererSettings VideoFilterDialog::rendererSettings() const
+{
+    RendererSettings settings = rendererPanel->settings();
+    settings.engine = engineCombo->currentData().toInt();
+    return settings;
+}
+
+void VideoFilterDialog::setRendererSettings(const RendererSettings &settings)
+{
+    rendererPanel->setSettings(settings);
+    const QSignalBlocker blocker(engineCombo);
+    engineCombo->setCurrentIndex(qMax(0, engineCombo->findData(settings.engine)));
+    ffmpegPage->setVisible(settings.engine == RendererSettings::Ffmpeg);
+    rendererPanel->setVisible(settings.engine != RendererSettings::Ffmpeg);
 }
 
 // Show whether the Filters button is on, without it being taken for the user doing it
