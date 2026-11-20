@@ -1028,6 +1028,7 @@ struct Candidate {
   std::string name;
   std::string version;
   double score;
+  bool integrated;
 };
 
 int g_preferred = -1;  // the device that the person chose (g_mutex held to change it); -1 is the strongest
@@ -1059,9 +1060,16 @@ std::vector<Candidate> EnumerateDevices() {
       char version[128] = {0};
       clGetDeviceInfo(id, CL_DEVICE_NAME, sizeof name - 1, name, nullptr);
       clGetDeviceInfo(id, CL_DEVICE_VERSION, sizeof version - 1, version, nullptr);
-      candidates.push_back({id, name, version, static_cast<double>(units) * std::max<cl_uint>(clock, 1)});
+      cl_bool unified = CL_FALSE;
+      clGetDeviceInfo(id, CL_DEVICE_HOST_UNIFIED_MEMORY, sizeof unified, &unified, nullptr);
+      if (unified == CL_TRUE) std::strncat(name, " [integrated]", sizeof name - std::strlen(name) - 1);
+      candidates.push_back({id, name, version, static_cast<double>(units) * std::max<cl_uint>(clock, 1), unified == CL_TRUE});
     }
   }
+  // The integrated GPUs are left out when the machine has another: they are slower than the processor, and the one that draws the screen is held up by them. They stay
+  // when they are all there is.
+  const bool discrete = std::any_of(candidates.begin(), candidates.end(), [](const Candidate& c) { return !c.integrated; });
+  if (discrete) candidates.erase(std::remove_if(candidates.begin(), candidates.end(), [](const Candidate& c) { return c.integrated; }), candidates.end());
   return candidates;
 }
 
@@ -1146,6 +1154,12 @@ class Device {
   const std::string& description() const { return description_; }
   cl_context context() const { return context_; }
   cl_device_id device() const { return device_; }
+  // An integrated GPU (it shares the memory of the processor): small, and often the one that draws the screen
+  bool integrated() const {
+    cl_bool unified = CL_FALSE;
+    clGetDeviceInfo(device_, CL_DEVICE_HOST_UNIFIED_MEMORY, sizeof unified, &unified, nullptr);
+    return unified == CL_TRUE;
+  }
   size_t globalMemory() const {
     cl_ulong bytes = 0;
     clGetDeviceInfo(device_, CL_DEVICE_GLOBAL_MEM_SIZE, sizeof bytes, &bytes, nullptr);
@@ -2265,6 +2279,8 @@ bool OpenDevice() {
       // A window holds a worker for as long as it lasts (a few hundred megabytes of the device: its fields and the planes of its solves): as many workers as the
       // memory of the device allows, up to eight
       long count = static_cast<long>(g_device->globalMemory() / (700u * 1024u * 1024u));
+      // (an integrated GPU has little to share: one window at a time leaves the screen some of it)
+      if (g_device->integrated()) count = 1;
       if (const char* wanted = std::getenv("HVD_OPENCL_QUEUES")) count = std::strtol(wanted, nullptr, 10);
       count = std::min<long>(std::max<long>(count, 1), 16);
       for (long i = 1; i < count; ++i) {

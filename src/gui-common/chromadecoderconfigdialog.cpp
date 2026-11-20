@@ -66,7 +66,8 @@ ChromaDecoderConfigDialog::ChromaDecoderConfigDialog(QWidget *parent) :
         const int stored = QSettings().value("hvdGpuDevice", -1).toInt();
         const int at = ui->hvdGpuDeviceComboBox->findData(stored);
         ui->hvdGpuDeviceComboBox->setCurrentIndex(at >= 0 ? at : 0);
-        ui->hvdGpuDeviceComboBox->setEnabled(gpuAvailable && devices.size() > 1);
+        // (there is nothing to choose with one GPU: the list is not there)
+        ui->hvdGpuDeviceComboBox->setVisible(gpuAvailable && devices.size() > 1);
         ui->hvdGpuCheckBox->setToolTip(gpuAvailable
             ? tr("Run the solver of the HVD decoder on %1. The picture is the same, and it is faster, 3D most of all.").arg(QString::fromStdString(hvd::gpu::DeviceDescription()))
             : tr("No OpenCL GPU was found (or this build has no OpenCL): the HVD decoder runs on the processor."));

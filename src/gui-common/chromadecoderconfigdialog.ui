@@ -410,7 +410,7 @@
        <item>
         <widget class="QComboBox" name="hvdGpuDeviceComboBox">
          <property name="toolTip">
-          <string>The GPU that runs the solver</string>
+          <string>The GPU that runs the solver. An integrated GPU (it shares the memory of the processor) is usually slower than the processor, and it can slow the screen down.</string>
          </property>
         </widget>
        </item>
