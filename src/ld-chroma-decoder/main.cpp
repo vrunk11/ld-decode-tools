@@ -48,6 +48,7 @@
 
 #include "comb.h"
 #include "hvddecoder.h"
+#include "gpu/gpu_solver.h"
 #include "monodecoder.h"
 #include "ntscdecoder.h"
 #include "outputwriter.h"
@@ -319,6 +320,10 @@ int main(int argc, char *argv[])
                                        QCoreApplication::translate("main", "HVD: Turn the fast mode off (the solver runs its whole budget: slower, about the same quality)"));
     parser.addOption(hvdNoFastOption);
 
+    QCommandLineOption hvdGpuOption(QStringList() << "hvd-gpu",
+                                    QCoreApplication::translate("main", "HVD: Run the solver on a GPU (OpenCL); the CPU does it when there is none (HVD_OPENCL_VERBOSE=1 lists the devices, HVD_OPENCL_DEVICE=n chooses one)"));
+    parser.addOption(hvdGpuOption);
+
     QCommandLineOption hvdNoBidirectionalOption(QStringList() << "hvd-no-bidirectional",
                                                 QCoreApplication::translate("main", "hvd3d: Use only the fields before a field, not the ones after (faster, a little worse)"));
     parser.addOption(hvdNoBidirectionalOption);
@@ -507,6 +512,14 @@ int main(int argc, char *argv[])
     }
 
     if (parser.isSet(hvdNoFastOption)) hvdConfig.fast = false;
+    if (parser.isSet(hvdGpuOption)) {
+        if (hvd::gpu::Available()) {
+            hvdConfig.use_gpu = true;
+            qInfo().noquote() << "HVD solver on the GPU:" << QString::fromStdString(hvd::gpu::DeviceDescription());
+        } else {
+            qWarning() << "--hvd-gpu: no OpenCL GPU in this build or on this machine, the solver runs on the CPU";
+        }
+    }
     if (parser.isSet(hvdNoBidirectionalOption)) hvdConfig.bidirectional = false;
     if (parser.isSet(hvdSelectiveOption)) hvdConfig.selective_3d = true;
     if (parser.isSet(hvdNoAccOption)) hvdConfig.acc = false;

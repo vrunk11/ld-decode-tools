@@ -35,6 +35,10 @@ struct HvdSettings {
     double strength = 0.0;      // weight of the neighbouring fields; 0 is measured on the picture
     qint32 overlap = 1;         // frames on each side of a frame that 3D looks at
     bool fast = true;           // the cheaper solver: early exit and a smaller iteration budget, at about the same quality
+    bool gpu = machineGpu();    // the solver runs on a GPU (OpenCL): what the machine has and the person chose (the settings of the program), off when it has none
+
+    // The choice of this machine: an OpenCL GPU is there, and "hvdGpu" is on in the settings of the program (the windows keep it when it is changed)
+    static bool machineGpu();
     qint32 fieldOrder = 0;      // 0 = from the metadata, 1 = the first field of a frame is the top one, 2 = the bottom one
     bool bidirectional = true;  // 3D: the fields after a field are used as well as the ones before
     bool selective = false;     // 3D only on the tiles of the picture where luma and chroma are ambiguous

@@ -92,6 +92,7 @@ private slots:
     void on_hvdStrengthHorizontalSlider_valueChanged(int value);
     void on_hvdOverlapSpinBox_valueChanged(int value);
     void on_hvdFastCheckBox_clicked();
+    void on_hvdGpuCheckBox_clicked();
     void on_hvdBidirectionalCheckBox_clicked();
     void on_hvdSelectiveCheckBox_clicked();
     void on_hvdPassesSpinBox_valueChanged(int value);

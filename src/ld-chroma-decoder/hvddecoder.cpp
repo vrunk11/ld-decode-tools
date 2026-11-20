@@ -10,6 +10,10 @@
 
 #include "hvddecoder.h"
 
+#include "gpu/gpu_solver.h"
+
+#include <QSettings>
+
 #include <algorithm>
 
 #include "decoderpool.h"
@@ -23,6 +27,12 @@
 #include <omp.h>
 #endif
 
+bool HvdSettings::machineGpu()
+{
+    // (the choice is read each time, a window can change it; the device is looked for only when it is on)
+    return QSettings().value("hvdGpu", false).toBool() && hvd::gpu::Available();
+}
+
 hvd::HvdConfig HvdSettings::makeConfig(double chromaGain, double chromaPhase) const
 {
     hvd::HvdConfig config;
@@ -33,6 +43,7 @@ hvd::HvdConfig HvdSettings::makeConfig(double chromaGain, double chromaPhase) co
     config.chunk_overlap = overlap;
     config.lambda_c = static_cast<float>(smoothness);
     config.fast = fast;
+    config.use_gpu = gpu;
     config.field_order = fieldOrder;
     config.bidirectional = bidirectional;
     config.selective_3d = selective;

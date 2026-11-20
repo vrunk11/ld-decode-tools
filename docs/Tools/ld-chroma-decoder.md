@@ -160,6 +160,7 @@ Available decoders:
 | `--hvd-strength number` | `hvd3d`: weight of the neighbouring fields (default 0: measured on the picture) |
 | `--hvd-overlap number` | `hvd3d`: frames on each side of a frame that the decoder looks at (default 1) |
 | `--hvd-no-fast` | Turn the fast mode off: the solver runs its whole budget (slower, about the same quality). The fast mode is on by default |
+| `--hvd-gpu` | Run the solver of the HVD decoder on a GPU, through OpenCL: the picture is the same (to the rounding of the sums), and it is faster, 3D most of all (about four times on a recent GPU with all the cores busy, from 2.3 to 9 frames per second on a 3D PAL decode). It needs a build with OpenCL and a GPU that has a driver for it; without them the option says so and the processor does the work, and when the GPU fails during the run the processor goes on. `HVD_OPENCL_VERBOSE=1` lists the devices and `HVD_OPENCL_DEVICE=n` chooses one (the strongest by default). The FFT of the first step and the motion search stay on the processor |
 | `--hvd-no-bidirectional` | `hvd3d`: use only the fields before a field, not the ones after (faster, a little worse) |
 | `--hvd-selective` | `hvd3d`: 3D only on the tiles of the picture where luma and chroma are ambiguous, 2D elsewhere |
 | `--hvd-passes number` | `hvd3d`: passes of the solver over a window of fields (default 2, 1 to 4; from the second the noise-reduced anchor is used) |
@@ -320,6 +321,13 @@ Options:
   --hvd-overlap <number>                      hvd3d: Frames on each side of a
                                               frame that the decoder looks at
                                               (default 1)
+  --hvd-gpu                                   HVD: Run the solver on a GPU
+                                              (OpenCL); the CPU does it
+                                              when there is none
+                                              (HVD_OPENCL_VERBOSE=1 lists
+                                              the devices,
+                                              HVD_OPENCL_DEVICE=n chooses
+                                              one)
   --hvd-no-fast                               HVD: Turn the fast mode
                                               off (the solver runs its
                                               whole budget: slower, about

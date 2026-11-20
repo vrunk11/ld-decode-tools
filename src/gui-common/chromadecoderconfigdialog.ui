@@ -401,6 +401,13 @@
         </widget>
        </item>
        <item>
+        <widget class="QCheckBox" name="hvdGpuCheckBox">
+         <property name="text">
+          <string>Use the GPU (OpenCL)</string>
+         </property>
+        </widget>
+       </item>
+       <item>
         <widget class="QCheckBox" name="hvdBidirectionalCheckBox">
          <property name="text">
           <string>Bidirectional 3D (the fields after as well as before)</string>

@@ -12,6 +12,9 @@
 #include "chromadecoderconfigdialog.h"
 #include "ui_chromadecoderconfigdialog.h"
 
+#include "gpu/gpu_solver.h"
+
+#include <QSettings>
 #include <QTabBar>
 #include <cmath>
 
@@ -49,6 +52,16 @@ ChromaDecoderConfigDialog::ChromaDecoderConfigDialog(QWidget *parent) :
 {
     ui->setupUi(this);
     setWindowFlags(Qt::Window);
+
+    // The GPU option: only when this build and this machine have an OpenCL GPU. It is a choice of the machine, not of the capture: it is kept in the
+    // settings of the program, and not with the decoding parameters of a capture.
+    {
+        const bool gpuAvailable = hvd::gpu::Available();
+        ui->hvdGpuCheckBox->setEnabled(gpuAvailable);
+        ui->hvdGpuCheckBox->setToolTip(gpuAvailable
+            ? tr("Run the solver of the HVD decoder on %1. The picture is the same, and it is faster, 3D most of all.").arg(QString::fromStdString(hvd::gpu::DeviceDescription()))
+            : tr("No OpenCL GPU was found (or this build has no OpenCL): the HVD decoder runs on the processor."));
+    }
 
     ui->chromaGainHorizontalSlider->setMinimum(0);
     ui->chromaGainHorizontalSlider->setMaximum(200);
@@ -446,6 +459,7 @@ void ChromaDecoderConfigDialog::updateDialog()
     ui->hvdOverlapSpinBox->setEnabled(hvdSettings.temporal);
     {
         const QSignalBlocker fast(ui->hvdFastCheckBox);
+        const QSignalBlocker gpuBlock(ui->hvdGpuCheckBox);
         const QSignalBlocker bidirectional(ui->hvdBidirectionalCheckBox);
         const QSignalBlocker selective(ui->hvdSelectiveCheckBox);
         const QSignalBlocker passes(ui->hvdPassesSpinBox);
@@ -457,6 +471,7 @@ void ChromaDecoderConfigDialog::updateDialog()
         const QSignalBlocker custom(ui->hvdCustomSubcarrierCheckBox);
         const QSignalBlocker subcarrier(ui->hvdSubcarrierSpinBox);
         ui->hvdFastCheckBox->setChecked(hvdSettings.fast);
+        ui->hvdGpuCheckBox->setChecked(hvdSettings.gpu);
         ui->hvdBidirectionalCheckBox->setChecked(hvdSettings.bidirectional);
         ui->hvdSelectiveCheckBox->setChecked(hvdSettings.selective);
         ui->hvdPassesSpinBox->setValue(hvdSettings.passes);
@@ -694,6 +709,13 @@ void ChromaDecoderConfigDialog::on_hvdOverlapSpinBox_valueChanged(int value)
 void ChromaDecoderConfigDialog::on_hvdFastCheckBox_clicked()
 {
     hvdSettings.fast = ui->hvdFastCheckBox->isChecked();
+    emit chromaDecoderConfigChanged();
+}
+
+void ChromaDecoderConfigDialog::on_hvdGpuCheckBox_clicked()
+{
+    hvdSettings.gpu = ui->hvdGpuCheckBox->isChecked();
+    QSettings().setValue("hvdGpu", hvdSettings.gpu);
     emit chromaDecoderConfigChanged();
 }
 
