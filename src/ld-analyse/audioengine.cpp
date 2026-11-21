@@ -45,6 +45,10 @@ public:
     qint64 waitedPairs() const { return waited.load(); }
     qint64 waits() const { return waitEvents.load(); }
     qint64 positionNow() const { return position.load(); }
+    // (the sound goes on from further on, or further back: what is given next moves by so many pairs)
+    void moveBy(qint64 pairs) { position += pairs; }
+    // (silent: the sound goes on, in its place, but the card is given silence: a monitor whose frames have stopped coming)
+    void setSilent(bool on) { silent = on; }
 
     bool isSequential() const override { return true; }
     qint64 bytesAvailable() const override { return 1 << 20; }
@@ -84,6 +88,7 @@ protected:
                 waitEvents++;
             }
         }
+        if (silent.load()) std::memset(data, 0, static_cast<size_t>(pairs) * 4);
         // (before the start of the audio nothing is played, and the position goes on, so the sound keeps its place)
         position += advance;
         return pairs * 4;
@@ -93,6 +98,7 @@ protected:
 private:
     AudioReader *reader;
     std::atomic<qint64> position;   // the next pair to give, which may be before the start of the audio
+    std::atomic<bool> silent{false};
     std::atomic<qint32> level{0};
     std::atomic<qint64> given{0};
     std::atomic<qint64> waited{0};          // (pairs of silence given while the audio had not come yet)
@@ -297,12 +303,14 @@ bool AudioEngine::start(double videoSeconds)
     AudioFeeder *source = feeder.get();
     QMetaObject::invokeMethod(host, [this, device, format, source]() {
         sink = new QAudioSink(device, format);
-        sink->setBufferSize(static_cast<qsizetype>(format.sampleRate() * 4 * 0.3));       // (about 300 ms)
+        sink->setBufferSize(static_cast<qsizetype>(format.sampleRate() * 4 * cardBufferMs / 1000));       // (300 ms, or what was asked: see setCardBufferMs)
         sink->start(source);
         clock = new QTimer;
         QObject::connect(clock, &QTimer::timeout, [this]() {
             if (!sink) return;
             processedUs = sink->processedUSecs();
+            // (the card plays what it was given after what it holds: the part of its buffer that is full is yet to be heard)
+            bufferedUs = static_cast<qint64>(sink->bufferSize() - sink->bytesFree()) * 1000000 / qMax<qint64>(1, sink->format().bytesForFrames(1) * sink->format().sampleRate());
             stampNs = monotonic.nsecsElapsed();
         });
         clock->start(10);
@@ -340,6 +348,43 @@ double AudioEngine::playedSeconds() const
 double AudioEngine::videoSecondsNow() const
 {
     return startedAt + playedSeconds();
+}
+
+// The sound is moved to the video second given while it plays (it was behind, or ahead): the card goes on, and is given the audio of that place from then
+// on, without the time it takes to start again
+void AudioEngine::setSilent(bool on)
+{
+    if (feeder) feeder->setSilent(on);
+}
+
+// The second of the video whose sound is heard now: where the sound is given from, less what the card holds yet. It is the place in the audio, which waits
+// when the audio has not come (a live input): a clock that went on through that would be ahead of it
+double AudioEngine::heardSeconds() const
+{
+    if (!playing || !feeder || !reader) return videoSecondsNow();
+    const qint64 held = bufferedUs.load() * static_cast<qint64>(reader->sampleRate()) / 1000000;
+    return videoSecondsOf(feeder->positionNow() - held);
+}
+
+// The sound moved so that what is heard is that second of the video
+void AudioEngine::catchUpHeard(double videoSeconds)
+{
+    if (!playing || !feeder) return;
+    const double heard = heardSeconds();
+    const qint64 pairs = sampleAt(videoSeconds) - sampleAt(heard);
+    if (pairs == 0) return;
+    feeder->moveBy(pairs);
+    startedAt += videoSeconds - heard;
+}
+
+void AudioEngine::catchUp(double videoSeconds)
+{
+    if (!playing || !feeder) return;
+    const double now = videoSecondsNow();
+    const qint64 pairs = sampleAt(videoSeconds) - sampleAt(now);
+    if (pairs == 0) return;
+    feeder->moveBy(pairs);
+    startedAt += videoSeconds - now;
 }
 
 qint32 AudioEngine::setImported(const QVector<qint16> &samples, double sampleRate, const QString &label)

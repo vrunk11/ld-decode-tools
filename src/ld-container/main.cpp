@@ -28,8 +28,10 @@
 #include <QTextStream>
 
 #include <map>
+#include <chrono>
 #include <functional>
 #include <memory>
+#include <thread>
 #include <vector>
 
 #include "ldx.h"
@@ -292,7 +294,9 @@ private:
     bool loaded = false;
 };
 
-bool mergeInto(Ldx::Writer &writer, const std::vector<BlockSource *> &sources)
+// The blocks of the sources, written in the order of their time. pace, when it is given, is told the time of each block before it is written (stream --realtime
+// waits there for the time of the video to come)
+bool mergeInto(Ldx::Writer &writer, const std::vector<BlockSource *> &sources, const std::function<void(qint64)> &pace = {})
 {
     for (;;) {
         BlockSource *best = nullptr;
@@ -303,6 +307,7 @@ bool mergeInto(Ldx::Writer &writer, const std::vector<BlockSource *> &sources)
             if (!best || block.timeNs < bestBlock.timeNs) { best = source; bestBlock = block; }
         }
         if (!best) return true;
+        if (pace) pace(bestBlock.timeNs);
         if (!writer.writeBlock(bestBlock.track, bestBlock.timeNs, bestBlock.data)) {
             err << "Could not write a block: " << writer.lastError() << "\n";
             return false;
@@ -2287,6 +2292,8 @@ int streamOut(const QStringList &arguments)
     addStandardDebugOptions(parser);
     parser.addPositionalArgument("file", "The LDX file");
     parser.addOption(QCommandLineOption({ "o", "output" }, "The stream to write (- for the standard output)", "file"));
+    parser.addOption(QCommandLineOption("realtime", "Write the stream at the pace of the video, as a capture or a player would send it (for a program that reads it as it comes, "
+                                                    "as ld-analyse --monitor), rather than as fast as it can be read"));
     parser.process(arguments);
     processStandardDebugOptions(parser);
     if (parser.positionalArguments().size() != 1 || !parser.isSet("output")) {
@@ -2322,7 +2329,23 @@ int streamOut(const QStringList &arguments)
     bool ok = writer.openStream(file, error);
     if (ok) {
         LdxSource old(rewrite.reader, {});
-        ok = mergeInto(writer, { &old }) && writer.finish(error);
+        // At the pace of the video: each block is written when its time has come, counted from the first one; what was written before is sent on first (a pipe
+        // would keep the end of a frame until the next)
+        std::function<void(qint64)> pace;
+        if (parser.isSet("realtime")) {
+            auto started = std::make_shared<std::chrono::steady_clock::time_point>();
+            auto firstNs = std::make_shared<qint64>(-1);
+            pace = [file, started, firstNs](qint64 timeNs) {
+                fflush(file);
+                if (*firstNs < 0) {
+                    *firstNs = timeNs;
+                    *started = std::chrono::steady_clock::now();
+                    return;
+                }
+                std::this_thread::sleep_until(*started + std::chrono::nanoseconds(timeNs - *firstNs));
+            };
+        }
+        ok = mergeInto(writer, { &old }, pace) && writer.finish(error);
     }
     if (file != stdout) fclose(file);
     if (!ok) {

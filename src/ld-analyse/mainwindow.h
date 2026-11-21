@@ -482,11 +482,14 @@ private:
     void audioStop();
     void updateAudioPlayhead();
     void waveformSeek(double seconds);
-    // A monitor: the sound plays while the frames come one after the other (a program that plays the video), from the newest one, and stops when they stop
+    // A monitor: the sound is heard once frames have come one after the other for a moment (a program that plays the video), with the picture, and is silent when
+    // they stop
     void updateMonitorSound(qint32 newest, bool frameCame);
-    QElapsedTimer monitorFrameClock, monitorSoundClock;
-    bool monitorStreaming = false;
-    qint32 monitorSampleFrames = 0, monitorSlowWindows = 0;
+    QElapsedTimer monitorSoundClock;           // since the sound was last moved to its place
+    bool monitorSoundSilent = false;           // (the card is given silence, and kept running)
+    double monitorBehind = 0.0;                // how far the sound heard is from its place, over a fifth of a second (seconds, + behind)
+    QElapsedTimer monitorLastFrame;            // since the newest frame came
+    qint32 monitorRunFrames = 0;               // the frames that came one after the other (no gap of more than 200 ms)
     double positionSeconds(qint32 position);
 #endif
     void setPlaybackOptionsVisible(bool visible);

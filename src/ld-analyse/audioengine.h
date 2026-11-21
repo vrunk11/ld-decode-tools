@@ -73,6 +73,7 @@ public:
     void setOffsetMs(qint32 milliseconds);
     // How late the picture is shown after it is made (another program shows it, as VLC, which measures it): the sound is that much later as well
     void setDisplayLatencyMs(qint32 milliseconds);
+    double displayLatencySeconds() const { return displayLatencyMs / 1000.0; }
 
     double sampleRate() const;
     qint64 samples() const;
@@ -95,6 +96,19 @@ public:
     double playedSeconds() const;
     // The video second the sound is at
     double videoSecondsNow() const;
+    // How much sound the card is given ahead (300 ms by default: it plays on while the window is busy). Less is heard sooner, for sound that has to follow
+    // what comes (a monitor); it is for the next start
+    void setCardBufferMs(qint32 milliseconds) { cardBufferMs = qBound(40, milliseconds, 1000); }
+    // What the card holds that it has not played yet, in seconds: the sound that is heard is that much before videoSecondsNow
+    double heldSeconds() const { return static_cast<double>(bufferedUs.load()) / 1.0e6; }
+    // Move the sound to that second of the video while it plays (it was behind or ahead): no new start, the card goes on
+    void catchUp(double videoSeconds);
+    // The second of the video whose sound is heard now (from where the sound is in the audio, less what the card holds: it is right when the audio of a live
+    // input was waited for), and the sound moved so that the one heard is that second
+    double heardSeconds() const;
+    void catchUpHeard(double videoSeconds);
+    // The card is given silence while the sound goes on in its place (and kept running, so that the sound comes back at once)
+    void setSilent(bool on);
     // What the player gave the card since this was asked last: the loudest sample, and since start() how many pairs were real audio
     qint32 takeOutputLevel();
     qint64 pairsGiven() const;
@@ -126,6 +140,8 @@ private:
     QTimer *clock = nullptr;            // (in that thread: reads how much the sink has played)
     std::atomic<qint64> processedUs{0};
     std::atomic<qint64> stampNs{0};                // (when, on monotonic, processedUs was read)
+    qint32 cardBufferMs = 300;
+    std::atomic<qint64> bufferedUs{0};             // (what the card was given and has not played yet, read with processedUs)
     mutable std::atomic<qint64> lastClockNs{0};    // (the clock never goes back)
     QElapsedTimer monotonic;
     std::unique_ptr<AudioFeeder> feeder;

@@ -3232,7 +3232,13 @@ void MainWindow::on_finishedLoading(bool success)
             ui->actionOpen_TBC_file->setEnabled(false);
             setPlaybackOptionsVisible(false);
             if (!tbcSource.getStreamHint().isEmpty()) statusBar()->showMessage(tbcSource.getStreamHint(), 30000);
-            if (tbcSource.getIsMonitor()) applyMonitorLayout();
+            if (tbcSource.getIsMonitor()) {
+                applyMonitorLayout();
+                // (a monitor shows each frame when it comes: it looks often, and on time. Looking each 33 ms, with the coarse timers of Windows, that was 31 or 47 ms
+                // for frames that come each 33 or 40 ms: none had come, or two, and frames were left out unevenly)
+                liveTimer->setTimerType(Qt::PreciseTimer);
+                liveTimer->setInterval(10);
+            }
             liveTimer->start();
             updateLive();
             // (a monitor is not played: updateLive has put the first frame on show, and it waits for the next)
@@ -4311,44 +4317,80 @@ void MainWindow::updateAudioPlayhead()
 }
 
 // The sound of a monitor. A monitor has no clock, and a frame shown by itself has no sound; but when the frames come one after the other (the program that drives it
-// is playing the video) the sound that goes with them is played, from the newest frame, as it comes, and stops when they stop. The sound plays at its own pace, so it
-// is put back to the newest frame when it falls more than a second and a half behind it (frames that come faster than the sound plays are jumped to)
-void MainWindow::updateMonitorSound(qint32 newest, bool)
+// is playing the video) the sound that goes with them is heard, with the picture that is seen. The card is started as soon as frames come, given silence (a card
+// takes half a second to start: it does so meanwhile); the sound is heard once 15 frames have come one after the other (no gap of more than 200 ms), and is silent
+// again as soon as they stop. A seek, a step or a pause is a gap: it is not heard as a blip, and the sound is back, in its place, when the frames play again.
+// The card is let go after 10 s without a frame.
+void MainWindow::updateMonitorSound(qint32 newest, bool frameCame)
 {
     if (!audio || !audio->hasAudio() || audio->currentTrack() < 0) return;
-    // The pace the frames come at, over windows of half a second (the frames shown are fewer than the frames that come when decoding is slow): six a second or more
-    // is a video that plays, fewer is a program that asks for a frame now and then
-    if (!monitorFrameClock.isValid()) {
-        monitorFrameClock.start();
-        monitorSampleFrames = newest;
-    } else if (monitorFrameClock.elapsed() >= 500) {
-        // (it stops being one when two windows in a row are slower, not at a frame that is late)
-        if (newest - monitorSampleFrames >= 3) {
-            monitorStreaming = true;
-            monitorSlowWindows = 0;
-        } else if (++monitorSlowWindows >= 2) {
-            monitorStreaming = false;
-        }
-        monitorSampleFrames = newest;
-        monitorFrameClock.restart();
+
+    // The frames that came one after the other
+    if (frameCame) {
+        monitorRunFrames = (monitorLastFrame.isValid() && monitorLastFrame.elapsed() < 200) ? monitorRunFrames + 1 : 1;
+        monitorLastFrame.restart();
     }
-    if (!monitorStreaming) {
-        if (audio->isPlaying()) {
-            if (std::getenv("LD_ANALYSE_TIMING")) std::fprintf(stderr, "monitor sound: stopped\n");
+    const bool framesCome = monitorLastFrame.isValid() && monitorLastFrame.elapsed() < 200;
+    if (!framesCome) monitorRunFrames = 0;
+    const bool heard = framesCome && monitorRunFrames >= 15;
+
+    if (!audio->isPlaying()) {
+        if (!framesCome) return;
+        // (the card is given little ahead: what it holds is heard that much later than the frame, and the sound of a monitor cannot be given before it comes)
+        audio->setCardBufferMs(80);
+        const bool started = audioStartAt(positionSeconds(newest));
+        if (!started) return;
+        audio->setSilent(true);
+        monitorSoundSilent = true;
+        monitorSoundClock.restart();
+        monitorBehind = 0.0;
+        if (std::getenv("LD_ANALYSE_TIMING")) std::fprintf(stderr, "monitor sound: the card started (silent)\n");
+        return;
+    }
+    if (!heard) {
+        if (!monitorSoundSilent) {
+            if (std::getenv("LD_ANALYSE_TIMING")) std::fprintf(stderr, "monitor sound: silent\n");
+            audio->setSilent(true);
+            monitorSoundSilent = true;
+        }
+        if (!framesCome && monitorLastFrame.elapsed() > 10000) {
+            if (std::getenv("LD_ANALYSE_TIMING")) std::fprintf(stderr, "monitor sound: the card is let go\n");
             audioStop();
         }
         return;
     }
+
+    // The sound heard is to go with the picture that is seen. What is heard is where the sound is in the audio, less what the card holds yet (where it is: a clock
+    // would have gone on through a pause, or while the audio was waited for). The sound of the newest frame is heard with it when the card holds no more than
+    // the delay of the picture; but the sound of a monitor is not there before its frame, so it cannot be heard sooner than the card holds less that delay, and
+    // 30 ms are left before the newest sound, for sound that comes a little late not to be waited for with silence (30 ms late are not seen)
     const double newestSeconds = positionSeconds(newest);
-    if (!audio->isPlaying()) {
-        const bool started = audioStartAt(newestSeconds);
-        if (started) monitorSoundClock.restart();
-        if (std::getenv("LD_ANALYSE_TIMING")) std::fprintf(stderr, "monitor sound: %s at %.2f s of the video\n", started ? "started" : "could not start", newestSeconds);
+    const double wanted = newestSeconds - std::max(0.0, audio->heldSeconds() - audio->displayLatencySeconds()) - 0.03;
+    const double behind = wanted - audio->heardSeconds();
+    if (std::getenv("LD_ANALYSE_TIMING")) {
+        static int calls = 0;
+        if (++calls % 30 == 1) {
+            std::fprintf(stderr, "monitor sound: newest frame at %.3f s, sound heard at %.3f s (%.0f ms from where it is to be), the card holds %.0f ms, waited for the sound %lld times\n", newestSeconds, audio->heardSeconds(), behind * 1000.0, audio->heldSeconds() * 1000.0, static_cast<long long>(audio->waitsForAudio()));
+        }
+    }
+    // Heard again (or for the first time): put in its place at once
+    if (monitorSoundSilent) {
+        if (std::getenv("LD_ANALYSE_TIMING")) std::fprintf(stderr, "monitor sound: heard, moved by %.0f ms\n", behind * 1000.0);
+        audio->catchUpHeard(wanted);
+        audio->setSilent(false);
+        monitorSoundSilent = false;
+        monitorSoundClock.restart();
+        monitorBehind = 0.0;
         return;
     }
-    if (newestSeconds - audio->videoSecondsNow() > 1.5 && monitorSoundClock.elapsed() > 1000) {
-        audioStop();
-        if (audioStartAt(newestSeconds)) monitorSoundClock.restart();
+    // Otherwise moved to its place when it is, over a fifth of a second, more than 80 ms from it (what is measured moves by a frame, and by what the card takes
+    // at a time, tens of milliseconds either way), a second and a half after the last move at the soonest
+    monitorBehind = monitorBehind * 0.95 + behind * 0.05;
+    if (std::abs(monitorBehind) > 0.08 && monitorSoundClock.elapsed() > 1500) {
+        if (std::getenv("LD_ANALYSE_TIMING")) std::fprintf(stderr, "monitor sound: moved by %.0f ms\n", monitorBehind * 1000.0);
+        audio->catchUpHeard(audio->heardSeconds() + monitorBehind);
+        monitorSoundClock.restart();
+        monitorBehind = 0.0;
     }
 }
 
